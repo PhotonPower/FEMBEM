@@ -67,10 +67,35 @@ jobs:
         run: |
           python3 -m pip install numpy
           python3 tools/check_map.py data/team28/team28.vtk
-      - name: Netzpruefungen (tools/meshcheck.py)
+      - name: Netzpruefungen (tools/meshcheck.py, tools/check_map.py)
         run: |
           python3 tools/tests/test_meshcheck.py
+          python3 tools/tests/test_check_map.py
           python3 tools/meshcheck.py data/team28/team28.vtk --require-hex --separate-bodies
+
+  gmsh:
+    name: Netze mit Gmsh
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: GL-Laufzeitbibliotheken (Gmsh laedt sie auch ohne Grafik)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libglu1-mesa libgl1 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+      - name: Gmsh installieren (Version festgelegt)
+        run: python3 -m pip install -r tools/requirements-gmsh.txt
+      - name: Netze erzeugen und pruefen
+        run: |
+          python3 tools/gmsh/team28_hex.py -o team28_gmsh.vtk
+          python3 tools/gmsh/team28_hex.py --scale 0.5 -o team28_gmsh_grob.vtk
+          python3 tools/gmsh/team28_hex.py --n-quarter 9 --plate-grading 0.85 --plate-z0 9.8 -o team28_gmsh_variante.vtk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gmsh-netze
+          path: "*.vtk"
 
   docs:
     name: Dokumentation (LaTeX)

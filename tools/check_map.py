@@ -89,8 +89,10 @@ def covers_axis(pts, cells, idx, tol=1e-9):
     """True, wenn die Zellen idx die z-Achse ueberdecken (Vollscheibe).
 
     Entweder liegt ein Knoten auf der Achse, oder der Grundriss einer Zelle
-    umschliesst sie: dann haben die Knotenwinkel um die Achse keine Luecke von
-    pi oder mehr (die Achse liegt in der konvexen Huelle).
+    enthaelt sie: dann haben die Knotenwinkel um die Achse keine Luecke
+    groesser als pi (die Achse liegt in der konvexen Huelle oder auf ihrem
+    Rand). Eine Luecke von genau pi heisst: die Achse liegt auf einer Kante
+    zwischen zwei Zellen -- auch das ist eine Vollscheibe.
     """
     for i in idx:
         xy = pts[cells[i]][:, :2]
@@ -99,7 +101,7 @@ def covers_axis(pts, cells, idx, tol=1e-9):
             return True
         ang = np.sort(np.arctan2(xy[:, 1], xy[:, 0]))
         gaps = np.diff(np.concatenate([ang, ang[:1] + 2 * np.pi]))
-        if gaps.max() < np.pi - 1e-12:
+        if gaps.max() <= np.pi + 1e-9:
             return True
     return False
 

@@ -6,7 +6,7 @@ Plan, feste Entscheidungen und Stand: [docs/design/gmsh-meshing-plan.md](../../d
 ## Einrichten
 
     python3 -m venv ~/venv-gmsh
-    ~/venv-gmsh/bin/pip install gmsh numpy
+    ~/venv-gmsh/bin/pip install -r tools/requirements-gmsh.txt
 
 Gmsh lädt auch ohne Grafik die GL-Laufzeitbibliotheken (Ubuntu: `libglu1-mesa`,
 `libgl1` und einige X-Bibliotheken; siehe

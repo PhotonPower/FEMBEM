@@ -13,6 +13,7 @@ das Paket `babel-german`, ohne es bleibt die Trennung englisch).
 | Dokument | Inhalt |
 |---|---|
 | [architecture.md](architecture.md) | Module, Datenfluss, wo was im Quelltext liegt |
+| [meshing.md](meshing.md) | Netze: Format, Regeln (u. a. kein Loch in der Platte), Prüfen, Erzeugen mit Gmsh |
 | **Theorie** | |
 | [theory/solver-overview.tex](theory/solver-overview.tex) | Überblick über das TEAM-28-Modell und die numerische Pipeline |
 | [theory/numerics-and-gpu.tex](theory/numerics-and-gpu.tex) | Theorie, Numerik und GPU-Beschleunigung |
