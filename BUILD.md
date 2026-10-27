@@ -341,7 +341,11 @@ Pfad nichts zu tun hat.
 Das `13` im Pfad ist die CUDA-Hauptversion und muss zum Toolkit passen (siehe
 den Abschnitt darunter).
 
-Entwickelt und geprüft gegen **cuDSS 0.8.0**.
+Entwickelt und geprüft gegen **cuDSS 0.8.0**. **Mindestens 0.8 ist nötig:** in
+0.7.x fehlen Symbole, die `SparseDirectSolver.cpp` braucht (zum Beispiel
+`CUDSS_R_32I`, `cudssReorderingAlg_t`, `CUDSS_PIVOT_AUTO`,
+`CUDSS_CONFIG_HYBRID_MEMORY_MODE`). CMake lehnt ältere Versionen mit einer
+Warnung ab und baut dann ohne `--fem-direct`.
 
 ### Zwei Unverträglichkeiten, beide am Determinismus
 
