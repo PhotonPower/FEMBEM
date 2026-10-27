@@ -1,6 +1,8 @@
 # Gmsh-Vernetzung: Bericht zu Phase 0
 
-Stand: 27.10.2026. Prototyp: `tools/gmsh/phase0_prototype.py`.
+Stand: 27.10.2026. Der Prototyp dieser Phase ist inzwischen durch
+`tools/gmsh/team28_hex.py` ersetzt (Phase 2); die Messungen unten stammen vom
+Prototyp mit Kerngröße 0,3.
 Plan und feste Entscheidungen: [gmsh-meshing-plan.md](gmsh-meshing-plan.md).
 
 ## Umgebung

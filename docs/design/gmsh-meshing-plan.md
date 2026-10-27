@@ -53,14 +53,20 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
   3 Platte, 0 Luft). Gmsh schreibt diese Nummer in `CellEntityIds`.
 - Elemente erster Ordnung; der Löser lehnt zweite Ordnung ab.
 - Gmsh-Version festhalten (getestet: 4.15.2 aus pip).
+- **Kein Verschmelzen von Knoten** (`removeDuplicateNodes`): es würde Knoten
+  verschiedener Körper vereinen, wenn sie zufällig zusammenfallen, und Platte
+  und Spule leitend verbinden. Der Geo-Kern liefert die Netze ohnehin
+  konform; doppelte Knoten meldet die Prüfung.
+- Die Platte liegt immer echt oberhalb der Spulen (Unterkante > 0); berührende
+  Flächen zweier Körper sind für die BEM unbrauchbar.
 
 ## Phasen
 
 | Phase | Inhalt | Stand |
 |---|---|---|
 | 0 | Klärung: 360°-Ring, Hexaederkern, BEM und Dreiecke, Lesbarkeit, Topologie | **abgeschlossen**, siehe [gmsh-phase0-report.md](gmsh-phase0-report.md) |
-| 1 | `tools/meshcheck.py`: Prüfungen aus `import_bdf.py` herauslösen und gemeinsam nutzen; Tests mit absichtlich kaputten Netzen | offen |
-| 2 | `tools/gmsh/team28_hex.py`: Generator mit Parametern (Teilungen in r, z, φ; Kerngröße; Plattenlage), aus dem Prototyp | offen |
+| 1 | `tools/meshcheck.py`: Prüfungen aus `import_bdf.py` herauslösen und gemeinsam nutzen; Tests mit absichtlich kaputten Netzen | **teilweise**: Modul und Tests angelegt (mit Phase 2); `import_bdf.py` nutzt es noch nicht |
+| 2 | `tools/gmsh/team28_hex.py`: Generator mit Parametern (Teilungen in r, z, φ; Kerngröße; Plattenlage), aus dem Prototyp | **abgeschlossen**, siehe [tools/gmsh/README.md](../../tools/gmsh/README.md) |
 | 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0), Größenfelder | offen |
 | 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | offen |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | offen |
@@ -69,7 +75,8 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 ## Abnahme je Netz (ab Phase 2 automatisch)
 
 - `tools/check_map.py` besteht (Zuordnung, Maße, Vollscheibe).
-- Keine doppelten Knoten, jede Fläche gehört zu höchstens zwei Zellen.
+- Keine doppelten Knoten, kein Knoten gehört zu zwei Körpern, jede Fläche
+  gehört zu höchstens zwei Zellen.
 - Positive Jacobi-Determinante an allen Ecken.
 - Volumen je Körper gleich dem exakten N-Eck (N Segmente am Umfang) bis auf
   Rundung.
@@ -78,9 +85,9 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 
 ## Risiken
 
-- Qualität des Hexaederkerns hängt von der Kerngröße ab; ein zu kleiner oder
-  zu großer Kern verzerrt die Ecken (gemessen: min. skalierte
-  Jacobi-Determinante 0,770 bei Kerngröße 0,3).
+- Qualität des Hexaederkerns hängt von der Kerngröße ab (gemessen: kleinste
+  skalierte Jacobi-Determinante 0,555 bei 0,1 bis 0,814 bei 0,5; Vorgabe 0,4
+  mit 0,802).
 - Gmsh braucht auf Servern ohne Grafik trotzdem die GL-Laufzeitbibliotheken.
 - Volumina ohne Physical Group fehlen im Ergebnis ohne Fehlermeldung; die
   Prüfung muss das abfangen (vor allem die Luft in Phase 3).
