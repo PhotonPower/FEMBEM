@@ -457,6 +457,24 @@ add_executable(test_block_system
 target_include_directories(test_block_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_block_system PRIVATE CUDA::cudart)
 
+# 🧪 Dirichlet im n-Raum gegen Dirichlet in der 2n-Blockform (AP5).
+# Der AMS-Modus (--fem-direct-nullspace=ams) baut die 2n-Matrix nicht, sondern
+# haelt in W = K + omega*C UND in C getrennt fest -- und die beiden brauchen
+# VERSCHIEDENE Diagonalwerte auf den Randkanten (d beziehungsweise 0). Mit
+# demselben Wert bleibt das System loesbar, koppelt aber Real- und
+# Imaginaerteil der Randkante; sichtbar waere das nur als seltsame
+# Iterationszahl. Der Test enthaelt die Gegenprobe mit dem eingebauten Fehler.
+# Bauen mit:
+#   cmake --build build --config Release --target test_harmonic_dirichlet_split
+add_executable(test_harmonic_dirichlet_split
+    tests/test_harmonic_dirichlet_split.cu
+    src/HarmonicBlockSystem.cpp
+    src/FemDirectBC.cpp
+    src/Backend.cu
+)
+target_include_directories(test_harmonic_dirichlet_split PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_harmonic_dirichlet_split PRIVATE CUDA::cudart)
+
 # 🧪 Musterpruefung und Verhalten ohne cuDSS (AP6). Laeuft MIT und OHNE cuDSS
 # und prueft in beiden Faellen etwas Sinnvolles: die Zerlegung selbst kann er
 # nicht nachrechnen, die Eingabepruefung und die Schnittstelle zur Blockform
@@ -514,6 +532,9 @@ target_include_directories(test_preconditioner_end_to_end PRIVATE ${CMAKE_CURREN
 target_link_libraries(test_preconditioner_end_to_end PRIVATE CUDA::cudart CUDA::cublas CUDA::cusparse)
 
 # 🧪 Vektor-Poisson-Operator als AMG-Grundlage des vektoriellen AMS-Hilfsraums
+# Prueft ausserdem die Knotengradienten je Elementtyp (Tetraeder, Prisma,
+# Hexaeder) auf zufaellig verzerrten Einzelelementen -- ohne die ist der
+# Operator auf den Tetraedernetzen des FEM-direkt-Pfades nicht aufbaubar.
 # Bauen mit:
 #   cmake --build build --config Release --target test_alpha_poisson
 add_executable(test_alpha_poisson
@@ -877,6 +898,8 @@ set_tests_properties(test_dirichlet_bc PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_element_dispatch COMMAND test_element_dispatch)
 set_tests_properties(test_element_dispatch PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_system COMMAND test_block_system)
+add_test(NAME test_harmonic_dirichlet_split COMMAND test_harmonic_dirichlet_split)
+set_tests_properties(test_harmonic_dirichlet_split PROPERTIES LABELS "host" TIMEOUT 120)
 set_tests_properties(test_block_system PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_sparse_direct COMMAND test_sparse_direct)
 set_tests_properties(test_sparse_direct PROPERTIES LABELS "host" TIMEOUT 120)
@@ -921,6 +944,7 @@ set_tests_properties(test_mesh_refinement PROPERTIES TIMEOUT 900)
 
 # Baut genau die Tests mit der Marke "host".
 add_custom_target(host_tests DEPENDS
+    test_harmonic_dirichlet_split
     test_nedelec_orientation
     test_edge_sign_convention
     test_curl_gradient_nullspace

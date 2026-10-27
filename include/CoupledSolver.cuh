@@ -400,18 +400,6 @@ private:
     int         m_num_nodes = 0;
     int         m_num_edges = 0;
 
-    /// Anteil des Gradientenunterraums in einem rechte-Seite-artigen Vektor,
-    /// gemessen als ||G^T v|| / ||v|| im PHYSIKALISCHEN Raum.
-    ///
-    /// G ist der diskrete Gradient (Knoten -> Kanten); G^T v ist damit die
-    /// diskrete Divergenz. Der Curl-Curl-Operator bildet Gradienten auf null
-    /// ab, ein Gradientenanteil in der rechten Seite liegt also NICHT im
-    /// Bildraum -- und A~^-1 darauf angewandt ist beliebig gross.
-    ///
-    /// Vergleichsmassstab liefert fem.cu fuer die physikalische rechte Seite:
-    /// dort ist ||G^T b||/||b|| = 2.1e-04, also praktisch divergenzfrei.
-    double relative_gradient_content(const double* d_v_tilde) const;
-
     /// Prueft die BEM-Blockdaten (dichte Matrizen sowie U/V der ACA-Bloecke,
     /// je fuer D_BEM/H und G_BEM) auf NaN/Inf. Schweigt, wenn alles endlich
     /// ist. Siehe die Begruendung an der Definition.
@@ -428,6 +416,29 @@ private:
 public:
     CoupledMVOperator(int N);
     ~CoupledMVOperator();
+
+    /// Anteil des Gradientenunterraums in einem rechte-Seite-artigen Vektor,
+    /// gemessen als ||G^T v|| / ||v|| im PHYSIKALISCHEN Raum.
+    ///
+    /// G ist der diskrete Gradient (Knoten -> Kanten); G^T v ist damit die
+    /// diskrete Divergenz. Der Curl-Curl-Operator bildet Gradienten auf null
+    /// ab, ein Gradientenanteil in der rechten Seite liegt also NICHT im
+    /// Bildraum -- und A~^-1 darauf angewandt ist beliebig gross.
+    ///
+    /// Vergleichsmassstab liefert fem.cu fuer die physikalische rechte Seite:
+    /// dort ist ||G^T b||/||b|| = 2.1e-04, also praktisch divergenzfrei.
+    ///
+    /// OEFFENTLICH seit dem AMS-Modus des FEM-direkt-Pfades. Dort ist die Frage
+    /// nicht diagnostisch, sondern entscheidend: das System ist singulaer, und
+    /// eine rechte Seite mit Gradientenanteil ist schlicht unloesbar. Der
+    /// Aufrufer prueft damit vor dem Loesen, ob die Aequilibrierung die
+    /// physikalisch hergestellte Konsistenz erhalten hat -- sie tut es nur bei
+    /// b_tilde = D * b, und die Gegenrichtung sieht bis zum stehenbleibenden
+    /// Residuum voellig unauffaellig aus.
+    ///
+    /// Voraussetzung ist setup_divergence_check(); ohne sie liefert die
+    /// Methode -1.
+    double relative_gradient_content(const double* d_v_tilde) const;
 
     // Setup der Sparse Matrix (aus Aufgabe 5.2)
     void setup_fem_matrix(int num_rows, int nnz, int* d_row_offsets, int* d_col_indices, double* d_values);
