@@ -61,7 +61,7 @@ def main():
     expect("Achse auf einem Knoten", covers([box(0, 1, 0, 1), box(-1, 0, 0, 1)]))
     expect("Achse auf einer Kante zwischen zwei Zellen",
            covers([box(-1, 1, 0, 2), box(-1, 1, -2, 0)]))
-    expect("Mittelzelle wie im Standardnetz (Ecken bei r = 1,84)",
+    expect("Mittelzelle ueber der Achse, kein Knoten auf ihr (wie im Standardnetz)",
            covers([box(-1.3, 1.3, -1.3, 1.3)]))
     print("Loch:")
     expect("Ring mit Innenradius 5 erkannt", not covers(ring(5.0, 10.0)))
