@@ -19,7 +19,9 @@ GEPRUEFT
     (Leiter ohne Luft, BEM-Pfad).
   * Konformitaet: jede Flaeche gehoert hoechstens zwei Zellen.
   * Orientierung: Jacobi-Determinante an allen Ecken positiv (Hexaeder,
-    Tetraeder). Prismen: noch nicht (Phase 3 der Gmsh-Vernetzung).
+    Tetraeder, Prismen). Prismen in der Konvention des Loesers
+    (include/NedelecPrism.cuh, wie tools/import_bdf.py): Knoten 0-2 unten,
+    3-5 oben, und (x1-x0, x2-x0, x3-x0) bildet ein Rechtssystem.
   * Volumen je component_id, auf Wunsch gegen Sollwerte.
 
 Phase 1 (docs/design/gmsh-meshing-plan.md) ergaenzt die Pruefungen aus
@@ -46,6 +48,13 @@ FACES = {
 # Hexaeder: je Ecke die drei Nachbarn in rechtshaendiger Reihenfolge
 HEX_CORNERS = [(0, 1, 3, 4), (1, 2, 0, 5), (2, 3, 1, 6), (3, 0, 2, 7),
                (4, 7, 5, 0), (5, 4, 6, 1), (6, 5, 7, 2), (7, 6, 4, 3)]
+# Prismen: je Ecke (Ecke, zwei Nachbarn im Dreieck in zyklischer Reihenfolge,
+# Ecke, von der die dritte Richtung ausgeht, Ecke, zu der sie zeigt). Die
+# dritte Richtung zeigt immer von unten (0-2) nach oben (3-5).
+PRISM_CORNERS = [(0, 1, 2, 0, 3), (1, 2, 0, 1, 4), (2, 0, 1, 2, 5),
+                 (3, 4, 5, 0, 3), (4, 5, 3, 1, 4), (5, 3, 4, 2, 5)]
+# Prisma-Volumen: Zerlegung in 3 Tetraeder
+PRISM_TETS = [(0, 1, 2, 3), (1, 2, 3, 4), (2, 3, 4, 5)]
 # Hexaeder-Volumen: Zerlegung in 5 Tetraeder
 HEX_TETS = [(0, 1, 3, 4), (1, 2, 3, 6), (1, 4, 5, 6), (3, 4, 6, 7), (1, 3, 4, 6)]
 
@@ -179,21 +188,30 @@ def check_orientation(mesh):
                                     P[tets[:, 3]] - P[tets[:, 0]]], axis=1))
         neg += int((J <= 0).sum())
         smallest = min(smallest, float(J.min()))
-    note = " (Prismen nicht geprueft)" if (mesh.types == VTK_PRISM).any() else ""
+    _, prisms = _by_type(mesh, VTK_PRISM)
+    if len(prisms):
+        for v, a, b, lo, hi in PRISM_CORNERS:
+            J = np.linalg.det(np.stack([P[prisms[:, a]] - P[prisms[:, v]],
+                                        P[prisms[:, b]] - P[prisms[:, v]],
+                                        P[prisms[:, hi]] - P[prisms[:, lo]]], axis=1))
+            neg += int((J <= 0).sum())
+            smallest = min(smallest, float(J.min()))
     return Result("Jacobi-Determinante > 0", neg == 0,
-                  f"{neg} Ecken nicht positiv, kleinste {smallest:.3g}{note}")
+                  f"{neg} Ecken nicht positiv, kleinste {smallest:.3g}")
 
 
 def volumes(mesh):
-    """Volumen je component_id (Hexaeder und Tetraeder)."""
+    """Volumen je component_id (Hexaeder, Prismen, Tetraeder; ebene Flaechen exakt)."""
     P, vol = mesh.points, np.zeros(len(mesh.cells))
-    idx, hexes = _by_type(mesh, VTK_HEX)
-    if len(hexes):
-        v = np.zeros(len(hexes))
-        for a, b, c, d in HEX_TETS:
-            v += np.abs(np.linalg.det(np.stack([P[hexes[:, b]] - P[hexes[:, a]],
-                                                P[hexes[:, c]] - P[hexes[:, a]],
-                                                P[hexes[:, d]] - P[hexes[:, a]]], axis=1))) / 6.0
+    for t, split in ((VTK_HEX, HEX_TETS), (VTK_PRISM, PRISM_TETS)):
+        idx, conn = _by_type(mesh, t)
+        if not len(conn):
+            continue
+        v = np.zeros(len(conn))
+        for a, b, c, d in split:
+            v += np.abs(np.linalg.det(np.stack([P[conn[:, b]] - P[conn[:, a]],
+                                                P[conn[:, c]] - P[conn[:, a]],
+                                                P[conn[:, d]] - P[conn[:, a]]], axis=1))) / 6.0
         vol[idx] = v
     idx, tets = _by_type(mesh, VTK_TET)
     if len(tets):

@@ -93,6 +93,20 @@ def main():
     expect("Tetraeder mit --require-hex abgelehnt", not mc.check_types(m, require_hex=True).ok)
     expect("Tetraeder-Volumen 1/6", abs(mc.volumes(m)[1] - 1 / 6) < 1e-15)
 
+    print("Prismen (Konvention des Loesers, include/NedelecPrism.cuh):")
+    pr_pts = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [0, 1, 1]], float)
+    m = mesh(pr_pts, [np.arange(6)], types=[mc.VTK_PRISM])
+    r = mc.check_orientation(m)
+    expect(f"richtig orientiertes Prisma besteht ({r.detail})", r.ok)
+    expect("Prisma-Volumen 1/2", abs(mc.volumes(m)[1] - 0.5) < 1e-15)
+    m = mesh(pr_pts, [np.array([0, 2, 1, 3, 5, 4])], types=[mc.VTK_PRISM])
+    r = mc.check_orientation(m)
+    expect(f"umgedrehtes Prisma erkannt, wie Gmsh es schreibt ({r.detail})",
+           not r.ok and r.detail.startswith("6 "))
+    sheared = pr_pts.copy(); sheared[3:] += [0.3, 0.2, 0.0]      # affin geschert
+    m = mesh(sheared, [np.arange(6)], types=[mc.VTK_PRISM])
+    expect("geschertes Prisma: Volumen unveraendert 1/2", abs(mc.volumes(m)[1] - 0.5) < 1e-15)
+
     print("Volumen gegen Sollwert:")
     r = mc.check_volumes(mesh(pts, cells), {1: 2.0 * (1 + 1e-6)})[0]
     expect(f"Abweichung 1e-6 erkannt ({r.detail})", not r.ok)

@@ -65,12 +65,35 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 | Phase | Inhalt | Stand |
 |---|---|---|
 | 0 | Klärung: 360°-Ring, Hexaederkern, BEM und Dreiecke, Lesbarkeit, Topologie | **abgeschlossen**, siehe [gmsh-phase0-report.md](gmsh-phase0-report.md) |
-| 1 | `tools/meshcheck.py`: Prüfungen aus `import_bdf.py` herauslösen und gemeinsam nutzen; Tests mit absichtlich kaputten Netzen | **teilweise**: Modul und Tests angelegt (mit Phase 2); `import_bdf.py` nutzt es noch nicht |
+| 1 | `tools/meshcheck.py`: gemeinsame Prüfung für alle Importeure; Tests mit absichtlich kaputten Netzen | **abgeschlossen**, siehe „Ergebnis Phase 1“ unten |
 | 2 | `tools/gmsh/team28_hex.py`: Generator mit Parametern (Teilungen in r, z, φ; Kerngröße; Plattenlage), aus dem Prototyp | **abgeschlossen**, siehe [tools/gmsh/README.md](../../tools/gmsh/README.md) |
 | 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0), Größenfelder | offen |
 | 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | offen |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | **abgeschlossen** bis auf den CHANGELOG-Eintrag: der folgt beim Zusammenführen, um einen Konflikt mit offenen PRs zu vermeiden |
 | 6 | optional: Netzserie auf dem Server rechnen — hängt die Stagnation des Lösers vom Netz ab? | offen |
+
+## Ergebnis Phase 1
+
+Die Prüfungen in `tools/import_bdf.py` werden **nicht** durch `meshcheck.py`
+ersetzt: Sie laufen vor dem Schreiben auf den BDF-Daten, können Elemente
+reparieren (`--fix-orientation`), werten die Jacobi-Determinante an
+Gauß-Punkten mit den Formfunktionen des Lösers aus und kommen ohne numpy aus.
+Stattdessen prüft `import_bdf.py` die **geschriebene** Datei zusätzlich mit
+`meshcheck.py`. Diese zweite, unabhängige Prüfung deckt den Schreibschritt
+selbst ab (Knotenreihenfolge, Nummerierung); ein absichtlich eingebauter
+Fehler im Schreiben wird nur von ihr gefunden. Ohne numpy wird sie mit Hinweis
+übersprungen.
+
+`meshcheck.py` prüft jetzt auch Prismen (Orientierung in der Konvention des
+Lösers, `include/NedelecPrism.cuh`, Volumen). Beide Prüfungen stimmen überein.
+
+**Folge für Phase 3: Gmsh schreibt Prismen umgekehrt orientiert.** Alle
+Prismen aus Gmsh-Versuchen sind in der Konvention des Lösers negativ
+(240 von 240, unabhängig bestätigt mit der Gauß-Punkt-Rechnung aus
+`import_bdf.py`). Die Knotenfolge (0, 2, 1, 3, 5, 4) macht sie positiv.
+Tetraeder aus Gmsh sind richtig orientiert. Der Generator für Phase 3 muss
+Prismen deshalb vor dem Schreiben umdrehen; `meshcheck.py` würde ein
+vergessenes Umdrehen melden.
 
 ## Abnahme je Netz (ab Phase 2 automatisch)
 

@@ -47,7 +47,8 @@ Legacy-VTK, ASCII, `UNSTRUCTURED_GRID` (`src/VtkReader.cpp`):
     python3 tools/check_map.py netz.vtk
 
 `meshcheck.py` prüft Zelltypen, doppelte und verwaiste Knoten, getrennte
-Körper, Konformität, Orientierung und Volumen. `check_map.py` prüft die
+Körper, Konformität, Orientierung (Hexaeder, Prismen, Tetraeder) und Volumen.
+`import_bdf.py` prüft die von ihm geschriebene Datei damit ein zweites Mal. `check_map.py` prüft die
 Zuordnung der Spulen, die Maße und die Vollscheibe. Beide enden mit
 Exit-Code 1, wenn etwas nicht stimmt. `team28_hex.py` ruft beide für jedes
 erzeugte Netz selbst auf.
@@ -96,6 +97,10 @@ Hinweis); alle anderen Tests bleiben unverändert.
   gehen sie beim nächsten `synchronize()` verloren.
 - **Knoten nicht verschmelzen** (`removeDuplicateNodes`): Es vereint Knoten
   verschiedener Körper, sobald sie zufällig zusammenfallen.
+- **Prismen aus Gmsh sind umgekehrt orientiert** (in der Konvention des
+  Lösers, `include/NedelecPrism.cuh`). Vor der Verwendung die Knotenfolge
+  (0, 2, 1, 3, 5, 4) anwenden; `meshcheck.py` meldet die Orientierung.
+  Tetraeder aus Gmsh sind richtig orientiert.
 - **Kleinster Radius ist kein Lochkriterium:** Das Standardnetz hat keinen
   Knoten unter r = 1,84 mm und ist trotzdem eine Vollscheibe (Mittelzelle über
   der Achse).

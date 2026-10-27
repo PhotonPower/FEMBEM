@@ -37,6 +37,9 @@ WAS GEPRUEFT WIRD
     Bei einem extrudierten Netz ist die Abbildung affin, wenn die Deckflaeche
     eine reine Parallelverschiebung der Bodenflaeche ist.
   * PID -> component_id, vollstaendig und sichtbar als Tabelle.
+  * Nach dem Schreiben eine zweite, unabhaengige Pruefung der erzeugten Datei
+    mit tools/meshcheck.py (deckt den Schreibschritt selbst ab; braucht
+    numpy, sonst mit Hinweis uebersprungen).
   * Abmessungen (Einheitenverdacht mm gegen m).
 
 AUSGABEFORMAT
@@ -56,6 +59,7 @@ falsche Materialien.
 
 import argparse
 import math
+import os
 import sys
 from collections import defaultdict
 
@@ -640,6 +644,27 @@ def write_surface_vtk(path, nodes, shells, used_nodes):
 
 
 # -----------------------------------------------------------------------------
+def verify_written(path, log):
+    """
+    Zweite, unabhaengige Pruefung der GESCHRIEBENEN Datei mit
+    tools/meshcheck.py. check_mesh() prueft die Elemente vor dem Schreiben;
+    diese Pruefung deckt den Schreibschritt selbst ab (Knotenreihenfolge,
+    Nummerierung, Zelltypen, component_id), so wie VtkReader ihn liest.
+    Braucht numpy; ohne numpy wird sie mit Hinweis uebersprungen.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    try:
+        import meshcheck
+    except ImportError as exc:
+        log("\nZweite Pruefung uebersprungen (%s). Mit numpy laeuft sie mit." % exc)
+        return True
+    log("\nZweite Pruefung der geschriebenen Datei (tools/meshcheck.py):")
+    ok = meshcheck.print_results(meshcheck.run_checks(meshcheck.read_vtk(path)))
+    for cid, vol in sorted(meshcheck.volumes(meshcheck.read_vtk(path)).items()):
+        log("  Volumen component_id %d: %.6g" % (cid, vol))
+    return ok
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(
         description="Nastran BDF -> Legacy-VTK fuer den FEM-direkt-Pfad",
@@ -705,6 +730,14 @@ def main(argv=None):
 
     n_nodes, n_cells = write_vtk(out, nodes, elements, mapping, args)
     log("\nGeschrieben: %s  (%d Knoten, %d Zellen)" % (out, n_nodes, n_cells))
+
+    if not verify_written(out, log):
+        if not args.force:
+            log("\nDie geschriebene Datei besteht die zweite Pruefung NICHT -- nicht")
+            log("verwenden. Das deutet auf einen Fehler beim Schreiben hin, nicht im")
+            log("BDF (das hat check_mesh() oben bereits geprueft).")
+            return 1
+        log("\n--force: zweite Pruefung beanstandet, Datei bleibt trotzdem stehen.")
 
     if args.surface_out:
         used = {n for _, _, nl in elements for n in nl}
