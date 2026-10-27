@@ -40,7 +40,7 @@ Erste öffentliche Fassung.
 - Unabhängiger Referenzlöser (`--reference`) und analytische Biot-Savart-Referenz.
 - Diagnosewerkzeuge: Konditionszahl, Ritz-Spektrum, Vorkonditionierer-Studie.
 - 44 Testprogramme (plus eine Python-Modellrechnung), bei CTest registriert;
-  28 davon mit der Marke `host` (ohne GPU lauffähig), gebündelt im CMake-Ziel
+  29 davon mit der Marke `host` (ohne GPU lauffähig), gebündelt im CMake-Ziel
   `host_tests`.
 - Dokumentation: Architektur, Theorie, Messberichte, Entwurfsnotizen.
 - Python-Werkzeuge: BDF-Import, Ersatznetze für die Netzstudie, Prüfung der
