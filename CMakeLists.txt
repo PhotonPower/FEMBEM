@@ -101,7 +101,21 @@ option(FEMBEM_WITH_CUDSS "Sparse-Direktlöser cuDSS einbinden (fuer --fem-direct
 set(FEMBEM_CUDSS_FOUND FALSE)
 if (FEMBEM_WITH_CUDSS)
     find_package(cudss QUIET)
-    if (cudss_FOUND)
+    # Entwickelt und geprueft gegen cuDSS 0.8.0. Aeltere Versionen (0.7.x)
+    # kennen Symbole nicht, die SparseDirectSolver.cpp braucht
+    # (CUDSS_R_32I, cudssReorderingAlg_t, CUDSS_PIVOT_AUTO,
+    # CUDSS_CONFIG_HYBRID_MEMORY_MODE, ...); der Bau scheitert dann erst
+    # mitten in der Uebersetzung. Deshalb hier ablehnen, wie "nicht gefunden".
+    set(FEMBEM_CUDSS_MIN_VERSION 0.8)
+    if (cudss_FOUND AND NOT "${cudss_VERSION}" STREQUAL ""
+            AND cudss_VERSION VERSION_LESS FEMBEM_CUDSS_MIN_VERSION)
+        message(WARNING
+            "cuDSS ${cudss_VERSION} gefunden, gebraucht wird mindestens ${FEMBEM_CUDSS_MIN_VERSION}.\n"
+            "  Die aeltere Version kennt Symbole nicht, die --fem-direct braucht.\n"
+            "  Eine neuere cuDSS-Installation (gleiche CUDA-Hauptversion wie das\n"
+            "  Toolkit) ueber -DCMAKE_PREFIX_PATH=<...>/cmake/cudss angeben.\n"
+            "  Ohne cuDSS wird ohne --fem-direct gebaut; alles andere bleibt nutzbar.")
+    elseif (cudss_FOUND)
         set(FEMBEM_CUDSS_FOUND TRUE)
         message(STATUS "cuDSS gefunden: Version ${cudss_VERSION}")
     else()
