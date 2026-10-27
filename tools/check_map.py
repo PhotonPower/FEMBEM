@@ -165,8 +165,9 @@ def main(path):
         print(f"Plattenlage: z = {z.min():.2f} .. {z.max():.2f} mm, "
               f"Mitte {0.5*(z.min()+z.max()):.2f} mm, "
               f"Dicke {z.max()-z.min():.2f} mm")
-        print("  Bei 11,3 mm nennt HarmonicLorentz.cuh 1,0497 N als Sollwert,")
-        print("  das Plattengewicht ist 1,026 N. Tiefer -> groessere Kraft.")
+        print("  Im Schwebegleichgewicht (11,3 mm) traegt die Kraft das Gewicht der")
+        print("  Platte: 0,107 kg * 9,81 m/s^2 = 1,0497 N (Sollwert,")
+        print("  HarmonicLorentz.cuh). Tiefer -> groessere Kraft.")
 
     print()
     if not beanstandet:
