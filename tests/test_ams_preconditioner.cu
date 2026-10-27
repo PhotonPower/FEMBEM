@@ -209,7 +209,16 @@ int main() {
                              iv.data(), idg, r, z, tmp.data()); }, 1e-8, 3000, &ri) : -1;
 
         // --- AMS
+        // Dieselben Koeffizienten wie in assemble() an den Alpha-Poisson-
+        // Operator geben (nu = 1/mu_0, beta = sigma/dt), wie es src/fem.cu fuer
+        // den produktiven Pfad tut. Ohne sie faellt der Hilfsraum auf nu = 1,
+        // beta = 0 zurueck und wird schaedlich: gemessen 1174 Iterationen
+        // gegen 298 mit Jacobi bei sigma/dt = 1e6. Der Test stammte aus der
+        // Zeit vor Alpha-Poisson als Vorgabe und war darauf nicht angepasst.
+        const std::vector<double> nu(sm.mesh.num_hexes, 1.0 / (4e-7 * 3.14159265358979323846));
+        const std::vector<double> beta(sm.mesh.num_hexes, sdt);
         AmsPreconditioner ams;
+        ams.set_alpha_coefficients(nu.data(), beta.data());
         ams.setup(A, sm.mesh);
         double ra = 0.0;
         const int it_a = pcg(A, b, [&](const double* r, double* z){ ams.apply(r,z); },
