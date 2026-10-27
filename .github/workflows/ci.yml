@@ -10,17 +10,19 @@ on:
 # der Marke "host" laufen im CPU-Modus (siehe tests/README.md).
 env:
   CUDA_TOOLCHAIN_PACKAGES: cmake make g++-12 nvidia-cuda-toolkit
+  # apt ohne Rueckfragen: ein Paket, das auf Eingabe wartet, haengt sonst ewig
+  DEBIAN_FRONTEND: noninteractive
 
 jobs:
   host-tests:
     name: Host-Tests (ohne GPU)
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain installieren
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends $CUDA_TOOLCHAIN_PACKAGES
+        timeout-minutes: 40
+        run: .github/scripts/apt-install.sh $CUDA_TOOLCHAIN_PACKAGES
       - name: Konfigurieren
         run: >
           cmake -S . -B build
@@ -35,12 +37,12 @@ jobs:
   solver-build:
     name: Hauptprogramm bauen
     runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain installieren
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends $CUDA_TOOLCHAIN_PACKAGES
+        timeout-minutes: 40
+        run: .github/scripts/apt-install.sh $CUDA_TOOLCHAIN_PACKAGES
       - name: Konfigurieren (ohne Tests)
         run: >
           cmake -S . -B build
@@ -56,6 +58,7 @@ jobs:
   tools:
     name: Python-Werkzeuge
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -100,12 +103,15 @@ jobs:
   docs:
     name: Dokumentation (LaTeX)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: TeX installieren
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends latexmk texlive-latex-extra texlive-latex-recommended texlive-fonts-recommended texlive-science texlive-pictures texlive-lang-german
+        timeout-minutes: 40
+        run: >
+          .github/scripts/apt-install.sh latexmk texlive-latex-extra
+          texlive-latex-recommended texlive-fonts-recommended texlive-science
+          texlive-pictures texlive-lang-german
       - name: Uebersetzen
         run: make -C docs
       - uses: actions/upload-artifact@v4
