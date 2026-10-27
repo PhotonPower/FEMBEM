@@ -9,7 +9,8 @@ man sie prüft. Plan und Hintergrund der Gmsh-Werkzeuge:
 | Quelle | Werkzeug | Ergebnis |
 |---|---|---|
 | Standardnetz | — | `data/team28/team28.vtk`, 4805 Hexaeder; liegt nach dem Konfigurieren im Build-Verzeichnis |
-| Gmsh, parametrisch | `tools/gmsh/team28_hex.py` | reines Hexaedernetz, beliebig fein, geprüft |
+| Gmsh, parametrisch, BEM-FEM | `tools/gmsh/team28_hex.py` | reines Hexaedernetz der Leiter, beliebig fein, geprüft |
+| Gmsh, parametrisch, FEM-direkt | `tools/gmsh/team28_fem_air.py` | Prismennetz mit Luftgebiet, Abschneidefaktor einstellbar, geprüft |
 | Nastran-BDF | `tools/import_bdf.py`, `tools/vtk_konverter.py` | Netz aus einem externen Vernetzer |
 | grobe Ersatznetze | `tools/make_coarse_team28.py` | strukturierte Netze für die Netzstudie |
 
@@ -38,12 +39,18 @@ Legacy-VTK, ASCII, `UNSTRUCTURED_GRID` (`src/VtkReader.cpp`):
 3. **Körper getrennt.** Im BEM-Pfad (Leiter ohne Luft) darf kein Knoten zu
    zwei Körpern gehören; Platte und Spule wären sonst leitend verbunden.
 4. **Platte oberhalb der Spulen**, ohne Berührung.
-5. **Konform, richtig orientiert:** jede Fläche gehört höchstens zwei Zellen,
+5. **FEM-direkt: Luft umschließt alles.** Jede Randfläche gehört zur Luft
+   (`component_id` 0); dort sitzt die Randbedingung A × n = 0. Prismen müssen
+   affin sein (senkrecht extrudiert), sonst bleibt ein Fehler, der linear mit
+   der Verzerrung wächst. Der Abschneidefaktor (Ausdehnung Luft / Ausdehnung
+   Leiter) sollte mindestens 2 sein; das Programm warnt darunter.
+6. **Konform, richtig orientiert:** jede Fläche gehört höchstens zwei Zellen,
    die Jacobi-Determinante ist an allen Ecken positiv.
 
 ## Prüfen
 
-    python3 tools/meshcheck.py netz.vtk --require-hex --separate-bodies
+    python3 tools/meshcheck.py netz.vtk --require-hex --separate-bodies    # BEM-FEM
+    python3 tools/meshcheck.py netz.vtk --air-enclosed --prism-affinity    # FEM-direkt
     python3 tools/check_map.py netz.vtk
 
 `meshcheck.py` prüft Zelltypen, doppelte und verwaiste Knoten, getrennte
@@ -54,14 +61,16 @@ Exit-Code 1, wenn etwas nicht stimmt. `team28_hex.py` ruft beide für jedes
 erzeugte Netz selbst auf.
 
 Was nur das Programm prüfen kann: Beim Start meldet es die gefundenen
-Kohomologie-Generatoren. Für TEAM 28 müssen es genau **2** sein, je Ringspule
-einer:
+Kohomologie-Generatoren. Für TEAM 28 sind es
+
+- im **BEM-FEM-Pfad** (Leiter ohne Luft) genau **2**, je Ringspule einer;
+- im **FEM-direkt-Pfad** (mit Luft) genau **0**: leitend ist nur die Platte,
+  und die ist eine Vollscheibe.
 
     ./fembem 1 --mesh=netz.vtk | grep Kohomologie-Generatoren
-    [Gauge] 2 Kohomologie-Generatoren gefunden (ein Volltorus-Loch je Ringspule).
 
 Eine andere Zahl heißt: Die Topologie stimmt nicht (zum Beispiel ein Loch in
-der Platte oder zwei verbundene Körper).
+der Platte, das einen Generator mehr ergibt, oder zwei verbundene Körper).
 
 ## Netze mit Gmsh erzeugen
 
@@ -73,6 +82,13 @@ Optionen und gemessene Qualität: [tools/gmsh/README.md](../tools/gmsh/README.md
 Gmsh braucht auch ohne Grafik die GL-Laufzeitbibliotheken (Ubuntu:
 `libglu1-mesa`, `libgl1` und einige X-Bibliotheken; RHEL: vermutlich
 `mesa-libGLU`).
+
+Für den FEM-direkt-Pfad mit Luftgebiet, auch als Abschneidestudie:
+
+    ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py -o team28_fem_air.vtk
+    for t in 2 3 5; do
+        ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py --truncation $t -o kasten_$t.vtk
+    done
 
 Eine Netzserie für die Frage, ob das Verhalten des Lösers von der
 Netzfeinheit abhängt:

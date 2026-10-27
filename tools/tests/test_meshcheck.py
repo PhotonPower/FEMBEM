@@ -107,6 +107,32 @@ def main():
     m = mesh(sheared, [np.arange(6)], types=[mc.VTK_PRISM])
     expect("geschertes Prisma: Volumen unveraendert 1/2", abs(mc.volumes(m)[1] - 0.5) < 1e-15)
 
+    print("Prismen-Affinitaet:")
+    m = mesh(pr_pts, [np.arange(6)], types=[mc.VTK_PRISM])
+    expect("gerades Prisma affin", mc.check_prism_affinity(m).ok)
+    m = mesh(sheared, [np.arange(6)], types=[mc.VTK_PRISM])
+    expect("geschertes Prisma affin (Verschiebung, keine Verzerrung)", mc.check_prism_affinity(m).ok)
+    twisted = pr_pts.copy(); twisted[4] += [0.0, 0.1, 0.0]       # eine Seitenkante verzerrt
+    m = mesh(twisted, [np.arange(6)], types=[mc.VTK_PRISM])
+    r = mc.check_prism_affinity(m)
+    expect(f"verzerrtes Prisma erkannt ({r.detail})", not r.ok)
+
+    print("Luft umschliesst alles:")
+    m = mesh(pts, cells, comp=[0, 3])                            # Leiter am Rand
+    r = mc.check_air_encloses(m)
+    expect(f"Leiter am Aussenrand erkannt ({r.detail})", not r.ok)
+    # 3x1x1-Wuerfelkette: Leiter in der Mitte, aber Rand trotzdem am Leiter
+    expect("ohne Luftzellen erkannt", not mc.check_air_encloses(mesh(pts, cells, comp=[3, 3])).ok)
+    # Leiter vollstaendig umschlossen: 3x3x3 Wuerfel, nur der mittlere ist Leiter
+    blk = [cube((i, j, k)) for i in range(3) for j in range(3) for k in range(3)]
+    allp = np.vstack(blk)
+    q = np.round(allp, 9); _, inv = np.unique(q, axis=0, return_inverse=True)
+    uniq = np.array([allp[np.flatnonzero(inv == u)[0]] for u in range(inv.max() + 1)])
+    cells27 = [inv[8 * n:8 * n + 8] for n in range(27)]
+    comp27 = [3 if n == 13 else 0 for n in range(27)]
+    r = mc.check_air_encloses(mesh(uniq, cells27, comp=comp27))
+    expect(f"umschlossener Leiter besteht ({r.detail})", r.ok)
+
     print("Volumen gegen Sollwert:")
     r = mc.check_volumes(mesh(pts, cells), {1: 2.0 * (1 + 1e-6)})[0]
     expect(f"Abweichung 1e-6 erkannt ({r.detail})", not r.ok)

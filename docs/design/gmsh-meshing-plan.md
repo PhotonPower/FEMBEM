@@ -75,7 +75,7 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 | 0 | Klärung: 360°-Ring, Hexaederkern, BEM und Dreiecke, Lesbarkeit, Topologie | **abgeschlossen**, siehe [gmsh-phase0-report.md](gmsh-phase0-report.md) |
 | 1 | `tools/meshcheck.py`: gemeinsame Prüfung für alle Importeure; Tests mit absichtlich kaputten Netzen | **abgeschlossen**, siehe „Ergebnis Phase 1“ unten |
 | 2 | `tools/gmsh/team28_hex.py`: Generator mit Parametern (Teilungen in r, z, φ; Kerngröße; Plattenlage), aus dem Prototyp | **abgeschlossen**, siehe [tools/gmsh/README.md](../../tools/gmsh/README.md) |
-| 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0), Größenfelder | offen |
+| 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0) | **abgeschlossen**, siehe „Ergebnis Phase 3“ unten |
 | 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | offen |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | **abgeschlossen** bis auf den CHANGELOG-Eintrag: der folgt beim Zusammenführen, um einen Konflikt mit offenen PRs zu vermeiden |
 | 6 | optional: Netzserie auf dem Server rechnen — hängt die Stagnation des Lösers vom Netz ab? | offen |
@@ -102,6 +102,36 @@ Prismen aus Gmsh-Versuchen sind in der Konvention des Lösers negativ
 Tetraeder aus Gmsh sind richtig orientiert. Der Generator für Phase 3 muss
 Prismen deshalb vor dem Schreiben umdrehen; `meshcheck.py` würde ein
 vergessenes Umdrehen melden.
+
+## Ergebnis Phase 3
+
+`tools/gmsh/team28_fem_air.py` erzeugt ein reines Prismennetz mit Luftzylinder,
+wie AP2 in [fem-direct-plan.md](fem-direct-plan.md) es verlangt: Dreiecksnetz in
+der Ebene mit allen Radien als Kanten, schichtweise senkrecht extrudiert
+(Prismen affin, Defekt ~1e-15), Schichtgrenzen an Spulen, Spalt und Platte,
+Platte mit mehreren Lagen, Luftschichten zum Rand hin gröber. Der
+Abschneidefaktor ist direkt einstellbar und folgt der Definition des Programms.
+
+Geprüft:
+
+- Je Netz: nur Prismen, konform, positiv orientiert, affin, Luft umschließt
+  alles, Volumina **exakt** gegen das Vieleck aus den Knoten auf jedem Kreis
+  (bis auf Rundung, ~1e-16), `check_map.py`, Abschneidefaktor. Zehn
+  Parameterkombinationen und zwei unzulässige Eingaben. Eine zuerst gewählte
+  Toleranz von 1 % gegen die Kreisformel war falsch: bei grobem Netz fehlen
+  einem Vieleck aus 17 Segmenten rund 2 % Fläche. Gegenprobe: eine absichtlich
+  falsche Zuordnung des Plattenrands wird erkannt (Volumen −29 %, `check_map`).
+- Im Programm (grobes Netz, 24 684 Prismen): der Leser akzeptiert es,
+  **0 Kohomologie-Generatoren** wie für eine Vollscheibe mit Luft erwartet.
+  Die Vorprüfung des FEM-direkt-Pfads (`preflight_fem_direct`, eigens
+  aufgerufen, weil der Lauf ohne cuDSS vorher abbricht) meldet keine
+  Beanstandung und Abschneidefaktor 3 / 3 / 3 wie eingestellt.
+- Nicht geprüft: ein vollständiger FEM-direkt-Lauf mit Kraft — dafür braucht es
+  cuDSS bzw. die GPU (Phase 6 auf dem Server).
+
+Gmsh liefert die Prismen dieser Extrusion übrigens bereits richtig orientiert
+(0 von 140 616 gedreht); die Drehung im Generator bleibt als Absicherung, sie
+richtet jedes Prisma einzeln aus.
 
 ## Abnahme je Netz (ab Phase 2 automatisch)
 

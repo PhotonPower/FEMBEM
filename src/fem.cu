@@ -1193,9 +1193,13 @@ int mainloop(int argc, char** argv) {
                               ? CohomologyGaugeResult{}
                               : find_cohomology_generators(
             mesh, gauge, d_materials.data(), 0.0);
+        // Erwartet fuer TEAM 28: im BEM-FEM-Pfad 2 (je Ringspule ein
+        // Volltorus-Loch), im FEM-direkt-Pfad mit Luft 0 (leitend ist nur die
+        // Platte, und die ist eine Vollscheibe). Ein Loch in der Platte gaebe
+        // einen mehr -- und entspraeche nicht dem Benchmark.
         std::cout << "[Gauge] " << cohomology.generators.size()
-                  << " Kohomologie-Generatoren gefunden (ein Volltorus-Loch je "
-                     "Ringspule).\n";
+                  << " Kohomologie-Generatoren gefunden (TEAM 28: BEM-FEM 2, "
+                     "einer je Ringspule; FEM-direkt mit Luft 0).\n";
 
         // Auf den Baum-Koordinaten null setzen (siehe CohomologyGauge.h,
         // "Anwendung als Eichung") -- sonst waere die Gesamtprojektion

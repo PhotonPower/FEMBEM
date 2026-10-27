@@ -23,6 +23,8 @@ GEPRUEFT
     (include/NedelecPrism.cuh, wie tools/import_bdf.py): Knoten 0-2 unten,
     3-5 oben, und (x1-x0, x2-x0, x3-x0) bildet ein Rechtssystem.
   * Volumen je component_id, auf Wunsch gegen Sollwerte.
+  * Mit --prism-affinity: Prismen affin (Deckflaeche = verschobene Bodenflaeche).
+  * Mit --air-enclosed: jede Randflaeche gehoert zur Luft (FEM-direkt).
 
 Phase 1 (docs/design/gmsh-meshing-plan.md) ergaenzt die Pruefungen aus
 tools/import_bdf.py (Prismen-Affinitaet, Einheiten) und laesst beide
@@ -154,6 +156,57 @@ def check_separate_bodies(mesh):
     return Result("Koerper getrennt", not shared, f"{len(shared)} gemeinsame Knoten")
 
 
+def _faces_with_owner(mesh):
+    """Flaeche (sortierte Knoten) -> Liste der Zellindizes, die sie enthalten."""
+    owners = {}
+    for t, faces in FACES.items():
+        idx, conn = _by_type(mesh, t)
+        if len(conn) == 0:
+            continue
+        for f in faces:
+            keys = np.sort(conn[:, list(f)], axis=1)
+            for cell, row in zip(idx, map(tuple, keys)):
+                owners.setdefault(row, []).append(int(cell))
+    return owners
+
+
+def check_air_encloses(mesh, air_id=0):
+    """Jede Randflaeche gehoert zu einer Luftzelle (FEM-direkt).
+
+    Der Loeser setzt A x n = 0 auf die ganze Aussenflaeche. Beruehrt ein
+    Leiter sie, saesse die Randbedingung auf dem Leiter.
+    """
+    owners = _faces_with_owner(mesh)
+    if not (mesh.comp == air_id).any():
+        return Result("Luft umschliesst alles", False, f"keine Zelle mit component_id {air_id}")
+    bad = sum(1 for cells in owners.values() if len(cells) == 1 and mesh.comp[cells[0]] != air_id)
+    n_bnd = sum(1 for cells in owners.values() if len(cells) == 1)
+    return Result("Luft umschliesst alles", bad == 0,
+                  f"{bad} von {n_bnd} Randflaechen gehoeren zu einem Leiter")
+
+
+def check_prism_affinity(mesh, tol=1e-10):
+    """Prismen affin: Deckflaeche = Parallelverschiebung der Bodenflaeche.
+
+    Nedelec-Elemente niedrigster Ordnung reproduzieren ein konstantes B nur auf
+    affin abgebildeten Elementen exakt; der Fehler waechst linear mit der
+    Verzerrung (docs/design/fem-direct-plan.md, AP2). Mass wie in
+    tools/import_bdf.py: groesste Abweichung der drei Seitenkanten relativ zur
+    Elementgroesse.
+    """
+    _, pr = _by_type(mesh, VTK_PRISM)
+    if not len(pr):
+        return Result("Prismen affin", True, "keine Prismen")
+    P = mesh.points
+    d = [P[pr[:, i + 3]] - P[pr[:, i]] for i in range(3)]
+    n = lambda v: np.linalg.norm(v, axis=1)
+    scale = np.maximum.reduce([n(P[pr[:, 1]] - P[pr[:, 0]]), n(P[pr[:, 2]] - P[pr[:, 0]]), n(d[0])])
+    worst = np.maximum.reduce([n(d[1] - d[0]), n(d[2] - d[0]), n(d[2] - d[1])]) / scale
+    bad = int((worst > tol).sum())
+    return Result("Prismen affin", bad == 0,
+                  f"groesster Defekt {worst.max():.1e}, {bad} ueber {tol:g}")
+
+
 def check_conformity(mesh):
     counts = {}
     for t, faces in FACES.items():
@@ -233,12 +286,16 @@ def check_volumes(mesh, expected, rel_tol=1e-9, names=None):
 
 
 def run_checks(mesh, require_hex=False, expected_volumes=None, names=None,
-               separate_bodies=False):
+               separate_bodies=False, air_enclosed=False, prism_affinity=False):
     res = [check_types(mesh, require_hex), check_duplicate_nodes(mesh),
            check_orphan_nodes(mesh)]
     if separate_bodies:
         res.append(check_separate_bodies(mesh))
     res += [check_conformity(mesh), check_orientation(mesh)]
+    if prism_affinity:
+        res.append(check_prism_affinity(mesh))
+    if air_enclosed:
+        res.append(check_air_encloses(mesh))
     if expected_volumes:
         res += check_volumes(mesh, expected_volumes, names=names)
     return res
@@ -257,11 +314,17 @@ def main():
     ap.add_argument("--require-hex", action="store_true", help="nur Hexaeder zulassen (BEM-Pfad)")
     ap.add_argument("--separate-bodies", action="store_true",
                     help="Koerper duerfen keine Knoten teilen (BEM-Pfad, ohne Luft)")
+    ap.add_argument("--air-enclosed", action="store_true",
+                    help="jede Randflaeche gehoert zur Luft, component_id 0 (FEM-direkt)")
+    ap.add_argument("--prism-affinity", action="store_true",
+                    help="Prismen muessen affin sein (Deckflaeche parallel verschoben)")
     a = ap.parse_args()
     mesh = read_vtk(a.vtk)
     print(f"{a.vtk}: {len(mesh.points)} Knoten, {len(mesh.cells)} Zellen")
     ok = print_results(run_checks(mesh, require_hex=a.require_hex,
-                                  separate_bodies=a.separate_bodies))
+                                  separate_bodies=a.separate_bodies,
+                                  air_enclosed=a.air_enclosed,
+                                  prism_affinity=a.prism_affinity))
     for cid, v in volumes(mesh).items():
         print(f"  Volumen component_id {cid}: {v:.4f}")
     return 0 if ok else 1

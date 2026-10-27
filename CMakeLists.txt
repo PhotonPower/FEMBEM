@@ -1000,7 +1000,14 @@ if (_fembem_py_numpy EQUAL 0 AND _fembem_py_gmsh EQUAL 0)
     add_test(NAME gmsh_team28_hex_variant
              COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_hex.py --n-quarter 9
                      --plate-grading 0.85 --plate-z0 9.8 -o gmsh_team28_hex_variant.vtk)
+    add_test(NAME gmsh_team28_fem_air_coarse
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_fem_air.py --scale 0.5
+                     -o gmsh_team28_fem_air_coarse.vtk)
+    add_test(NAME gmsh_team28_fem_air_truncation2
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_fem_air.py --scale 0.5
+                     --truncation 2 --plate-z0 11.3 -o gmsh_team28_fem_air_t2.vtk)
     set_tests_properties(gmsh_team28_hex gmsh_team28_hex_coarse gmsh_team28_hex_variant
+                         gmsh_team28_fem_air_coarse gmsh_team28_fem_air_truncation2
                          PROPERTIES LABELS "gmsh" TIMEOUT 300)
     message(STATUS "FEMBEM: Tests gmsh   aktiv")
 else()

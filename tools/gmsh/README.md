@@ -49,3 +49,43 @@ Genauigkeit verbessert, ist nicht gemessen (Phase 6 des Plans).
 Was das Programm danach prüft: Der Löser muss genau **2**
 Kohomologie-Generatoren finden (je Ringspule einer). Geprüft für die
 Vorgaben, `--scale 0.5` und `--n-quarter 9 --plate-grading 0.85`.
+
+## `team28_fem_air.py`: Netz mit Luftgebiet für FEM-direkt
+
+    ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py -o team28_fem_air.vtk
+    ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py --help
+
+Für `./fembem --fem-direct` (bzw. `--fem-direct-iterative`). Reines
+Prismennetz: Dreiecksnetz in der Ebene, schichtweise senkrecht extrudiert, damit
+alle Prismen affin sind. Die Platte ist eine **Vollscheibe**. Prismen werden vor
+dem Schreiben in die Konvention des Lösers gedreht.
+
+| Option | Vorgabe | Bedeutung |
+|---|---|---|
+| `--h` | 5 | Kantenlänge in der Ebene an Leitern und Platte, mm |
+| `--h-air` | 35 | Kantenlänge am Außenrand der Luft, mm |
+| `--coil-nz`, `--gap-nz`, `--plate-nz` | 6, 3, 4 | Schichten über Spulenhöhe, Spalt und Plattendicke |
+| `--air-first`, `--air-growth` | 3, 1.4 | erste Luftschicht am Leiter (mm) und Wachstum nach außen |
+| `--truncation` | 3 | Abschneidefaktor radial und axial (einzeln: `--truncation-radial`, `--truncation-axial`) |
+| `--plate-z0` | 3.8 | Unterkante der Platte in mm, muss > 0 sein |
+| `--scale` | 1.0 | Feinheit: teilt Kantenlängen, vervielfacht Schichtzahlen |
+
+Der Abschneidefaktor folgt der Definition des Programms (Ausdehnung der Luft /
+Ausdehnung der Leiter, je Achse; `FemDirectRun.cpp`). Das Programm warnt unter 2.
+
+Gemessene Größen (Prismen gesamt, davon Platte):
+
+| Aufruf | Prismen | Platte | Blocksystem (2n) |
+|---|---|---|---|
+| `--scale 0.5` | 24 684 | | 104 106 Zeilen |
+| Vorgabe | 140 616 | 5 904 | |
+| `--truncation 2` / `5` | 96 416 / 249 798 | | |
+| `--plate-nz 6 --h 4` | 206 944 | | |
+
+Die meisten Prismen liegen in der Luft: Jede Schicht, die Spulen und Platte
+auflöst, reicht radial durch das ganze Luftgebiet. Das ist der Preis des reinen
+Prismennetzes (AP2).
+
+Im Programm geprüft (grobes Netz): **0 Kohomologie-Generatoren**, wie für eine
+Vollscheibe mit Luft erwartet; die Vorprüfung des FEM-direkt-Pfads meldet
+keine Beanstandung und den eingestellten Abschneidefaktor.
