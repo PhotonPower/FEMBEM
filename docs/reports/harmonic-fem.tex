@@ -1,0 +1,818 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+% babel nur laden, wenn das Sprachpaket vorhanden ist, damit das Dokument
+% auch auf einer minimalen TeX-Live uebersetzt.
+\IfFileExists{ngerman.ldf}{\usepackage[ngerman]{babel}}{%
+  \typeout{^^JHINWEIS: babel-german fehlt, Silbentrennung bleibt englisch.^^J}}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{hyperref}
+\usepackage{xcolor}   % blue!50!black in hypersetup braucht das Mischmodell
+\usepackage{enumitem}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!50!black,
+  urlcolor=blue!50!black,
+  pdftitle={FEMBEM -- Harmonische FEM, Stand und Befunde},
+}
+
+\newcommand{\Ar}{\mathbf{A}_r}
+\newcommand{\Ai}{\mathbf{A}_i}
+\newcommand{\Js}{\mathbf{J}_s}
+
+\title{Harmonische FEM für TEAM 28\\[0.3em]
+       \large Formulierung, Löser und gemessene Befunde}
+\author{FEMBEM}
+\date{September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Dieser Bericht fasst den Stand des Pfades \texttt{--fem-direct} zusammen: eine
+harmonische Wirbelstromrechnung in reiner FEM mit mitvernetztem Luftgebiet und
+Sparse-Direktlöser, ohne BEM-Kopplung. Beschrieben werden die Formulierung, die
+Kantenelemente, die drei Projektionen und Regularisierungen, die beiden Löser
+und die Kraftauswertung. Der zweite Teil nennt die Messergebnisse mit ihren
+Vorbehalten. Alle Zahlen im Text sind Läufe, keine Schätzungen; wo etwas
+geschätzt ist, steht es dabei. Der Kernbefund: die Levitationskraft in der
+Gleichgewichtslage beträgt 1,02\,N gegen ein Plattengewicht von
+1,026\,N, aber die Netzreihe belegt diese Übereinstimmung noch nicht.
+\end{abstract}
+
+\tableofcontents
+
+\section{Aufgabe und Abgrenzung}
+
+TEAM~28 ist eine axialsymmetrische Levitationsanordnung: zwei konzentrische
+Ringspulen mit gegenläufigem 50\,Hz-Strom, darüber eine
+Aluminiumscheibe (3\,mm dick, Außenradius 65\,mm,
+$\sigma = 3.4e7\,S/m$). Gesucht ist die zeitgemittelte
+Auftriebskraft bei ruhender Platte, aus der sich die Schwebehöhe ergibt.
+
+Die Aufgabe ist linear und harmonisch. Der hier beschriebene Pfad nutzt das
+aus und rechnet direkt im Frequenzbereich, statt einen Einschwingvorgang zu
+integrieren. Er verzichtet außerdem auf die BEM-Kopplung des Hauptpfades: das
+Luftgebiet wird mitvernetzt und am Rand mit $\mathbf{A}\times\mathbf{n} = 0$
+abgeschnitten. Das kostet Freiheitsgrade, erspart aber die Randintegrale und
+macht das System sparse und direkt lösbar.
+
+Zwei Einschränkungen gelten durchweg. Erstens $\mu_r = 1$ überall -- weder
+Platte noch Spulen sind magnetisch. Zweitens ruht die Platte; die Kraft wird
+für eine feste Lage berechnet, nicht die Bewegung integriert.
+
+\section{Formulierung}
+
+\subsection{Kontinuierliches Problem}
+
+Im magnetischen Vektorpotential $\mathbf{A}$ mit $\mathbf{B} =
+\nabla\times\mathbf{A}$ lautet die Wirbelstromgleichung im Frequenzbereich
+\begin{equation}
+  \nabla\times\left(\nu\,\nabla\times\hat{\mathbf{A}}\right)
+  + \mathrm{j}\omega\sigma\hat{\mathbf{A}} = \hat{\Js},
+  \qquad \nu = \frac{1}{\mu_0},
+  \label{eq:kont}
+\end{equation}
+mit dem Phasor $\hat{\mathbf{A}}$ und der eingeprägten Spulenstromdichte
+$\hat{\Js}$. Die induzierte Stromdichte ist
+$\hat{\mathbf{J}} = -\mathrm{j}\omega\sigma\hat{\mathbf{A}}$.
+
+Gleichung~\eqref{eq:kont} fixiert die Eichung nicht. In leitenden Gebieten
+($\sigma > 0$) erledigt der Term $\mathrm{j}\omega\sigma\hat{\mathbf{A}}$ das
+implizit, in nichtleitenden nicht: dort ist jedes Gradientenfeld
+$\nabla\varphi$ eine Lösung des homogenen Problems. Abschnitt~\ref{sec:regul}
+behandelt das.
+
+\subsection{Diskretisierung und reelle Blockform}
+
+Nach Galerkin-Diskretisierung mit Kantenelementen (Abschnitt~\ref{sec:elem})
+entstehen zwei Matrizen,
+\begin{equation}
+  K_{ij} = \int_\Omega \nu\,(\nabla\times\mathbf{W}_i)\cdot(\nabla\times\mathbf{W}_j)\,\mathrm{d}V,
+  \qquad
+  C_{ij} = \int_\Omega \sigma\,\mathbf{W}_i\cdot\mathbf{W}_j\,\mathrm{d}V,
+\end{equation}
+und das komplexe System $(K + \mathrm{j}\omega C)\,\hat{x} = \hat{b}$. Gelöst
+wird nicht komplex, sondern in der reellen $2n$-Blockform
+\begin{equation}
+  \underbrace{\begin{bmatrix} K & -\omega C \\ \omega C & K \end{bmatrix}}_{H}
+  \begin{bmatrix} x_r \\ x_i \end{bmatrix}
+  = \begin{bmatrix} b_r \\ b_i \end{bmatrix}.
+  \label{eq:block}
+\end{equation}
+Das erspart komplexe Kernel, komplexe Löserpfade und eine zweite
+Vorkonditionierung. $H$ ist \emph{nicht} symmetrisch.
+
+$K$ und $C$ werden nicht getrennt assembliert, sondern aus zwei Aufrufen
+derselben Assemblierung gewonnen: der implizite Euler-Schritt liefert
+$K + C/\Delta t$, also
+\begin{equation}
+  \Delta t = 1/\omega \;\Rightarrow\; K + \omega C,
+  \qquad
+  \Delta t \to \infty \;\Rightarrow\; K,
+  \qquad
+  C = \frac{(K+\omega C) - K}{\omega}.
+\end{equation}
+Der Umweg vermeidet eine zweite vollständige Konfiguration, die von der ersten
+abweichen könnte, ohne dass es auffällt.
+
+\subsection{Anregung und Phasenkonvention}
+
+Die Spulen sind stromgetrieben mit $i(t) = I\sin(\omega t)$. Für die
+Blockform~\eqref{eq:block} wird die \emph{Amplitude} gebraucht, nicht eine
+Zeitprobe: der Quellterm wird deshalb bei $t = T/4$ ausgewertet, wo
+$\sin(\omega t) = 1$. Das entspricht der Konvention $i(t) = I\cos(\omega t)$
+mit reeller rechter Seite, also $b_i = 0$. Für die zeitgemittelte Kraft ist
+das gleichgültig -- sie ist unter einer gemeinsamen Phasendrehung aller
+Phasoren invariant.
+
+Kontrolle der Skalierung über die Amperewindungen, gerechnet aus den
+protokollierten Stromdichten und der Netzgeometrie:
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+& $J$ [A/m$^2$] & Querschnitt [m$^2$] & Amperewindungen \\
+\midrule
+Innenspule  & $1{,}32\cdot 10^{7}$  & $1{,}456\cdot 10^{-3}$ & $1{,}92\cdot 10^{4}$ \\
+Außenspule  & $-1{,}48\cdot 10^{7}$ & $7{,}80\cdot 10^{-4}$  & $-1{,}15\cdot 10^{4}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Elemente}
+\label{sec:elem}
+
+\subsection{Kantenelemente niedrigster Ordnung}
+
+Verwendet werden Nédélec-Kantenelemente niedrigster Ordnung (Whitney-Formen).
+Der Freiheitsgrad je Kante ist die Zirkulation
+\begin{equation}
+  a_e = \int_e \mathbf{A}\cdot\mathrm{d}\boldsymbol{\ell}
+\end{equation}
+entlang der gespeicherten Kantenrichtung. Der Raum enthält alle Felder der
+Form $\mathbf{a} + \mathbf{b}\times\mathbf{r}$; ein homogenes
+$\mathbf{B} = \nabla\times(\tfrac12\mathbf{B}\times\mathbf{r})$ ist damit
+exakt darstellbar. Genau das ist der Patchtest in
+Abschnitt~\ref{sec:verifikation}.
+
+Unterstützt werden Tetraeder (6 Kanten), Hexaeder (12) und Prismen (9). Die
+Element-zu-Kante-Tabelle hat einheitlich die Schrittweite 12; unbenutzte
+Plätze tragen $-1$. Diese Konvention war die Quelle mehrerer Fehler
+(Abschnitt~\ref{sec:fehler}).
+
+\subsection{Orientierung}
+
+Jede globale Kante wird als $(v_{\min}, v_{\max})$ abgelegt. Ein
+Vorzeichen je Elementkante sagt, ob die lokale Richtung damit übereinstimmt.
+Die lokalen Element\-matrizen sind \emph{unorientiert}; das Vorzeichen wird
+erst beim Sammeln und Streuen angewandt:
+\begin{equation}
+  c_i^{\text{lokal}} = s_i\, a_{g(i)},
+  \qquad
+  b_{g(i)} \mathrel{+}= s_i\, F_i,
+  \qquad
+  A_{g(r),g(c)} \mathrel{+}= s_r s_c\, K_{rc}.
+\end{equation}
+
+\subsection{Abbildungen und Quadratur}
+
+Für die Basisfunktionen gilt die kovariante Piola-Transformation
+\emph{zeilenweise} über $J^{-1}$, für ihre Rotation die kontravariante
+\emph{spaltenweise} über $J$ und geteilt durch $\det J$:
+\begin{equation}
+  \mathbf{W}^{\text{phys}} = J^{-1}\,\mathbf{W}^{\text{ref}},
+  \qquad
+  \nabla\times\mathbf{W}^{\text{phys}}
+  = \frac{1}{\det J}\,J^{\!\top\!}\,{}^{-\top}\!\!\left(\nabla\times\mathbf{W}^{\text{ref}}\right)
+  \;\;\text{(spaltenweise über } J).
+\end{equation}
+Die Verwechslung der beiden Formen ist folgenlos auf affinen Elementen und
+falsch auf verzerrten -- der Patchtest wird deshalb auf einem zufällig
+gestörten Netz gefahren.
+
+Quadratur: 4 Punkte auf dem Tetraeder, $2\times2\times2$-Gauss auf dem
+Hexaeder. Der Tetraeder wird stets affin abgebildet, $\det J$ ist dort
+konstant.
+
+\section{Nullraum, Regularisierung, Projektionen}
+\label{sec:regul}
+
+Drei Eingriffe stehen zwischen der Assemblierung und dem Löser. Sie hängen
+zusammen und werden hier in der Reihenfolge ihres Auftretens beschrieben.
+
+\subsection{Regularisierung des Curl-Curl-Nullraums}
+
+$K$ ist auf Gradientenfeldern exakt null ($\nabla\times\nabla\varphi = 0$).
+In den nichtleitenden Gebieten -- Luft \emph{und} die stromgetriebenen Spulen,
+die $\kappa = 0$ tragen -- ist $K + \mathrm{j}\omega C$ deshalb singulär.
+
+Der Hauptpfad des Projekts löst das über eine Baum-Kobaum-Eichung mit
+zusätzlichen Kohomologie-Projektoren (ein Volltorus-Loch je Ringspule). Dieser
+Pfad wählt stattdessen eine Regularisierung:
+\begin{equation}
+  \sigma_{\text{Luft}} = \varepsilon\,\sigma_{\text{Leiter}},
+  \qquad \varepsilon = 10^{-8} \text{ (Vorgabe, einstellbar)}.
+\end{equation}
+Das beseitigt beide Nullraumanteile auf einen Schlag. Der Preis ist eine
+schlechtere Kondition und ein Artefakt, das Abschnitt~\ref{sec:schein}
+beschreibt.
+
+Die Regularisierung \emph{muss} vor der Assemblierung der Elementmatrizen
+stehen, sonst ist sie wirkungslos, und die Wirksamkeit lässt sich am
+Verhältnis $\max|\omega C| / \max|K|$ ablesen: ohne sie trüge nur die Platte
+zu $C$ bei.
+
+\subsection{Divergenzfreiheit des Quellterms}
+\label{sec:quellterm}
+
+$\Js$ wird punktweise vorgegeben ($J\hat{\boldsymbol{\varphi}}$ in den
+Spulenelementen, null außerhalb) und dann integriert. Im Kontinuum ist
+$\nabla\cdot\Js = 0$ und $\Js\cdot\mathbf{n} = 0$ auf der Spulenmantelfläche.
+Diskret gilt das nicht: die Spulen werden \emph{elementweise} zugeordnet, ihre
+Ersatzfläche ist gezackt, und deren Normalen stehen nicht senkrecht auf
+$\hat{\boldsymbol{\varphi}}$. Der diskrete Spulenstrom ist damit nicht
+geschlossen.
+
+Gemessen mit dem diskreten Gradienten $G$ (Knoten $\to$ Kanten):
+\begin{equation}
+  \frac{\|G^{\!\top} b\|}{\|b\|} = 6{,}1\cdot 10^{-3},
+  \qquad \text{Anforderung } \approx 10^{-4}.
+\end{equation}
+
+\textbf{Durch Netzverfeinerung ist das nicht behebbar.} Das ist gemessen, nicht
+vermutet -- zweifach:
+
+\begin{itemize}[nosep]
+\item Im synthetischen Test (Abschnitt~\ref{sec:verifikation}) fällt der
+  Fehler bei $\Js$ ohne Materialgrenze mit $h^{2{,}8}$, mit Materialgrenze nur
+  mit $h^{0{,}38}$; auf einem unverzerrten Netz stagniert er praktisch.
+\item Am echten Netz \emph{steigt} er unter \texttt{--refine=1} von
+  $6{,}1\cdot10^{-3}$ auf $1{,}1\cdot10^{-2}$, obwohl die Geometrie
+  unverändert bleibt (jede Facette wird in vier koplanare Dreiecke geteilt).
+  Warum er steigt statt nur zu stagnieren, ist offen.
+\end{itemize}
+
+Behoben wird es durch orthogonale Projektion auf $\ker G^{\!\top}$:
+\begin{equation}
+  (G_F^{\!\top} G_F)\,\varphi = G_F^{\!\top} b,
+  \qquad b' = b - G_F\varphi.
+  \label{eq:proj}
+\end{equation}
+$G^{\!\top}G$ ist der Knoten-Graph-Laplace, gut konditioniert; rund 300
+CG-Iterationen genügen. Zwei Details bestimmen die Umsetzung:
+
+\begin{description}[style=nextline,leftmargin=1em]
+\item[Konstanten.] $G^{\!\top}G$ ist singulär, konstantes $\varphi$ liegt im
+  Kern. Die rechte Seite ist dazu automatisch orthogonal, das CG bleibt aber
+  nur stabil, wenn der konstante Anteil \emph{während} der Iteration
+  herausgenommen wird -- Rundung bringt ihn sonst mit Eigenwert 0 wieder ein.
+\item[Freie Kanten.] Der Index $F$ in~\eqref{eq:proj} ist wesentlich. $b$ ist
+  vor der Projektion nur im Spulenbereich besetzt, am Rand exakt null. $\varphi$
+  löst aber ein \emph{globales} Poisson-Problem, also ist $G\varphi$ überall von
+  null verschieden -- die Randkanten tragen danach einen Wert, den die
+  Dirichlet-Behandlung zurücksetzt, und genau das bringt die Divergenz an den
+  Randknoten wieder ein ($1{,}6\cdot10^{-5}$ statt $6\cdot10^{-16}$). Läuft die
+  Projektion nur über die freien Kanten, bleibt $b'$ dort null per
+  Konstruktion.
+\end{description}
+
+Ergebnis: $\|G^{\!\top}b\|/\|b\| = 6\cdot10^{-16}$ auf dem System, das
+tatsächlich gelöst wird.
+
+\subsection{Randbedingung}
+
+$\mathbf{A}\times\mathbf{n} = 0$ auf dem äußeren Rand. Der Kantensatz gilt für
+$n$ Kanten, im $2n$-System sind beide Hälften betroffen. Zeile und Spalte
+werden genullt, die Diagonale auf einen Wert innerhalb der freien Diagonale
+gesetzt.
+
+\section{Löser}
+
+\subsection{Direkt: cuDSS}
+\label{sec:cudss}
+
+Gelöst wird~\eqref{eq:block} als \texttt{CUDSS\_MTYPE\_GENERAL} mit
+\texttt{MVIEW\_FULL}, Nested-Dissection-Ordnung und \texttt{PIVOT\_AUTO}. Die
+symmetrische Variante wäre möglich, ist aber nicht umgesetzt.
+
+Zwei Unverträglichkeiten von cuDSS~0.8.0 sind durch Bisektion über alle
+Einzel- und Paarkombinationen gemessen, auf zwei Grafikkarten (sm\_120 und
+sm\_75):
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Kombination & Ergebnis \\
+\midrule
+\texttt{DETERMINISTIC\_MODE} $+$ \texttt{IR\_N\_STEPS} $>0$ & ANALYSIS \texttt{NOT\_SUPPORTED} \\
+\texttt{DETERMINISTIC\_MODE} $+$ \texttt{HYBRID\_MEMORY}    & ANALYSIS \texttt{NOT\_SUPPORTED} \\
+\bottomrule
+\end{tabular}
+\end{center}
+Ordnung und Pivotierung sind an beidem unbeteiligt; beide Male schränkt der
+Determinismus die interne Ablaufplanung ein. Aufgelöst wird nach einer festen
+Rangfolge: der Hybridmodus gewinnt immer, weil der Faktor sonst nicht in den
+Gerätespeicher passt und gar nichts gerechnet wird; sonst gewinnt der
+Determinismus über die Nachbesserung. Läufe mit Hybridmodus sind \emph{nicht}
+bitweise reproduzierbar, und der Lauf sagt das ausdrücklich.
+
+Größenordnungen auf dem feinsten Netz: $316\,476$ Zeilen, $1{,}03\cdot10^{7}$
+Nichtnullen, Füllfaktor $43{,}3$, $4{,}46\cdot10^{8}$ Nichtnullen im Faktor.
+Das sind 1,7\,GB allein für die Werte; auf einer 8-GB-Karte läuft es nur
+mit Auslagerung.
+
+\subsection{Iterativ: GMRES mit ILU(0)}
+\label{sec:iterativ}
+
+Zum Vergleich lässt sich dasselbe System iterativ lösen
+(\texttt{--fem-direct-iterative}). GMRES bekommt dabei bitgenau dieselben
+CSR-Arrays nach der Randbehandlung -- die einzige Variable ist der Löser. Ein
+matrixfreier Weg über die Blockform wäre möglich, würde aber ein
+\emph{anderes} System lösen, weil die Randbedingung dort an anderer Stelle
+sitzt; ein Vergleich zweier Löser auf zwei Systemen sagt nichts.
+
+Das Ergebnis ist zweigeteilt. \emph{Ohne} die Quellterm-Projektion stagniert
+GMRES hart: von Iteration 400 bis 4000 bewegt sich das relative Residuum nicht
+($2{,}58\cdot10^{-3}$). \emph{Mit} Projektion fällt es durch, aber langsam --
+rund 1000 Iterationen je Dekade, $4{,}4\cdot10^{-6}$ nach 2000 Iterationen in
+152\,s, nicht konvergiert.
+
+Der Grund ist gemessen. Am Endresiduum $r$ gilt $\|G^{\!\top}r\|/\|r\| = 2{,}26$
+bei $\|G^{\!\top}b\|/\|b\| = 6\cdot10^{-16}$ -- das Restresiduum ist reiner
+Gradient, obwohl die rechte Seite dort nichts hat. Die Komponente kommt also
+\emph{aus dem Operator}, nicht aus $b$: sie entsteht aus Rundung und wächst mit
+den winzigen Eigenwerten von $\omega C$ auf den Gradientenfeldern -- Faktor 350
+unter dem Rest, ablesbar an $\max|\omega C|/\max|K| = 2{,}85\cdot10^{-3}$.
+ILU(0) hat dafür keinen Mechanismus.
+
+Bemerkenswert und mit Vorsicht zu behandeln: die \emph{Kraft} ist trotz
+Nichtkonvergenz identisch. Global weichen die Lösungen ab, in der Platte
+stimmen sie auf unter ein Prozent überein, und $F_z$ ist in beiden Fällen
+1,02\,N. Der stehende Anteil ist physikalisch träge, weil
+$\nabla\times\nabla\varphi = 0$ und er die Platte nicht erreicht. Darauf
+verlassen sollte man sich nicht -- ein Löser, dessen gemeldetes Residuum von
+einem trägen Unterraum beherrscht wird, hat kein verwendbares
+Abbruchkriterium. Die eigentliche Antwort wäre ein Vorkonditionierer für den
+Gradientenraum (AMS); ob er auf die $2n$-Blockform übertragbar ist, ist
+ungeprüft.
+
+
+\section{Warum reell und nicht komplex, und was das für AMS bedeutet}
+\label{sec:ams}
+
+Die Entscheidung gegen eine komplexe Systemgleichung ist keine Nebensache --
+sie bestimmt, welche Vorkonditionierer überhaupt in Frage kommen. Dieser
+Abschnitt nennt die Gründe, prüft sie gegen den naheliegenden Einwand und
+korrigiert drei Punkte einer früheren Analyse.
+
+\subsection{Die Gründe für die reelle Blockform}
+
+\begin{enumerate}[nosep]
+\item \textbf{Die vorhandene Maschinerie bleibt unverändert nutzbar}:
+  \texttt{CoupledMVOperator}, ACA, ILU, AMS, \texttt{GMRESSolver}. Keine
+  komplexen Kernel, keine komplexe ACA.
+\item \textbf{Der Vorkonditionierer läuft über C-to-R} (Axelsson/Kucherov):
+  für $H = \begin{bmatrix}W & -T\\ T & W\end{bmatrix}$ ist
+  $P = \begin{bmatrix}W{+}T & 0\\ T{-}W & W{+}T\end{bmatrix}$, und eine
+  Anwendung braucht zwei Lösungen mit $(W{+}T) = K + \omega C$. Das ist ein
+  \emph{reeller} Operator von genau der Bauart, auf die AMS zielt. Kein neuer
+  Vorkonditionierer, nur ein anderer Aufruf des vorhandenen.
+\item \textbf{Gemessen} (\texttt{team28\_coarse\_12}, \texttt{--harmonic-study}):
+  ohne C-to-R stagniert GMRES bei 4000 Iterationen, mit C-to-R sind es 38
+  Iterationen auf $7{,}5\cdot10^{-9}$. Die Iterationszahl fällt um Faktor 105,
+  während $\kappa_2$ sogar steigt -- nicht die Kondition entscheidet, sondern
+  die Blockstruktur.
+\end{enumerate}
+
+\subsection{Korrektur zum iterativen Lauf dieses Berichts}
+
+Der in Abschnitt~\ref{sec:iterativ} beschriebene Versuch wirft ILU(0) direkt
+auf die rohe $2n$-Blockform. Genau das ist oben als stagnierend vermessen: die
+Blockstruktur zahlt sich \emph{außen} aus, in C-to-R, nicht innen. Die dort
+berichteten 4000 Iterationen bei $2{,}6\cdot10^{-3}$ sind damit keine neue
+Erkenntnis, sondern die Reproduktion eines bekannten Ergebnisses. Der
+begründete Weg wäre \texttt{solve\_harmonic} mit C-to-R gewesen; die
+Rechtfertigung, dieselbe Matrix wie cuDSS zu verwenden, war formal richtig und
+in der Abwägung falsch.
+
+\subsection{Warum AMS auf dieser Form nicht direkt anwendbar ist}
+
+AMS (Hiptmair--Xu) glättet auf den Kanten und projiziert das verbleibende
+Residuum über die diskrete Gradientenmatrix $G$ auf die Knoten, wo ein
+Poisson-artiges Problem per AMG gelöst wird. Für die Blockform ergibt der
+Knoten-Hilfsraum
+\begin{equation}
+  H_{\text{Knoten}}
+  = \begin{bmatrix} G^{\!\top} & 0 \\ 0 & G^{\!\top}\end{bmatrix}
+    \begin{bmatrix} K & -\omega C \\ \omega C & K \end{bmatrix}
+    \begin{bmatrix} G & 0 \\ 0 & G \end{bmatrix}
+  = \begin{bmatrix} 0 & -S \\ S & 0\end{bmatrix},
+  \qquad S = \omega\,G^{\!\top}CG,
+  \label{eq:hknoten}
+\end{equation}
+denn $KG = 0$ (die Rotation eines Gradienten verschwindet), also
+$G^{\!\top}KG = 0$.
+
+\paragraph{Die Nulldiagonale ist NICHT das Hindernis.} Eine frühere Analyse
+liest~\eqref{eq:hknoten} als Sattelpunktstruktur, an der AMG scheitere. Das
+trägt nicht:
+\begin{equation}
+  \begin{bmatrix} 0 & -S \\ S & 0\end{bmatrix}^{-1}
+  \begin{bmatrix} a \\ b\end{bmatrix}
+  = \begin{bmatrix} S^{-1}b \\ -S^{-1}a\end{bmatrix}.
+\end{equation}
+Die Nulldiagonale kostet nichts -- eine Anwendung sind zwei Lösungen mit $S$,
+genau wie C-to-R außen zwei Lösungen mit $(W{+}T)$ braucht. Es ist kein
+Sattelpunkt, sondern eine schiefsymmetrische Blockform mit invertierbarer
+Nebendiagonale.
+
+\paragraph{Das Hindernis ist, dass $S$ singulär ist.} $S$ entspricht
+$\int \sigma\,\nabla\varphi\cdot\nabla\psi$, ist also ein $\sigma$-gewichteter
+Poisson-Operator. Mit $\sigma = 0$ in der Luft hat $S$ einen Nullraum aus
+allen $\varphi$, die dort leben -- derselbe Nullraum wie zuvor, nur von den
+Kanten auf die Knoten verschoben.
+
+\paragraph{Und das überlebt den Wechsel zu komplex.} Für das komplexe System
+ist der AMS-Knotenoperator
+\begin{equation}
+  G^{\!\top}(K + \mathrm{j}\omega C)\,G = \mathrm{j}\omega\,G^{\!\top}CG,
+\end{equation}
+weil $G^{\!\top}KG = 0$ unabhängig von der Arithmetik gilt. Dieselbe
+Singularität, aus demselben Grund. Eine Standardbibliothek wie Hypre AMS
+bräuchte dort ebenfalls eine Regularisierung oder eine Eichung. \textbf{Die
+reelle Blockform ist also nicht die Ursache der AMS-Schwierigkeit}, und der
+Wechsel zu komplex behebt sie nicht.
+
+\subsection{Was der Wechsel zu komplex tatsächlich brächte}
+
+Ein Argument bleibt, und es betrifft den direkten Löser. Die $2n$-Form
+speichert jeden komplexen Eintrag als $2\times2$-Block, also vier reelle
+Zahlen statt zwei, und zerlegt ein System doppelter Dimension:
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+ & Zeilen & nnz & Faktor \\
+\midrule
+$2n$ reell & 316\,476 & $1{,}03\cdot10^{7}$ & $4{,}46\cdot10^{8}$ $\approx$ 3,6\,GB \\
+komplex    & 158\,238 & $2{,}57\cdot10^{6}$ & grob $1{,}1\cdot10^{8}$ komplex $\approx$ 1,8\,GB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Die zweite Zeile ist eine Schätzung mit gleichem Füllfaktor, keine Messung.
+Der Faktor 2 ist aber genau das, was zwischen dem Projekt und dem
+Determinismus steht: bei 1,8\,GB bräuchte es keinen Hybridspeicher, und
+\texttt{DETERMINISTIC\_MODE} wäre wieder erlaubt (Abschnitt~\ref{sec:cudss}).
+Ob cuDSS~0.8 \texttt{CUDA\_C\_64F} trägt, ist ungeprüft.
+
+\subsection{Korrektur: die Regularisierung erzwingt keine Coulomb-Eichung}
+
+Eine frühere Analyse begründet die Lösbarkeit damit, die Regularisierung
+$\sigma_{\text{Luft}} = \varepsilon\sigma_{\text{Leiter}}$ forciere implizit
+$\nabla\cdot\mathbf{A}\approx 0$. Das ist das Gegenteil des gemessenen
+Verhaltens. Auf Gradientenfeldern lautet die Gleichung in der Luft
+$\mathrm{j}\omega\varepsilon\sigma\,\nabla\varphi = -b_g$, also
+\begin{equation}
+  \nabla\varphi = -\frac{b_g}{\mathrm{j}\omega\,\varepsilon\,\sigma_{\text{Leiter}}}.
+\end{equation}
+Die Regularisierung macht das System lösbar, indem sie dem Gradientenanteil
+einen um $1/\varepsilon$ \emph{verstärkten} Wert zuweist, nicht indem sie ihn
+unterdrückt. Gemessen wächst max$|\Ai|$ von $0{,}0671$ auf $671$, wenn
+$\varepsilon$ von $10^{-6}$ auf $10^{-10}$ fällt -- exakt linear in
+$1/\varepsilon$ über vier Dekaden (Abschnitt~\ref{sec:schein}).
+
+\subsection{Der verbleibende Weg: projiziertes GMRES}
+
+Bleibt die Deflation: den Gradientenanteil nicht nur aus $b$, sondern aus
+\emph{jedem} Krylow-Vektor entfernen, über
+$v' = v - G\varphi$ mit $(G^{\!\top}G)\varphi = G^{\!\top}v$.
+
+Dieser Weg ist ausdrücklich \emph{nicht} durch die Messung in
+Abschnitt~\ref{sec:iterativ} widerlegt. Dort wurde gezeigt, dass die
+Projektion von $b$ die Konvergenz nicht verbessert -- weil die
+Gradientenkomponente aus dem Operator kommt und nicht aus der rechten Seite.
+Jeden Krylow-Vektor zu projizieren greift genau dort an: es entfernt den
+Nullraum aus dem Suchraum statt nur aus der Quelle. Der Unterschied zwischen
+einer einmaligen und einer fortlaufenden Projektion ist hier der ganze Punkt.
+
+Zwei Vorbehalte. Ein Projektor ist singulär und lässt sich nicht als
+gewöhnlicher Rechts-Vorkonditionierer einhängen; es braucht ein projiziertes
+Verfahren, GMRES auf $PHP\,y = Pb$ im Bildraum von $P$ -- ein Eingriff in den
+Löser, nicht ein zusätzlicher Aufruf. Und es fehlt die Kantenglättung des
+vollen AMS, die schlechte Kondition des Curl-Curl-Operators im
+rotationsbehafteten Raum bleibt also. Erwartbar ist damit das Ende der
+Stagnation, nicht eine kleine Iterationszahl.
+
+\subsection{Verworfen: die Baum-Kobaum-Eichung}
+\label{sec:baum}
+
+Der naheliegende Ausweg -- statt zu regularisieren wieder zu eichen -- wurde
+versucht und verworfen. Die Topologie erlaubt es: mit mitvernetzter Luft ist
+das nichtleitende Gebiet Luft plus Spulen, also Kasten minus Platte, und damit
+einfach zusammenhängend. Im BEM-Fall war es die Spule selbst, ein Volltorus,
+daher dort ein Kohomologie-Generator je Spule.
+
+Umgesetzt (\texttt{--fem-direct-gauge}, 16\,521 von 158\,238 Kanten geeicht)
+ergab sich ein Residuum von $4{,}9\cdot10^{-14}$ -- das System ist also
+regulär, die Eichung greift. Aber:
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+ & regularisiert & geeicht \\
+\midrule
+Residuum & $4{,}3\cdot10^{-15}$ & $4{,}9\cdot10^{-14}$ \\
+global max$|\Ar|$ & $6{,}65\cdot10^{-5}$ & $4{,}24\cdot10^{-4}$ \\
+$B_r$ Platte & 0,0719\,T & 0,0736\,T \\
+$F_z$ & 1,02\,N & 1,25\,N \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+$B$ ist eichinvariant -- eine Abweichung von 2,4\,\% bedeutet also nicht einen
+anderen Eichrepräsentanten, sondern ein anderes Feld. Als Ursache bleibt die
+Kondition: ein kleines Residuum ist bei schlecht konditionierter Matrix kein
+kleiner Fehler, und der Baum wird über Union-Find bei aufsteigenden
+Kantenindizes gebaut, was lange Pfade quer durchs Netz ergibt. Eine
+Breitensuche von der Leiterkomponente aus wäre die bekannte Gegenmaßnahme,
+ist aber nicht umgesetzt -- der Weg wurde zugunsten von AMS aufgegeben.
+
+Nebenbefund derselben Messung: die Hälfte der Quelltermnorm
+($1{,}32\cdot10^{4}$ von $2{,}61\cdot10^{4}$) liegt auf Baumkanten und wird
+verworfen, weil der Baum das nichtleitende Gebiet spannt und dazu die
+stromgetriebenen Spulen gehören. Zulässig ist das für ein konsistentes $b$
+(die Baumzeilen sind dann redundant), aber es ist unschön und war der erste
+Verdacht für die Abweichung.
+
+\section{Kraftauswertung}
+
+\subsection{Volumenintegral (Lorentz)}
+
+Zeitgemittelt und in Phasoren:
+\begin{equation}
+  \langle \mathbf{J}\times\mathbf{B}\rangle
+  = \frac{\sigma\omega}{2}\left(
+      \Ai\times(\nabla\times\Ar) - \Ar\times(\nabla\times\Ai)
+    \right),
+\end{equation}
+integriert über die Leiter. Eine Besonderheit: der Ausschluss der Nichtleiter
+kann \emph{nicht} über $\kappa > 0$ erfolgen, weil die Regularisierung jedem
+Element $\kappa > 0$ gibt. Stattdessen wird vor der Regularisierung eine Maske
+der betroffenen Elemente angelegt. Der Beitrag des regularisierten
+Luftgebietes ist gemessen $1{,}2\cdot10^{-7}$~N gegen ein Ergebnis von
+1,02\,N -- er wäre also auch ohne Maske vernachlässigbar, ist aber
+$\varepsilon$-unabhängig und deshalb von der $\varepsilon$-Reihe nicht
+aufdeckbar.
+
+\subsection{Oberflächenintegral (Maxwell) als Gegenprobe}
+
+Als unabhängiger Weg zur selben Größe der Spannungstensor über die
+Materialgrenzflächen. Zeitgemittelt:
+\begin{equation}
+  \langle \mathsf{T}\cdot\mathbf{n}\rangle
+  = \frac{1}{2\mu_0}\left[
+      (\mathbf{B}_r\!\cdot\!\mathbf{n})\mathbf{B}_r
+    + (\mathbf{B}_i\!\cdot\!\mathbf{n})\mathbf{B}_i
+    - \tfrac12\left(|\mathbf{B}_r|^2 + |\mathbf{B}_i|^2\right)\mathbf{n}
+    \right].
+\end{equation}
+Die Normale wird geometrisch bestimmt (Flächenmitte gegen Elementmitte), nicht
+aus einer Tabelle -- die Umlaufsinnkonvention ist je Elementtyp anders und ein
+Fehler dort dreht nur das Vorzeichen.
+
+\textbf{Dieser Weg trägt auf den vorliegenden Netzen nicht}, und das ist
+gemessen. Mit $\Ai = 0$ verschwindet der Realteil der Stromdichte in der
+Platte; ohne Strom innerhalb der Hülle und bei $\mu_r = 1$ muss das Integral
+über eine geschlossene Fläche exakt null ergeben. Es tut es nicht:
+
+\begin{center}
+\begin{tabular}{rrrr}
+\toprule
+Grenzflächen & Nullprobe [N] & relativ zu $F_z$ & Ordnung \\
+\midrule
+  208 & $-4{,}06$  & $4{,}82$ & --- \\
+  832 & $-1{,}18$  & $0{,}94$ & $h^{1{,}78}$ \\
+13\,274 & $-0{,}492$ & $0{,}48$ & $h^{0{,}63}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Der Kernel selbst ist in Ordnung -- bei homogenem $\mathbf{B}$ liefert er auf
+einer geschlossenen Hülle $1{,}09\cdot10^{-16}$ relativ. Die Aufgabe ist ihm
+zu schwer, aus zwei Gründen: die Nettokraft entsteht als Differenz von
+Einzelbeiträgen um $|B|^2/(2\mu_0)$ mal Hüllfläche, hier rund 200\,N;
+und das diskrete $\mathbf{B}$ ist über Elementflächen \emph{nicht} stetig, weil
+Nédélec nur die Tangentialstetigkeit von $\mathbf{A}$ und damit die
+Normalstetigkeit von $\mathbf{B}$ zusichert. Der Spannungstensor braucht beide
+Komponenten. Bei einer 3\,mm dünnen Platte aus flachen Tetraedern ist der
+Sprung besonders groß.
+
+\section{Verifikation}
+\label{sec:verifikation}
+
+Vier Testprogramme laufen ohne GPU (\texttt{ctest -L host}).
+
+\begin{center}
+\begin{tabular}{llr}
+\toprule
+Prüfung & Programm & Messwert \\
+\midrule
+Konstantes $\mathbf{A}$ exakt reproduziert & \texttt{test\_patch\_assembly} & $4{,}4\cdot10^{-16}$ \\
+Patchtest $\nabla\times\mathbf{A}_h = \mathbf{B}$ & \texttt{test\_patch\_assembly} & $2{,}3\cdot10^{-15}$ \\
+Konstantes $\Js$: $\|G^{\!\top}b\|/\|b\|$ innen & \texttt{test\_patch\_assembly} & $1{,}25\cdot10^{-16}$ \\
+Maxwell auf geschlossener Hülle & \texttt{test\_patch\_assembly} & $1{,}09\cdot10^{-16}$ \\
+Verfeinerung: Volumen erhalten & \texttt{test\_mesh\_refinement} & $1{,}2\cdot10^{-14}$ \\
+Projektion: reiner Gradient entfernt & \texttt{test\_source\_projection} & $5{,}2\cdot10^{-12}$ \\
+Projektion: Idempotenz & \texttt{test\_source\_projection} & $2{,}4\cdot10^{-14}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Zwei Punkte verdienen Hervorhebung. Der Patchtest läuft \emph{über
+Elementgrenzen}, auf einem Netz aus Kuhn-Tetraedern mit zufällig verschobenen
+inneren Knoten, und sammelt die Koeffizienten aus den globalen
+Freiheitsgraden. Damit sind erstmals die globale Kantennummerierung, die
+Orientierungsvorzeichen und die Konformität mitgeprüft -- ein Vorzeichenfehler
+in dieser Schicht erzeugt keinen Absturz, sondern ein falsches Feld, und ein
+Einzelelementtest sieht ihn nicht.
+
+Die dritte Zeile ist die schärfste: bei konstantem $\Js$ ist der Integrand auf
+einem affinen Tetraeder linear und wird von der 4-Punkt-Regel exakt
+integriert. Das Ergebnis muss also \emph{maschinengenau} null sein, nicht nur
+klein. Damit ist ein Vorzeichen- oder Nummerierungsfehler als Ursache der
+$6{,}1\cdot10^{-3}$ aus Abschnitt~\ref{sec:quellterm} ausgeschlossen.
+
+\section{Messergebnisse}
+
+\subsection{Netze}
+
+\begin{center}
+\begin{tabular}{lrrrrl}
+\toprule
+Netz & Knoten & Tetraeder & Kanten & Platte & Plattenlage \\
+\midrule
+Startlage        & 766    & 3\,692   & 4\,709   & 259     & $z = 3{,}8\ldots6{,}8$ mm \\
+Gleichgewicht    & 1\,759 & 8\,216   & 10\,683  & 259     & $z = 11{,}3\ldots14{,}3$ mm \\
+\quad$+$\texttt{--refine=1} & 12\,442 & 65\,728 & 81\,005 & 2\,072 & dito \\
+Platte fein      & 23\,249 & 133\,899 & 158\,238 & 19\,812 & dito \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Die Spulen sind in allen Netzen dieselben 517 und 251 Elemente. Daraus folgte
+eine überprüfbare Vorhersage, die eingetroffen ist: $\|G^{\!\top}b\|/\|b\|$,
+$\|b\|$ und die Zahl der besetzten Einträge sind auf allen Netzen identisch.
+Die Verschlechterung unter \texttt{--refine=1} ist damit eindeutig der
+Verfeinerung \emph{der Spulen} zuzuschreiben.
+
+\subsection{Levitationskraft}
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+Netz & Platte & $F_z$ [N] & gegen Gewicht 1,026\,N \\
+\midrule
+Startlage ($z_{\text{Mitte}} = 5{,}3$ mm) & 259 & $1{,}97$ & --- \\
+Gleichgewicht & 259 & $0{,}842$ & $-17{,}9\,\%$ \\
+$+$\texttt{--refine=1} & 2\,072 & $1{,}250$ & $+21{,}8\,\%$ \\
+Platte fein & 19\,812 & $\mathbf{1{,}020}$ & $\mathbf{-0{,}6\,\%}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Das Plattengewicht ist aus Geometrie, Dichte und $g$ gerechnet, nichts daran
+ist angepasst. Der Sollwert aus der Projektdokumentation lautet 1,0497\,N
+bei 11,3\,mm; der Startlagenwert von 1,97\,N liegt darüber, wie es
+sein muss -- die Platte ist dort 7,5\,mm näher an den Spulen.
+
+\textbf{Die Übereinstimmung von $0{,}6\,\%$ ist noch nicht belegt.} Die Reihe
+schwingt, und zwischen den beiden letzten Netzen änderte sich nur die
+Auflösung in der Ebene (beide zwei Lagen), was $F_z$ um $-18{,}4\,\%$
+verschob. Ein fünfter Punkt mit feinerer Ebene würde entscheiden, ob
+1,02\,N Konvergenz oder Zufall ist.
+
+Bemerkenswert dabei: das \emph{Feld} ist konvergiert, die Kraft war es nicht.
+Zwischen den beiden letzten Netzen bleibt $\max|B_r|$ in der Platte auf
+$1{,}6\,\%$ stehen, während $F_z$ um $48\,\%$ sprang. Unteraufgelöst war also
+das Kraftintegral, nicht das Feld -- 259 Tetraeder in einer 3\,mm dünnen
+Scheibe sind eine einzige Lage, und der Wirbelstrom hat über die Dicke ein
+Profil, das eine Lage nicht darstellen kann.
+
+\subsection{Unempfindlichkeit gegen \texorpdfstring{$\varepsilon$}{eps}}
+\label{sec:schein}
+
+Die Regularisierung erzeugt ein Artefakt, das lange die Genauigkeit des
+gesamten Pfades bestimmte. Auf Gradientenfeldern ist $K$ exakt null, die
+Blockform~\eqref{eq:block} reduziert sich dort auf $x_r = 0$,
+$x_i = -b_g/(\omega C)$: der Gradientenanteil von $b$ landet vollständig im
+Imaginärteil, verstärkt um $1/\varepsilon$.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+$\varepsilon$ & \multicolumn{2}{c}{ohne Projektion} & \multicolumn{2}{c}{mit Projektion} \\
+ & Residuum & $\max|\Ai|$ & Residuum & $\max|\Ai|$ \\
+\midrule
+$10^{-6}$  & $1{,}26\cdot10^{-12}$ & $0{,}0671$ & $4{,}36\cdot10^{-15}$ & $2{,}38\cdot10^{-6}$ \\
+$10^{-7}$  & $1{,}20\cdot10^{-11}$ & $0{,}671$  & ---                   & --- \\
+$10^{-8}$  & $1{,}25\cdot10^{-10}$ & $6{,}71$   & $4{,}31\cdot10^{-15}$ & $2{,}38\cdot10^{-6}$ \\
+$10^{-9}$  & $1{,}26\cdot10^{-9}$  & $67{,}1$   & ---                   & --- \\
+$10^{-10}$ & $1{,}21\cdot10^{-8}$  & $671$      & $4{,}33\cdot10^{-15}$ & $2{,}38\cdot10^{-6}$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Ohne Projektion skaliert $\max|\Ai|$ exakt mit $1/\varepsilon$ über vier
+Dekaden, und das Residuum wächst mit -- letzteres aus dem Dynamikumfang: eine
+Lösung, die von $6{,}65\cdot10^{-5}$ bis $6{,}88$ spannt, lässt sich in
+doppelter Genauigkeit nicht auf $10^{-15}$ auflösen.
+
+Mit Projektion bewegt sich keine Ziffer. Das Artefakt ist um Faktor
+$2{,}9\cdot10^{6}$ kleiner, das Residuum um fünf Dekaden besser, und
+$\varepsilon$ ist über vier Dekaden ohne Wirkung -- auf \emph{jede} Größe des
+Laufs, nicht nur auf $\mathbf{B}$.
+
+Wichtig für die Einordnung: die physikalischen Größen waren schon \emph{vor}
+der Projektion unempfindlich. $\max|\Ar|$ und $\max|\Ai|$ in der Platte,
+$\mathbf{B}$ und $F_z$ blieben über die gesamte $\varepsilon$-Reihe
+unverändert. Das Artefakt saß vollständig in der Luft, wo
+$\nabla\times\nabla\varphi = 0$ es unschädlich macht. Die Projektion beseitigt
+also einen Fehler, der die Kraft nie erreicht hat -- ihr Nutzen liegt in der
+Konditionierung und in der Erfüllung der Divergenzanforderung, nicht in einer
+korrigierten Kraft.
+
+\section{Fehler, die keinen Absturz erzeugten}
+\label{sec:fehler}
+
+Ein eigener Abschnitt, weil das Muster übertragbar ist. Sieben Fehler lagen
+zwischen dem ersten Aufruf und der ersten Kraftzahl, und keiner davon führte
+zu einem Absturz oder einer Fehlermeldung.
+
+\begin{enumerate}[nosep]
+\item \textbf{Uninitialisierte Stackplätze.} Bei einem Tetraeder bleiben die
+  Kantenplätze 6--11 ungeschrieben, die Multiplikation lief aber über alle
+  zwölf. Die Matrix ist dort sauber null -- und $0{,}0 \cdot \mathrm{NaN}$ ist
+  NaN. 90 NaN in der rechten Seite, laufabhängig, weil nur ein Teil der
+  Threads ein NaN-Bitmuster im Frame erwischt.
+\item \textbf{Drei Indexzugriffe auf $-1$.} Das Nullsetzen des
+  \emph{Vorzeichens} neutralisiert den Wert, nicht den Index.
+\item \textbf{Unerreichbare Regularisierung.} Die Vorbedingungsprüfung
+  beanstandete $\kappa = 0$ als harten Fehler und lief vor dem Block, der
+  genau das beseitigt.
+\item \textbf{Wirkungslose Regularisierung.} Danach erreichbar, aber die
+  Assemblierung berechnete die Elementmatrizen nicht neu -- die
+  Materialänderung erreichte die Matrix nicht. Folge war eine singuläre
+  Matrix, die cuDSS mit \texttt{CUDSS\_DATA\_INFO = 0} zerlegte.
+\item \textbf{Rechte Seite als Zeitprobe.} Faktor $\sin(\omega\Delta t) =
+  0{,}0314$ statt der Amplitude; jede Kraft hätte am gewählten Zeitschritt
+  gehangen.
+\item \textbf{Entwerteter Nichtleiter-Test.} Nach der Regularisierung hat
+  jedes Element $\kappa > 0$, die Abfrage im Kraftintegral trennte nichts
+  mehr.
+\item \textbf{Falsche Entwarnung in der Diagnose.} Der Ausdruck
+  \texttt{(b2 > 0.0) ? sqrt(g2/b2) : 0.0} fällt bei
+  \texttt{b2 = NaN} in den else-Zweig -- jeder Vergleich mit NaN ist falsch --
+  und meldete daraufhin ausdrücklich ``divergenzfrei, Inkonsistenz
+  ausgeschlossen'' für eine vollständig NaN-verseuchte rechte Seite.
+\end{enumerate}
+
+Der letzte Punkt ist der lehrreichste: eine Diagnose, die genau dann Entwarnung
+gibt, wenn etwas kaputt ist, ist schlechter als keine.
+
+\section{Offene Punkte}
+
+\begin{description}[style=nextline,leftmargin=1em]
+\item[Abschneidefaktor.] Der Luftkasten reicht radial nur bis Faktor $1{,}745$
+  der Leiterausdehnung, verlangt sind mindestens 2. Die Randbedingung
+  $\mathbf{A}\times\mathbf{n} = 0$ verformt das Feld damit dort, wo integriert
+  wird. Dieser systematische Anteil steckt in allen vier Kraftwerten und ist
+  in keinem quantifiziert -- auch nicht im Vorzeichen. Er braucht ein Netz mit
+  radial größerem Kasten.
+\item[Fünfter Netzpunkt.] Zwei Lagen, Ebene feiner, alles andere unverändert.
+  Er entscheidet, ob die $0{,}6\,\%$ Konvergenz oder Zufall sind.
+\item[Vorkonditionierung.] Siehe Abschnitt~\ref{sec:ams}. Standard-AMS ist
+  hier nicht anwendbar, und zwar nicht wegen der reellen Blockform, sondern
+  weil der AMS-Knotenoperator $\omega G^{\!\top}CG$ mit $\sigma = 0$ in der
+  Luft singulär ist -- was der Wechsel zu einer komplexen Formulierung nicht
+  behebt. Es bleiben zwei Wege: C-to-R mit ILU im inneren
+  $(K+\omega C)$-Löser, gemessen 38 Iterationen auf einem gröberen Netz, aber
+  auf diesem Netz nicht erprobt; und projiziertes GMRES (Deflation), das die
+  Stagnation beenden dürfte, ohne die Kondition im rotationsbehafteten Raum zu
+  verbessern. Die Baum-Kobaum-Eichung ist versucht und verworfen
+  (Abschnitt~\ref{sec:baum}).
+\item[Zweiter Kraftpfad.] Der Maxwell-Spannungstensor konvergiert, aber aus zu
+  großer Entfernung; zwei weitere Verfeinerungsstufen brächten ihn auf rund
+  $9\,\%$. Auf der vorhandenen Hardware ist das nicht zu haben. Solange
+  bleiben die 1,02\,N ohne unabhängige Bestätigung.
+\item[Determinismus.] Läufe mit Hybridspeicher sind nicht bitweise
+  reproduzierbar. Für das feinste Netz ist der Hybridmodus nicht verhandelbar,
+  also gilt \texttt{test\_determinism\_fingerprint} für diesen Pfad nicht.
+\end{description}
+
+\end{document}

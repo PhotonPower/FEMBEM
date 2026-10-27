@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "Wenn Sie diese Software verwenden, zitieren Sie sie bitte wie folgt."
+title: "FEMBEM: FEM-BEM Simulation"
+type: software
+version: 0.1.0
+date-released: 2026-10-27
+license: MIT
+repository-code: "https://github.com/PhotonPower/FEMBEM"
+authors:
+  - name: "PhotonPower"
+abstract: >-
+  Experimenteller transienter Wirbelstrom-Löser mit BEM-FEM-Kopplung und
+  Nédélec-Kantenelementen für TEAM Workshop Problem 28. Mit Hilfe von
+  KI-Systemen erstellt.
+keywords:
+  - eddy currents
+  - FEM-BEM coupling
+  - edge elements
+  - TEAM 28
+  - CUDA

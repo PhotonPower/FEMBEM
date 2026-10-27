@@ -1,0 +1,139 @@
+\documentclass[11pt, a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{geometry}
+\geometry{a4paper, margin=2.5cm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{bm}
+
+% Setup for Code Listings
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{blue},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{Hochleistungs-Simulation elektrodynamischer Levitation (TEAM Problem 28)}\\[0.5em] \Large Theorie, Numerik und GPU-Beschleunigungsarchitektur}
+\author{Dokumentation der Simulationsumgebung}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Dieses Dokument beschreibt die theoretischen Grundlagen und die numerische Implementierung eines transienten 3D-Lösers für elektrodynamische Levitationsprobleme, spezifisch angewandt auf das TEAM (Testing Electromagnetic Analysis Methods) Problem 28. Der Löser nutzt eine BEM-FEM-Kopplung (Boundary Element Method / Finite Element Method) mit Nédélec-Kantenelementen. Ein besonderer Fokus liegt auf den angewandten Architektur- und Beschleunigungstricks mittels CUDA, die es ermöglichen, hochpräzise transiente Simulationen (ohne Abstriche in der Gauß-Integration) in Bruchteilen der ursprünglichen CPU-Rechenzeit durchzuführen.
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{Theoretische Grundlagen}
+
+\subsection{Elektromagnetische Feldgleichungen}
+Die transiente Dynamik wird durch die quasi-statischen Maxwell-Gleichungen beschrieben (Verschiebungsströme werden vernachlässigt). Die Formulierung basiert auf dem magnetischen Vektorpotential $\mathbf{A}$, definiert durch $\mathbf{B} = \nabla \times \mathbf{A}$. 
+
+Im Leiter (Aluminiumplatte) gilt das Induktionsgesetz gekoppelt mit dem Ohmschen Gesetz:
+\begin{equation}
+    \mathbf{J}_{eddy} = -\sigma \frac{\partial \mathbf{A}_{tot}}{\partial t}
+\end{equation}
+wobei $\sigma$ die elektrische Leitfähigkeit ist. Das Gesamtfeld $\mathbf{A}_{tot}$ setzt sich aus dem von den Wirbelströmen erzeugten Feld $\mathbf{A}_{fem}$ und dem externen Feld der Spulen $\mathbf{A}_{src}$ zusammen. 
+
+Eingesetzt in das Ampèresche Gesetz $\nabla \times \mathbf{H} = \mathbf{J}$ ergibt sich für lineare Medien ($\mu = \mu_0$):
+\begin{equation}
+    \nabla \times \left( \frac{1}{\mu_0} \nabla \times \mathbf{A}_{fem} \right) + \sigma \frac{\partial \mathbf{A}_{fem}}{\partial t} = -\sigma \frac{\partial \mathbf{A}_{src}}{\partial t}
+    \label{eq:PDE}
+\end{equation}
+Da wir Nédélec-Kantenelemente verwenden und im Isolator (Luft) $\sigma = 0$ gilt, ist keine explizite Eichung (Gauge) und kein skalares elektrisches Potential $\phi$ erforderlich.
+
+\subsection{BEM-FEM Kopplung}
+Die Aluminiumplatte wird mit der Finite-Elemente-Methode (FEM) diskretisiert. Der umgebende unendliche Luftraum wird analytisch über die Randelementmethode (BEM) angekoppelt. Dies geschieht über eine dichte Koppelmatrix an der Oberfläche der Platte. Die stromdurchflossenen Spulen werden \textit{nicht} genetzt, sondern als reine Quellen über das Biot-Savart-Gesetz (als $\mathbf{A}_{src}$) an den Elementzentren der Platte evaluiert.
+
+\subsection{Lorentzkraft und Bewegungsgleichung}
+Die resultierende elektrodynamische Kraft auf die Platte berechnet sich aus dem Volumenintegral der Lorentzkraft:
+\begin{equation}
+    \mathbf{F} = \int_{\Omega} \mathbf{J}_{eddy} \times \mathbf{B}_{tot} \, dV = \int_{\Omega} \left( -\sigma \frac{\partial (\mathbf{A}_{fem} + \mathbf{A}_{src})}{\partial t} \right) \times (\nabla \times \mathbf{A}_{fem} + \mathbf{B}_{src}) \, dV
+\end{equation}
+Die rein vertikale Levitation wird durch das Newtonsche Grundgesetz beschrieben:
+\begin{equation}
+    m \frac{d^2 z}{dt^2} = F_z - m g
+\end{equation}
+
+\section{Numerische Diskretisierung}
+
+Die schwache Formulierung von Gleichung \eqref{eq:PDE} führt unter Verwendung des Galerkin-Verfahrens auf ein System gewöhnlicher Differentialgleichungen:
+\begin{equation}
+    \mathbf{K} \mathbf{a} + \mathbf{M} \frac{\partial \mathbf{a}}{\partial t} = \mathbf{f}_{src}
+\end{equation}
+mit der Steifigkeitsmatrix $\mathbf{K}$, der Massenmatrix $\mathbf{M}$ und dem Quellvektor $\mathbf{f}_{src}$. Nach Zeitdiskretisierung mittels des impliziten Euler-Verfahrens (unbedingt stabil) ergibt sich für den Zeitschritt $n$:
+\begin{equation}
+    \underbrace{\left( \mathbf{K} + \frac{1}{\Delta t} \mathbf{M} + \mathbf{BEM} \right)}_{\mathbf{A}_{LHS}} \mathbf{a}^{(n)} = \underbrace{\frac{1}{\Delta t} \mathbf{M} \mathbf{a}^{(n-1)}}_{\mathbf{f}_{history}} + \underbrace{\mathbf{f}_{src}^{(n)}}_{\mathbf{f}_{source}}
+    \label{eq:System}
+\end{equation}
+
+\newpage
+\section{Implementierung \& GPU-Beschleunigungsarchitektur}
+
+Der naive Ansatz, das Gleichungssystem \eqref{eq:System} in jedem Zeitschritt vollständig aufzubauen und zu lösen, führt aufgrund der Millionen von Biot-Savart-Auswertungen und der Matrix-Assemblierungen zu enormen Rechenzeiten. Im Folgenden werden die maßgeblichen Architektur-Tricks beschrieben, die den Löser in den Hochleistungsbereich bringen.
+
+\subsection{Trick 1: Vorab-Assemblierung der Systemmatrix (CPU)}
+Da die Aluminiumplatte nicht ferromagnetisch ist ($\mu_r = 1$, keine Sättigung) und als starrer Körper modelliert wird, verändern sich die lokalen Matrizen der Hexaeder-Elemente relativ zueinander nicht. Die gesamte linke Seite der Gleichung \eqref{eq:System} ($\mathbf{A}_{LHS}$) sowie die Massenmatrix $\mathbf{M}$ sind über die gesamte Simulation \textbf{konstant}.
+
+\textbf{Umsetzung:} Die Matrizen werden \textit{ein einziges Mal} vor der Zeitschleife auf der CPU assembliert, in das CSR-Format (Compressed Sparse Row) konvertiert und fest in den VRAM der GPU geladen. Der Zeitschritt wird dadurch von der rechenintensiven Matrixgenerierung komplett befreit.
+
+\subsection{Trick 2: GPU-Kernel für die rechte Seite (Biot-Savart)}
+Der Quellvektor $\mathbf{f}_{source}$ ändert sich in jedem Zeitschritt, da sich der Spulenstrom $I(t)$ und der Abstand $z(t)$ ändern. 
+\begin{equation}
+    f_{source, i} = \int_{\Omega_e} -\sigma \frac{\partial \mathbf{A}_{src}}{\partial t} \cdot \mathbf{N}_i \, dV
+\end{equation}
+\textbf{Umsetzung:} Wir "flachen" die Spulengeometrie im Vorfeld ab (Vorberechnung der Spulen-Volumina und Richtungsvektoren). Ein hochparalleler CUDA-Kernel (\texttt{k\_rhs\_source}) berechnet pro Thread das einfallende Feld für genau ein FEM-Element. Das Ergebnis wird gewichtet und mittels \texttt{atomicAdd} direkt und konfliktfrei in den globalen Lösungsvektor auf der GPU geschrieben.
+
+\subsection{Trick 3: Gekoppelter Krylov-Löser im VRAM}
+Um den PCIe-Flaschenhals (Kopieren von Vektoren zwischen RAM und VRAM) zu eliminieren, wurde ein modifizierter BiCGStab-Löser (Biconjugate Gradient Stabilized) implementiert. 
+\begin{itemize}
+    \item Er nutzt \texttt{cuSPARSE} für den FEM-Teil ($\mathbf{A}_{fem} \mathbf{x}$).
+    \item Er koppelt die dichte BEM-Matrix per \texttt{cuBLAS} (Matrix-Vektor-Multiplikation) \textit{innerhalb} der Krylov-Schleife on-the-fly.
+    \item Der Aufruf \texttt{solve\_gpu\_pointers} empfängt reine Device-Pointer. Die Lösung verlässt die GPU während des iterativen Lösens nicht.
+\end{itemize}
+
+\subsection{Trick 4: Hochpräzise Kraftberechnung per Gauß-Quadratur auf der GPU}
+Die exakte Lorentzkraft erfordert die Auswertung des Magnetfeldes an allen 8 Gauß-Integrationspunkten jedes Hexaeders. Das totale Magnetfeld ist die Summe aus einfallendem Feld und der Wirbelstrom-Rückwirkung ($\mathbf{B}_{tot} = \mathbf{B}_{src} + \nabla \times \mathbf{A}_{fem}$). 
+
+\textbf{Umsetzung:}
+Anstatt dies mühsam auf der CPU durchzuführen, laden wir alle vorberechneten geometrischen Faktoren der Gauß-Punkte einmalig in den VRAM:
+\begin{enumerate}
+    \item Physikalische Koordinaten der Integrationspunkte (\texttt{d\_gp\_data}).
+    \item Transformierte Formfunktionen $\mathbf{N}$ (\texttt{d\_gp\_sP}) und deren Rotation $\nabla \times \mathbf{N}$ (\texttt{d\_gp\_cP}).
+\end{enumerate}
+Der CUDA-Kernel \texttt{k\_calcForce} liest in jedem Zeitschritt den soeben berechneten Lösungsvektor $\mathbf{a}$ aus dem VRAM, berechnet $\mathbf{B}_{eddy}$ präzise über die \textit{curl}-Operatoren und evaluiert das Biot-Savart-Feld. Die Integration über die Jacobi-Determinanten liefert die exakte Element-Kraftvektoren, die per Reduktion aufsummiert werden.
+
+\section{Fazit}
+Durch die strikte Trennung von linearer (konstanter) Topologie und transienter (variabler) Dynamik konnte der Aufwand pro Zeitschritt auf reine Sparse-Matrix-Vektor-Multiplikationen und hochparallele Auswertungen reduziert werden. Die Architektur vermeidet jeglichen PCIe-Overhead während der transienten Lösung. Dies garantiert höchste numerische Präzision (Gauß-Integration bleibt erhalten) bei gleichzeitiger Beschleunigung um mehrere Größenordnungen im Vergleich zu einer klassischen CPU-Implementierung.
+
+\end{document}

@@ -1,0 +1,529 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+% Deutsche Silbentrennung, falls die Sprachdateien vorhanden sind. Ohne sie
+% uebersetzt das Dokument trotzdem -- nur die Trennung ist dann englisch.
+\IfFileExists{ngerman.ldf}{\usepackage[ngerman]{babel}}{}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[margin=2.5cm]{geometry}
+% microtype nur mit skalierbaren Schriften (sonst: "auto expansion is only
+% possible with scalable fonts").
+\IfFileExists{microtype.sty}{\usepackage[protrusion=true,expansion=false]{microtype}}{}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue]{hyperref}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\kappazwei}{\kappa_2}
+
+\title{FEMBEM: Befunde zur Konvergenz des gekoppelten BEM--FEM-Lösers\\
+\large TEAM-28-Levitationsproblem}
+\author{FEMBEM, Arbeitsprotokoll}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Ausgangspunkt war die Frage, ob ein blocktriangulärer Vorkonditionierer mit
+Schur-Näherung $\tilde S = \mu_0 G_{\mathrm{BEM}}$ das Konvergenzproblem des
+gekoppelten Lösers behebt. \textbf{Die Antwort ist nein}, und die Ursache ist
+inzwischen belegt statt vermutet: die Konditionszahl des Systems beträgt
+gemessen $\kappazwei = 1{,}07\cdot10^{6}$ und ist ein Sockel aus der Struktur
+des Problems. Unterwegs wurden acht reale Fehler im Bestandscode gefunden und
+behoben, darunter zwei mit Wirkung im gesamten CPU-Pfad; einer davon war die
+Ursache der \code{NaN}-Kräfte. Sechs Diagnosekennzahlen erwiesen sich als
+miskalibriert oder irreführend. Zwölf Regressionstests halten die Befunde fest.
+Der beste Stand ist unverändert \code{ILU(0)} mit blockdiagonalem
+Vorkonditionierer und \code{-{}-gmres-restart=200}.
+\end{abstract}
+
+\tableofcontents
+
+%======================================================================
+\section{Kurzfassung der Befunde}
+
+\begin{enumerate}
+\item \textbf{Der Operator ist korrekt.} \code{apply()} ist eine feste lineare
+  Abbildung (Wiederholbarkeit exakt $0$, Linearität $2{,}7\cdot10^{-16}$,
+  Übereinstimmung mit der spaltenweise abgetasteten Matrix
+  $7{,}5\cdot10^{-16}$).
+
+\item \textbf{Das System ist lösbar.} Die dichte Zerlegung erreicht ein
+  Residuum von $4{,}28\cdot10^{-15}$. Keine Inkonsistenz, kein fehlender
+  Bildraum.
+
+\item \textbf{Die Konditionszahl ist der Grund.} Gemessen (nicht geschätzt)
+  $\kappazwei = 1{,}07\cdot10^{6}$ mit $\sigma_{\max}=155$,
+  $\sigma_{\min}=1{,}45\cdot10^{-4}$. Für $\kappazwei\approx10^{6}$ braucht
+  unvorkonditioniertes GMRES grob $\sqrt{\kappazwei}\approx10^{3}$ Iterationen
+  je Dekade; beobachtet wurden mit \code{ILU(0)} rund $2500$ im späten Bereich.
+  Nichts daran ist rätselhaft.
+
+\item \textbf{Der Sockel ist unvermeidbar.} Über die Zeitschrittweite ergibt
+  sich eine U-Kurve mit Minimum bei $\kappazwei\approx10^{6}$; die Vorgabe
+  $\Delta t = 10^{-4}$ liegt praktisch darauf.
+
+\item \textbf{Der Engpass liegt nicht im FEM-Block.} Vier unabhängige
+  Verbesserungen des FEM-Block-Vorkonditionierers, jede an ihrer eigenen
+  Kennzahl deutlich messbar, haben den äußeren Löser nicht bewegt.
+
+\item \textbf{$\tilde S = \mu_0 G_{\mathrm{BEM}}$ trägt nicht.} Das innere CG
+  divergiert; mehr Iterationen verschlechtern das Ergebnis.
+\end{enumerate}
+
+%======================================================================
+\section{Getestete Vorkonditionierer-Varianten}
+
+Alle Angaben: relatives Residuum nach $\approx990$ Iterationen, Zeitschritt~1,
+Originalnetz (18\,690 FEM-Kanten, 16\,544 BEM-Freiheitsgrade), CPU-Modus.
+
+\begin{table}[h]
+\centering
+\begin{tabular}{llcc}
+\toprule
+Vorkonditionierer & Bemerkung & Restart 50 & Restart 200 \\
+\midrule
+\code{ILU(0)} blockdiagonal   & Vorgabe                       & $0{,}040$ & $\mathbf{0{,}0154}$ \\
+AMS blockdiagonal             & vor den Reparaturen           & $1{,}0$   & --- \\
+AMS blockdiagonal             & nach Ausblenden               & $0{,}062$ & $0{,}025$ \\
+AMS blockdiagonal             & + $\alpha$-Poisson            & ---       & $0{,}023$ \\
+AMS blockdiagonal             & + zeilenrel.\ Aggregation     & ---       & $0{,}026$ \\
+\code{ILU(0)} blocktriangulär & unsymm.\ $G_{\mathrm{BEM}}$   & $0{,}105$ & $0{,}0333$ \\
+\code{ILU(0)} blocktriangulär & symm.\ $G_{\mathrm{BEM}}$     & $0{,}183$ & --- \\
+AMS blocktriangulär           &                               & $0{,}12$  & --- \\
+ohne Vorkonditionierer        & Diagnosepfad                  & ---       & --- \\
+\bottomrule
+\end{tabular}
+\caption{Varianten am Originalnetz. Der blockdiagonale \code{ILU(0)} gewinnt
+bei jeder Restart-Länge.}
+\end{table}
+
+\paragraph{Innerer Löser des blocktriangulären Zweigs.}
+Erreichtes relatives Residuum des inneren CG auf $\tilde S$ (Ziel $0{,}01$):
+
+\begin{center}
+\begin{tabular}{lcc}
+\toprule
+Innere Iterationen & erreichtes rel.\ Residuum & äußerer Löser \\
+\midrule
+$3$   & ---              & $0{,}134$ \\
+$10$  & $1{,}1\dots2{,}2$ & $0{,}105$ \\
+$40$  & ---              & $0{,}0952$ \\
+$100$ & $6{,}2\dots9{,}2$ & $0{,}416$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Das innere CG divergiert, und mehr Iterationen machen es schlimmer. Die
+Schur-Näherung ist damit für diese Diskretisierung widerlegt --- trotz exakt
+symmetrischem $G_{\mathrm{BEM}}$.
+
+\paragraph{Einfluss der Restart-Länge.}
+Die Restart-Länge war als $50$ fest eincodiert und dominiert alles andere.
+Allein ihre Erhöhung auf $200$ verbessert den Standardlauf von $0{,}040$ auf
+$0{,}0154$ --- Faktor $2{,}6$ ohne jede Änderung am Vorkonditionierer. Alle
+früheren Vergleiche standen dadurch unter Vorbehalt.
+
+%======================================================================
+\section{Geprüfte Hypothesen}
+
+\small
+\begin{longtable}{p{4.8cm}p{3.8cm}p{5.4cm}}
+\toprule
+\textbf{Hypothese} & \textbf{Messung} & \textbf{Ergebnis} \\
+\midrule
+\endhead
+Kopplungsmatrix $T$ wird bei\newline verzerrten Hexaedern\newline unsymmetrisch
+  & $\max|T_{rc}-T_{cr}|$ auf 200 zufällig verzerrten Quads
+  & \textbf{Widerlegt.} Exakt $0$. $\det J$ erscheint in beiden Einträgen an
+    denselben Quadraturpunkten. \\
+\addlinespace
+Sauter-Schwab reicht am\newline Doppelschichtkern bei\newline gemeinsamer Kante nicht
+  & Ordnungserhöhung $N=4\dots24$
+  & \textbf{Widerlegt.} Exponentielle Konvergenz bis Maschinengenauigkeit
+    ($3{,}8\cdot10^{-4}$ bei $N=4$, $6{,}6\cdot10^{-14}$ bei $N=20$). \\
+\addlinespace
+Kopplungsterm $T z_K$ trägt\newline Gradientenanteil
+  & $\|G^{\!\top}v\|/\|v\|$ für $r_A$ und $T z_K$
+  & \textbf{Widerlegt.} $1{,}11$ gegen $1{,}26$ --- praktisch gleich, während
+    die Verstärkung um Faktor $40$ differiert. \\
+\addlinespace
+Kohomologie-Projektion der rechten Seite entfernt den Antrieb
+  & Lauf mit \code{-{}-nocohomology}
+  & \textbf{Widerlegt.} $\|(I-P)b\|$ von $595$ auf $588$, Konvergenz
+    unverändert. \\
+\addlinespace
+Das System ist inkonsistent
+  & dichte Zerlegung
+  & \textbf{Widerlegt.} Residuum $4{,}28\cdot10^{-15}$. \\
+\addlinespace
+\code{apply()} ist keine feste lineare Abbildung
+  & drei Stufen, u.\,a.\ $A_{\text{dicht}}v$ gegen $\code{apply}(v)$
+  & \textbf{Widerlegt.} $0$; $2{,}7\cdot10^{-16}$; $7{,}5\cdot10^{-16}$. \\
+\addlinespace
+Die Stagnation kommt von der Netzgröße
+  & Netzstudie über vier Größen
+  & \textbf{Widerlegt.} $1791$ Unbekannte stagnieren wie $18\,690$. \\
+\addlinespace
+$\kappazwei$ kommt aus dem Materialkontrast $\sigma/\Delta t$ zu $\nu$
+  & $\Delta t$-Durchlauf über fünf Werte
+  & \textbf{Teilweise.} U-Kurve: beide Äste real, Minimum bei
+    $\kappazwei\approx10^{6}$. \\
+\addlinespace
+Die ausgeblendeten Identitätszeilen ziehen den AMG-Faktor nach oben
+  & Modellproblem mit/ohne Maske
+  & \textbf{Widerlegt.} $0{,}2295$ gegen $0{,}2149$ --- sie helfen minimal. \\
+\addlinespace
+Der skalare AMS-Hilfsraum leidet an Gitteranisotropie
+  & Faktor über Zell-Seitenverhältnis
+  & \textbf{Bestätigt.} $0{,}774$ bei Seitenverhältnis $4{,}5$ (Median der
+    Platte) gegen $0{,}237$ bei $1$. \\
+\bottomrule
+\caption{Von zehn geprüften Hypothesen haben sich acht als falsch erwiesen.
+Entscheidend war nicht das Raten, sondern dass jede Vermutung eine Messung nach
+sich zog, die sie widerlegen konnte.}
+\end{longtable}
+
+%======================================================================
+\section{Behobene Fehler im Bestandscode}
+
+\small
+\begin{longtable}{p{3.2cm}p{5.0cm}p{5.8cm}}
+\toprule
+\textbf{Ort} & \textbf{Mechanismus} & \textbf{Wirkung} \\
+\midrule
+\endhead
+\code{bf::dgemv}
+  & liest $y$ auch bei $\beta=0$; die BLAS-Spezifikation verbietet das
+  & \textbf{Ursache der \code{NaN}-Kräfte.} $d\_temp\_z$ war uninitialisiert,
+    $0\cdot\text{NaN}=\text{NaN}$ machte $16\,544$ von $16\,544$ BEM-Einträgen
+    zu \code{NaN}. \\
+\addlinespace
+\code{bf::dnrm2}
+  & skalierte Summation; $\text{scale} < a$ ist für \code{NaN} falsch
+  & Ein Vektor aus \emph{lauter} \code{NaN} lieferte die Norm $0{,}0$. GMRES
+    meldete \textquotedblleft Converged, Rel.\ Res.\ 0\textquotedblright{} bei \code{NaN}-Kräften. Betraf
+    alle Abbruchkriterien im CPU-Pfad. \\
+\addlinespace
+\code{DeviceArray::allocate}
+  & lieferte uninitialisierten Speicher
+  & 62 Aufrufstellen, keine mit folgendem \code{fill\_zero()}. Nullt jetzt. \\
+\addlinespace
+GMRES-Rück\-wärts\-sub\-sti\-tu\-tion
+  & \code{y[i] /= H[i][i]} ohne jede Prüfung
+  & Bei Stagnation wird $H_{ii}$ winzig, $y_i$ unendlich, die Lösung
+    \code{NaN} --- ohne Meldung. \\
+\addlinespace
+\code{DenseLU}, AMG-Grobgitter
+  & Singularitätsprüfung \code{best == 0.0}
+  & Ein Pivot von $10^{-300}$ kam durch; ein \code{NaN} ebenso, da
+    \code{v > best} für \code{NaN} falsch ist. \\
+\addlinespace
+\code{evaluate\_quad\_}\\\code{normal}
+  & \code{1.0/len} ohne Prüfung
+  & Entartetes Quad $\to$ Normale aus \code{Inf}/\code{NaN} $\to$ über die
+    ACA-Blöcke in den ganzen Operator. \\
+\addlinespace
+\code{AcaPlus::compress}
+  & Pivotsuche \code{|val| > max}; \code{NaN} wird nie gewählt, aber
+    gespeichert
+  & Ein \code{NaN} aus dem Kern wäre unbemerkt in $U$/$V$ gewandert. \\
+\addlinespace
+AMG \code{inv\_diag}, AMS $A_G$
+  & \code{(d != 0.0) ? 1/d : 0}; rundungskleine Diagonalen
+  & $\|z_A\| = 8{,}6\cdot10^{14}$ bei $\|r_A\|=1$. AMS war unbrauchbar. \\
+\addlinespace
+\code{build\_auxiliary\_}\\\code{nodal\_matrix}
+  & Parameter für rundungskleine Diagonalen mit \code{nullptr} aufgerufen
+  & Die aussagekräftige Kennzahl wurde berechnet und weggeworfen. \\
+\bottomrule
+\caption{Acht Fehler plus eine ungenutzte Diagnose. Sieben davon gehören
+derselben Familie an: eine Vergleichsoperation, die \code{NaN} oder eine
+rundungskleine Größe nicht sehen kann.}
+\end{longtable}
+
+\subsection*{Das wiederkehrende Muster}
+
+Jeder Vergleich mit \code{NaN} ist falsch. Damit gilt:
+\[
+  \code{if (v > max) max = v;} \qquad\text{sieht \code{NaN} nie,}
+\]
+und eine \code{min}/\code{max}-Statistik kann \code{NaN} \emph{grundsätzlich}
+nicht anzeigen. Ebenso schützt \code{d != 0.0} vor der Division durch die exakte
+Null, nicht aber durch $10^{-300}$ --- und bei physikalischen Größen ist die
+exakte Null der seltene Fall. Die richtige Prüfung ist stets \emph{relativ zu
+einem Maßstab} und schließt Endlichkeit ausdrücklich ein. Ausführlich in
+\code{docs/design/nan-and-thresholds.md}.
+
+%======================================================================
+\section{Miskalibrierte Diagnosekennzahlen}
+
+Sechs Kennzahlen sahen im Fehlerfall harmlos aus und haben die Suche zeitweise
+in die Irre geführt. Alle sind korrigiert.
+
+\begin{center}
+\small
+\begin{tabular}{p{4.4cm}p{9.4cm}}
+\toprule
+\textbf{Kennzahl} & \textbf{Problem} \\
+\midrule
+\code{bf::dnrm2} & Norm $0$ statt \code{NaN} $\Rightarrow$ falsche
+  Konvergenzmeldung. \\
+\code{min}/\code{max} über \code{D\_scale} & \code{NaN} strukturell unsichtbar.
+  \\
+Ritz-Schlussfolgerung & $\kappazwei\ge1{,}9\cdot10^{3}$ ist eine \emph{untere}
+  Schranke; daraus wurde \textquotedblleft 1000 Iterationen reichen\textquotedblright{} gefolgert.
+  Gemessen: $1{,}07\cdot10^{6}$, Faktor $560$ daneben. \\
+Operatorkomplexität $<1{,}3$ & Schwelle stammt aus einem Modellproblem mit
+  ganz anderer Vergröberungsstrategie. \\
+AMS-Warntext & empfahl noch den $\alpha$-Poisson-Operator, der längst Vorgabe
+  war. \\
+AMG-Konvergenzfaktor & wurde ohne die Maske gemessen, die \code{apply()}
+  anwendet. \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%======================================================================
+\section{Messungen}
+
+\subsection{Konditionszahl über die Zeitschrittweite}
+
+Netz \code{team28\_coarse\_12} (4511 gekoppelte Unbekannte), $\sigma_{\max}$
+durchweg $155$:
+
+\begin{center}
+\begin{tabular}{ccccl}
+\toprule
+$\Delta t$ [s] & Kontrast $\frac{\sigma/\Delta t}{\nu}$ & $\sigma_{\min}$ &
+$\kappazwei$ & \\
+\midrule
+$10^{-6}$ & $4{,}3\cdot10^{7}$ & $7{,}56\cdot10^{-5}$ & $2{,}05\cdot10^{6}$ & \\
+$10^{-5}$ & $4{,}3\cdot10^{6}$ & $1{,}50\cdot10^{-4}$ & $1{,}03\cdot10^{6}$ & Minimum \\
+$10^{-4}$ & $4{,}3\cdot10^{5}$ & $1{,}45\cdot10^{-4}$ & $1{,}07\cdot10^{6}$ & Vorgabe \\
+$10^{-3}$ & $4{,}3\cdot10^{4}$ & $5{,}89\cdot10^{-5}$ & $2{,}63\cdot10^{6}$ & \\
+$10^{-2}$ & $4{,}3\cdot10^{3}$ & $7{,}25\cdot10^{-6}$ & $2{,}14\cdot10^{7}$ & \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Eine U-Kurve, kein Trend. Beide Erklärungen sind richtig, jede in einem Ast:
+\begin{itemize}
+\item \textbf{Großes $\Delta t$:} der Massenterm $\sigma/\Delta t$ wird klein,
+  der Operator nähert sich dem reinen Curl-Curl --- und der ist singulär.
+\item \textbf{Kleines $\Delta t$:} der Massenterm wird groß, und der Kontrast
+  zwischen Leiter ($\sigma/\Delta t$ riesig) und Luft (null) begrenzt.
+\end{itemize}
+Am Zeitschritt ist also nichts zu gewinnen.
+
+\subsection{Netzstudie}
+
+Ersatznetze mit polar vernetzten Spulen (damit der eingeprägte azimutale Strom
+quellenfrei bleibt) und kartesischer Platte; kein Luftelement, wie im Original.
+
+\begin{center}
+\begin{tabular}{crcc}
+\toprule
+$n$ & Zeilen & $\|G^{\!\top}b\|/\|b\|$ & Residuum nach 2000 It. \\
+\midrule
+$12$ & $1\,791$  & $2{,}4\cdot10^{-8}$ & $0{,}0113$ \\
+$16$ & $3\,447$  & $2{,}7\cdot10^{-8}$ & $0{,}0107$ \\
+$24$ & $9\,139$  & $2{,}7\cdot10^{-8}$ & $0{,}0128$ \\
+$32$ & $17\,199$ & $3{,}6\cdot10^{-8}$ & $0{,}0194$ \\
+\midrule
+Original & $18\,690$ & $2{,}1\cdot10^{-4}$ & $\approx0{,}011$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Über einen Faktor $10$ in der Problemgröße praktisch netzunabhängig. Ein
+Konditionierungsproblem aus der Netzweite müsste mit dem Netz wachsen.
+
+\subsection{AMS-Hilfsräume}
+
+Bezugswert: derselbe AMG erreicht auf dem 3D-Laplace $0{,}30$, netzunabhängig.
+
+\begin{center}
+\begin{tabular}{lccc}
+\toprule
+ & Ausgangszustand & nach Ausblenden & Endstand \\
+\midrule
+skalarer Hilfsraum      & $0{,}93$ & $0{,}72$ & $\mathbf{0{,}52}$ \\
+vektorieller Hilfsraum  & $0{,}93$ & $0{,}93$ & $\mathbf{0{,}62}$ \\
+Op.-Komplexität skalar  & $1{,}19$ & $1{,}19$ & $\mathbf{3{,}61}$ \\
+Op.-Komplexität vektor. & $1{,}09$ & $1{,}09$ & $\mathbf{3{,}58}$ \\
+\midrule
+äußerer Löser (Restart 200) & --- & $0{,}025$ & $0{,}026$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Die Hilfsräume sind deutlich besser, der äußere Löser bewegt sich nicht. Das
+ist der Befund, aus dem folgt, dass der Engpass nicht im FEM-Block liegt.
+
+\subsection{Gitteranisotropie und Stärkemaßstab}
+
+Poisson auf $16\times16\times3$, Faktor je V-Zyklus, Grobgittergröße in
+Klammern (fein: $1156$):
+
+\begin{center}
+\small
+\begin{tabular}{lcccc}
+\toprule
+Zell-Seitenverh. & $1{,}0$ & $4{,}5$ & $10$ & $30$ \\
+\midrule
+diagonal, $\theta=0{,}08$    & $0{,}237\,(42)$  & $0{,}774\,(40)$ & $0{,}854\,(40)$ & $0{,}873\,(41)$ \\
+diagonal, $\theta=0{,}35$    & $0{,}001\,(1156)$ & $0{,}439\,(289)$ & $0{,}478\,(289)$ & $0{,}777\,(189)$ \\
+zeilenrelativ, $\theta=0{,}60$ & $0{,}273\,(21)$ & $\mathbf{0{,}439\,(36)}$ & $0{,}478\,(36)$ & $0{,}490\,(36)$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Die Aluminiumplatte hat im Originalnetz ein Zell-Seiten\-ver\-hält\-nis von
+$4{,}5$ im Median (Maximum $6{,}1$), die Spulen $1{,}4$ bis $1{,}9$. Der
+zeilenrelative Maßstab
+\[
+  |a_{IJ}| > \theta \max_{K\neq I}|a_{IK}|
+\]
+ist skaleninvariant und bedient beide Regime mit einer Einstellung, bei
+gesunder Vergröberung.
+
+\paragraph{Eine Falle.} Der diagonale Maßstab mit $\theta=0{,}35$ liefert im
+isotropen Fall einen Faktor von $0{,}0009$ --- aber das Grobgitter ist so groß
+wie das feine. Das ist keine Vergröberung, sondern eine teure direkte Lösung.
+Ohne die mitgemessene Grobgittergröße wäre das als Durchbruch durchgegangen.
+
+%======================================================================
+\section{Neue Werkzeuge}
+
+\subsection{Kommandozeilenschalter}
+
+Fünf Größen waren fest eincodiert und standen damit jeweils einer Messung im
+Weg.
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+\code{-{}-gmres-restart=N} & Restart-Länge (war $50$). Dominiert alles. \\
+\code{-{}-max-iter=N}      & Iterationsobergrenze (war $1000$). \\
+\code{-{}-mesh=DATEI}      & Netzdatei (war \code{team28.vtk}). \\
+\code{-{}-dt=X}            & Zeitschrittweite (war $10^{-4}$). \\
+\code{-{}-amg-theta=X}     & Stärkeschwelle der Aggregation. \\
+\code{-{}-blocktri}        & blocktriangulärer Vorkonditionierer. \\
+\code{-{}-pc-inner-iters=N}, \code{-{}-pc-inner-tol=X} & innerer CG-Löser. \\
+\code{-{}-direct}          & dichte Zerlegung, Lösbarkeit, $\kappazwei$,
+                             Operatorprüfung. \\
+\code{-{}-ritz}            & Ritz-Spektrum (war an \code{-{}-verify-field}
+                             gekoppelt). \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Regressionstests}
+
+Zwölf Tests, alle ohne GPU lauffähig, alle grün.
+
+\begin{center}
+\small
+\begin{tabular}{ll}
+\toprule
+\code{test\_coupling\_sign\_convention} & Operator $(-T)$ und Vorkonditionierer
+  $(+T)$ exakt entgegengesetzt \\
+\code{test\_block\_triangular\_cons.} & bei $r_K=0$ bitgleich zum
+  blockdiagonalen Zweig \\
+\code{test\_norm\_nan\_propagation} & \code{dnrm2} verschluckt kein \code{NaN}
+  \\
+\code{test\_dgemv\_beta\_zero} & \code{dgemv} liest $y$ bei $\beta=0$ nicht \\
+\code{test\_singular\_quadrature} & 4-Punkt-Regel trifft die konvergierten
+  Werte \\
+\code{test\_ams\_scalar\_masking} & Ausblenden begrenzt die Verstärkung \\
+\code{test\_gbem\_symmetry} & $\langle x,Gy\rangle = \langle Gx,y\rangle$ \\
+\code{test\_amg\_convergence} & AMG löst den 3D-Laplace, netzunabhängig \\
+\code{test\_alpha\_poisson} & Vektor-Poisson-Operator als AMG-Grundlage \\
+\code{test\_amg\_anisotropy} & Stärkemaßstab auf anisotropen Gittern \\
+\code{test\_precond\_end\_to\_end} & Wirkung an der äußeren
+  Iterationszahl \\
+\code{test\_dense\_direct} & Selbstprüfung von \code{-{}-direct} und der
+  $\kappazwei$-Messung \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent
+Drei dieser Tests prüfen ausdrücklich \emph{sich selbst} mit: die
+$\kappazwei$-Messung an Matrizen vorgegebener Konditionszahl ($10^{3}$,
+$10^{6}$, $10^{9}$, jeweils auf $0{,}0\,\%$ getroffen), der Symmetrietest mit
+einer Gegenprobe aus unabhängig gefüllten Blöcken, und der Anisotropietest mit
+der Falle des zu großen $\theta$. Ohne solche Gegenproben ist ein auffälliges
+Messergebnis nicht von einem Werkzeugfehler zu unterscheiden.
+
+\subsection{Netzgenerator}
+
+\code{tools/make\_coarse\_team28.py} erzeugt grobe Ersatznetze derselben
+Geometrie. Zwei Eigenheiten mussten dabei ausdrücklich behandelt werden:
+
+\begin{itemize}
+\item \textbf{Keine Luftelemente.} Das Originalnetz hat $4805$ Zellen und
+  $1200+1400+2205 = 4805$ --- es enthält ausschließlich die drei Körper, den
+  Außenraum macht die BEM.
+\item \textbf{Polare Spulen.} Der eingeprägte Spulenstrom ist azimutal; auf
+  kartesischem Gitter ist ein Ring eine Treppe, der Strom schließt sich nicht,
+  und $\|G^{\!\top}b\|/\|b\|$ steigt von $2{,}1\cdot10^{-4}$ auf $0{,}32$ ---
+  das System wird inkonsistent.
+\end{itemize}
+
+%======================================================================
+\section{Offene Punkte und Empfehlung}
+
+\paragraph{Bester Stand.} \code{ILU(0)} blockdiagonal mit
+\code{-{}-gmres-restart=200}: Residuum $0{,}0154$ nach $1000$ Iterationen.
+
+\paragraph{Was noch offen ist.}
+\begin{itemize}
+\item Der BEM-Block wird von keinem Vorkonditionierer angefasst --- er bekommt
+  die Identität. Die blockweise Aufschlüsselung zeigt ihn mit $1{,}8\cdot10^{-4}$
+  gegen $1{,}3\cdot10^{-4}$ des FEM-Blocks als den \emph{größeren} Anteil. Ein
+  wirksamer Vorkonditionierer für $G_{\mathrm{BEM}}$ (Calderón, hierarchisch)
+  wäre der einzige verbliebene Ansatz mit belegter Begründung.
+\item Die $3905$ ausgeblendeten Knoten laufen als Identitätszeilen durch die
+  gesamte AMG-Hierarchie mit. Das kostet Rechenzeit; auf die Konvergenz wirkt
+  es nachweislich nicht.
+\item Ein einziges globales $\theta$ kann Platte und Spulen nicht optimal
+  zugleich bedienen.
+\end{itemize}
+
+\paragraph{Empfehlung.} Vor weiterer Arbeit am Löser sollte die Frage geklärt
+werden, \emph{welche Genauigkeit die Kraftwerte tatsächlich brauchen}. Bei
+$\kappazwei\approx10^{6}$ ist unterhalb von etwa $10^{-6}$ ohnehin die Grenze
+dessen erreicht, was in doppelter Genauigkeit sinnvoll ist. Genügt für eine
+belastbare Levitationskraft ein Residuum von $10^{-3}$, ist der aktuelle Stand
+bereits ausreichend, und alles Weitere wäre Arbeit an einer Zahl, die niemand
+braucht.
+
+%======================================================================
+\section*{Methodischer Nachtrag}
+
+Von zehn geprüften Hypothesen erwiesen sich acht als falsch, darunter mehrere,
+die zunächst überzeugend aussahen. Zweimal richteten eingebaute
+Schutzmaßnahmen mehr Schaden an als der Zustand, den sie abfangen sollten.
+Getragen hat nicht das Raten, sondern die Regel, dass jede Vermutung eine
+Messung nach sich zog, die sie widerlegen konnte --- und dass jede
+Diagnoseausgabe berichtigt wurde, sobald sie einen überholten Stand
+weitertrug.
+
+Ein Teil der Arbeit entstand ohne CUDA-Toolkit, geprüft mit \code{g++} gegen
+Stub-Header. Das fängt Typfehler und Namensauflösung, aber nicht die strengere
+Typherleitung von \code{nvcc} und keinen Gerätecode. Die Grenzen sind in
+\code{docs/design/nan-and-thresholds.md} vermerkt.
+
+\end{document}

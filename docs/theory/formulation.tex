@@ -1,0 +1,595 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+\usepackage{amsmath, amsfonts, amssymb}
+\usepackage{geometry}
+\geometry{a4paper, left=2.5cm, right=2.5cm, top=2.5cm, bottom=2.5cm}
+\usepackage{bm} % Für fette Vektoren
+\usepackage{hyperref}
+\usepackage{color}
+
+% Eigene Makros für Vektoren und Operatoren
+\newcommand{\vA}{\bm{A}}
+\newcommand{\vB}{\bm{B}}
+\newcommand{\vH}{\bm{H}}
+\newcommand{\vE}{\bm{E}}
+\newcommand{\vJ}{\bm{J}}
+\newcommand{\vv}{\bm{v}}
+\newcommand{\vn}{\bm{n}}
+\newcommand{\vW}{\bm{W}} % Testfunktion
+\newcommand{\vK}{\bm{K}} % Oberflächenstrom
+\newcommand{\vM}{\bm{M}} % Magnetischer Flächenstrom
+\newcommand{\rot}{\nabla \times}
+\newcommand{\grad}{\nabla}
+\renewcommand{\div}{\nabla \cdot}
+
+\title{\textbf{Moderne 3D BEM-FEM Kopplung für Wirbelstromprobleme}\\
+\Large Umstellung von Knoten- auf Kantenelemente}
+\author{Theorie-Zusammenstellung}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Dieses Dokument beschreibt die mathematische und numerische Formulierung zur Lösung dreidimensionaler, transienter elektrodynamischer Levitations- und Wirbelstromprobleme mittels einer BEM-FEM-Kopplung. Im Gegensatz zur klassischen Literatur (z.\,B. Kurz, Fetzer, Lehner 1996), welche Nodal-Elemente und den Vektor-Laplace-Operator verwendet, wird hier die physikalisch robustere \textbf{Kantenelement-Formulierung (Edge Elements)} hergeleitet.
+\end{abstract}
+
+\tableofcontents
+\vspace{1cm}
+
+\section{Einführung und Motivation}
+Im Paper von Kurz et al. (1996) wird die magnetische Vektorpotentialgleichung mithilfe der Coulomb-Eichung ($\div \vA = 0$) auf eine Vektor-Poisson-Gleichung mit dem Laplace-Operator ($\Delta \vA$) zurückgeführt. Die Diskretisierung erfolgte mit knotenbasierten (nodalen) Finiten Elementen. 
+
+\paragraph{Nachteile der Nodal-Formulierung:} 
+Knotenelemente erzwingen an Elementübergängen die Stetigkeit aller drei Komponenten von $\vA$. An Materialgrenzen (z.\,B. Übergang von Eisen $\mu_r = 1000$ zu Luft $\mu_r = 1$) ist die Normalkomponente von $\vA$ jedoch im Allgemeinen \textit{unstetig}. Dies führt bei Nodalelementen zu unphysikalischen Lösungen oder erfordert starkes Netz-Refinement und Penalty-Parameter. Zudem treten im Nullraum des $\Delta$-Operators oft sogenannte ,,Spurious Modes`` (künstliche Schwingungen) auf.
+
+\paragraph{Vorteile der Kanten-Formulierung (Whitney 1-Forms):}
+Kantenelemente legen die Freiheitsgrade (DoFs) auf die Kanten des Netzes (Zirkulation von $\vA$). Sie erzwingen \textit{nur} die Stetigkeit der Tangentialkomponente $\vA_t = \vn \times \vA \times \vn$, während die Normalkomponente springen darf. Dies entspricht exakt den physikalischen Stetigkeitsbedingungen der Maxwell-Gleichungen an Materialgrenzen.
+
+\section{Die partielle Differentialgleichung (Starke Form)}
+
+Wir starten von den quasistationären Maxwell-Gleichungen (Verschiebungsströme vernachlässigt):
+\begin{align}
+    \rot \vH &= \vJ \\
+    \rot \vE &= -\frac{\partial \vB}{\partial t}
+\end{align}
+Mit den Materialgleichungen $\vB = \rot \vA$, $\vH = \nu \vB$ (wobei $\nu = 1/\mu$ die Reluktivität ist) und dem Ohmschen Gesetz für bewegte Leiter $\vJ = \kappa (\vE + \vv \times \vB) + \vJ_s$ ergibt sich das elektrische Feld zu:
+\begin{equation}
+    \vE = -\frac{\partial \vA}{\partial t} - \grad \varphi
+\end{equation}
+Setzt man alles in das Durchflutungsgesetz ein, erhält man die \textbf{doppelte Rotations-Gleichung}:
+\begin{equation}
+    \rot (\nu \rot \vA) + \kappa \left( \frac{\partial \vA}{\partial t} + \grad \varphi - \vv \times \rot \vA \right) = \vJ_s \label{eq:strong_form}
+\end{equation}
+\textit{Hinweis:} Im modernen BEM-FEM-Ansatz wird der Bewegungsterm $\vv \times \rot \vA$ oft vermieden, indem das BEM-Netz die Bewegung des Körpers übernimmt (ALE-Ansatz - Arbitrary Lagrangian-Eulerian). Für die folgende Herleitung sei $\vv = 0$, was die Gleichung auf den stationären Körper im zeitveränderlichen Feld reduziert.
+
+\section{Schwache FEM-Formulierung mit Kantenelementen}
+
+Um die Gleichung mit der FEM zu lösen, multiplizieren wir \eqref{eq:strong_form} mit einer vektoriellen Testfunktion $\vW$ (welche später die Form der Kantenelemente annimmt) und integrieren über das FEM-Gebiet $\Omega_{\text{FEM}}$:
+\begin{equation}
+    \int_{\Omega} \vW \cdot \rot (\nu \rot \vA) \, d\Omega + \int_{\Omega} \vW \cdot \left( \kappa \frac{\partial \vA}{\partial t} \right) \, d\Omega = \int_{\Omega} \vW \cdot \vJ_s \, d\Omega
+\end{equation}
+Wir wenden die vektorielle Produktregel $\div (\vA \times \vB) = \vB \cdot (\rot \vA) - \vA \cdot (\rot \vB)$ und den Satz von Gauß auf den ersten Term an:
+\begin{equation}
+    \int_{\Omega} \vW \cdot \rot (\nu \rot \vA) \, d\Omega = \int_{\Omega} (\rot \vW) \cdot (\nu \rot \vA) \, d\Omega - \oint_{\Gamma} \vW \cdot (\nu \rot \vA \times \vn) \, d\Gamma
+\end{equation}
+Da $\nu \rot \vA = \vH$, ist der Randterm exakt die tangentiale Magnetfeldstärke auf dem Rand $\Gamma$:
+\begin{equation}
+    \nu \rot \vA \times \vn = \vH \times \vn = \vK
+\end{equation}
+wobei $\vK$ als fiktive Oberflächenstromdichte interpretiert werden kann. Die finale \textbf{schwache Formulierung} lautet:
+\begin{equation}
+    \underbrace{\int_{\Omega_{\text{FEM}}} \nu (\rot \vW) \cdot (\rot \vA) \, d\Omega}_{\text{Steifigkeitsmatrix } [K]} 
+    + \underbrace{\int_{\Omega_{\text{FEM}}} \kappa \vW \cdot \frac{\partial \vA}{\partial t} \, d\Omega}_{\text{Dämpfungsmatrix } [C]} 
+    = \int_{\Omega_{\text{FEM}}} \vW \cdot \vJ_s \, d\Omega 
+    + \underbrace{\oint_{\Gamma} \vW \cdot (\vH \times \vn) \, d\Gamma}_{\text{Kopplungsterm zur BEM}} \label{eq:weak_form}
+\end{equation}
+
+\textbf{Vergleich zum Paper 1996:} Im alten Paper entstand durch den Laplace-Operator ein unphysikalischer Randterm $\vec{Q} \sim (\vn \cdot \grad)\vA$. Mit Kantenelementen entsteht hier auf ganz natürliche Weise das tangentiale H-Feld $(\vH \times \vn)$, was die BEM-FEM-Kopplung enorm vereinfacht und physikalisch robuster macht.
+
+\section{Eichung (Gauge-Bedingungen)}
+
+Mit Kantenelementen fordert man \textbf{nicht} a priori $\div \vA = 0$. 
+\begin{itemize}
+    \item \textbf{Im Leiterbereich ($\kappa > 0$):} Die Gleichung ist regulär, da der Zeit-Ableitungsterm $\kappa \dot{\vA}$ den Nullraum des $\rot \rot$-Operators dämpft. Hier reicht oft die Annahme $\varphi=0$ (modifizierte $\vA^*$-Formulierung) oder die Kopplung mit einer skalaren Poisson-Gleichung für $\varphi$.
+    \item \textbf{Im Nichtleiterbereich ($\kappa = 0$):} Hier reduziert sich die Gleichung zu $\rot (\nu \rot \vA) = 0$. Da $\rot (\grad \Psi) \equiv 0$ für jedes beliebige Skalarfeld $\Psi$, ist die Matrix singulär. \\
+    \textit{Lösung:} Wir verwenden die \textbf{Tree-Cotree-Eichung (Baum-Kobaum-Eichung)}. Man bestimmt graphentheoretisch einen aufspannenden Baum (Spanning Tree) aus den Kanten des FEM-Netzes im Nichtleiter. Alle Kanten-Freiheitsgrade, die zu diesem Baum gehören, werden fest auf Null gesetzt ($a_i = 0$). Dies eliminiert den skalaren Nullraum exakt und macht die Matrix invertierbar.
+\end{itemize}
+
+\section{Die BEM-Formulierung und Kopplung}
+
+Das Außengebiet $\Omega_{\text{BEM}}$ ist typischerweise Luft. Anstelle von 3 skalaren Randintegralgleichungen für $A_x, A_y, A_z$ nutzen wir die \textbf{Stratton-Chu-Darstellungsformel} für elektromagnetische Felder. 
+Auf dem Rand $\Gamma$ definieren wir als Unbekannte:
+\begin{align}
+    \text{Elektrischer Flächenstrom: } & \vK = \vn \times \vH \\
+    \text{Magnetischer Flächenstrom: } & \vM = -\vn \times \vE = \vn \times \frac{\partial \vA}{\partial t}
+\end{align}
+Zur Diskretisierung der Oberflächendaten $\vK$ und $\vM$ auf dem Dreiecksnetz von $\Gamma$ werden \textbf{RWG-Elemente} (Rao-Wilton-Glisson) verwendet. Diese sind das 2D-Äquivalent der 3D-Kantenelemente.
+
+\subsection{Das gekoppelte Gleichungssystem}
+Das FEM-System aus \eqref{eq:weak_form} diskretisiert lautet (mit implizitem Euler für $\frac{\partial}{\partial t} \approx \frac{1}{\Delta t}$):
+\begin{equation}
+    \left( [K] + \frac{1}{\Delta t}[C] \right) \{A_{\text{FEM}}\} - [T] \{K_{\text{BEM}}\} = \{F_s\} + \frac{1}{\Delta t}[C] \{A_{\text{FEM}}^{\text{alt}}\} \label{eq:fem_matrix}
+\end{equation}
+Hierbei ist $[T]$ die Randkopplungsmatrix, die die BEM-Größe $\vK$ als Neumann-Randbedingung in das FEM-System projiziert.
+
+Das BEM-System liefert eine Beziehung zwischen den Randgrößen $\vA_t$ (Tangentialkomponente des Vektorpotentials, abgeleitet aus FEM) und $\vK$:
+\begin{equation}
+    [H_{\text{BEM}}] \{A_{\text{t, FEM}}\} = [G_{\text{BEM}}] \{K_{\text{BEM}}\} \label{eq:bem_matrix}
+\end{equation}
+
+Die Kopplung erfolgt durch den Einbau von \eqref{eq:bem_matrix} in \eqref{eq:fem_matrix}. Da die BEM-Matrizen voll besetzt sind, wird heute typischerweise ein iterativer Löser (wie GMRES) verwendet. Die Matrizen $[H_{\text{BEM}}]$ und $[G_{\text{BEM}}]$ werden dabei oft nicht explizit aufgebaut, sondern ihre Matrix-Vektor-Produkte werden mittels \textbf{Fast Multipole Method (FMM)} oder \textbf{$\mathcal{H}$-Matrizen} enorm beschleunigt berechnet (O(N log N) statt O(N$^2$)).
+
+\section{Berechnung der Kräfte (Maxwell'scher Spannungstensor)}
+
+Nach Konvergenz des Zeitschritts liegen $\vA$ im Volumen und $\vK, \vM$ auf dem Rand vor. Die Magnetkraft $\bm{F}$ auf den Körper wird am elegantesten über den Maxwell'schen Spannungstensor $\mathcal{T}$ auf der BEM-Randfläche $\Gamma$ berechnet:
+\begin{equation}
+    \bm{F} = \oint_{\Gamma} \mathcal{T} \cdot \vn \, d\Gamma
+\end{equation}
+Mit Kantenelementen und RWG-Elementen ist das Feld auf dem Rand sauber aufgeteilt in:
+\begin{itemize}
+    \item Tangentiales H-Feld: $\vH_t = \vK \times \vn$ (direkt aus der BEM-Lösung)
+    \item Normales B-Feld: $B_n = \vn \cdot (\rot \vA)$ (direkt berechenbar aus der FEM-Zirkulation auf dem Randdreieck)
+\end{itemize}
+Die Kraftdichte $\bm{f}$ auf der Fläche lässt sich damit ohne die im alten Paper benötigte numerische Normalableitung berechnen, was numerisch weitaus stabiler ist.
+
+\section{Zusammenfassung der Umstellung}
+\begin{table}[hbt!]
+    \centering
+    \begin{tabular}{|l|p{6cm}|p{6cm}|}
+    \hline
+    \textbf{Eigenschaft} & \textbf{Paper 1996 (Nodal)} & \textbf{Neu (Kanten/Whitney)} \\
+    \hline
+    Basisgleichung & $\frac{1}{\mu}\Delta \vA + \dots = \vJ$ & $\rot(\nu\rot\vA) + \dots = \vJ$ \\
+    \hline
+    Freiheitsgrade & Vektorkomponenten $A_x, A_y, A_z$ an den Netzknoten & Zirkulation $\int \vA \cdot d\bm{l}$ entlang der Kanten \\
+    \hline
+    Eichung & $\div \vA = 0$ iterativ erzwungen & Tree-Cotree-Eichung im Luftraum \\
+    \hline
+    Randterm BEM & Künstliche Normalableitung $\vec{Q}$ & Physikalischer Oberflächenstrom $\vK = \vn \times \vH$ \\
+    \hline
+    BEM-Elemente & Skalare nodale Ansatzfunktionen & Vektorielle RWG-Flächenelemente \\
+    \hline
+    Vorteil & Damals einfacher zu programmieren & Keine Spurious Modes, exakte Materialgrenzen \\
+    \hline
+    \end{tabular}
+    \caption{Vergleich der Methoden}
+\end{table}
+
+\section{Matrixkompression mittels ACA (Adaptive Cross Approximation)}
+
+Die Kopplung von FEM und BEM vereint die Vorteile beider Welten (Behandlung nichtlinearer Materialien in der FEM, exakte Abbildung des unendlichen Freiraums in der BEM). Sie führt jedoch zu einem gravierenden numerischen Flaschenhals: Während die Matrizen der FEM (Gl. \ref{eq:weak_form}) extrem dünnbesetzt (\textit{sparse}) sind und linear mit der Problemgröße wachsen $\mathcal{O}(N_{\text{FEM}})$, sind die BEM-Matrizen $[H_{\text{BEM}}]$ und $[G_{\text{BEM}}]$ vollständig vollbesetzt (\textit{dense}).
+
+Für $N$ Freiheitsgrade auf der Kopplungsfläche $\Gamma$ (Anzahl der RWG-Kanten) skaliert der Speicherbedarf mit $\mathcal{O}(N^2)$ und die Rechenzeit für den Aufbau der Matrix im Standardverfahren ebenfalls mit $\mathcal{O}(N^2)$. Ein direktes Lösen läge sogar bei $\mathcal{O}(N^3)$. 
+Besonders bei transienten Problemen mit bewegten Teilen (Levitation), wie im Paper von Kurz et al. beschrieben, ändert sich die Geometrie der BEM-Kopplungsfläche in jedem Zeitschritt. Eine vollständige Neuberechnung der dichten BEM-Matrizen in jedem Zeitschritt ist für praxisrelevante Netzgrößen heute inakzeptabel.
+
+Die Lösung für dieses Problem ist die \textbf{Matrixkompression}. Anstelle der historisch oft genutzten \textit{Fast Multipole Method (FMM)} wird für solche gekoppelten Probleme heute bevorzugt die \textbf{Adaptive Cross Approximation (ACA)} in Verbindung mit Hierarchischen Matrizen ($\mathcal{H}$-Matrizen) verwendet.
+
+\subsection{Warum ACA und nicht FMM?}
+Sowohl FMM als auch ACA reduzieren die asymptotische Komplexität von Speicher und Matrix-Vektor-Multiplikationen auf $\mathcal{O}(N \log N)$. Für die Verwendung von vektoriellen RWG-Elementen in der BEM bietet ACA jedoch entscheidende Vorteile:
+\begin{itemize}
+    \item \textbf{Analytisch vs. Algebraisch:} Die FMM basiert auf einer analytischen Taylor- oder Multipolentwicklung (Kugelflächenfunktionen) des Integralkerns (Green'sche Funktion). Die Herleitung dieser Entwicklungen für vektorielle Felder (Kantenelemente) ist mathematisch extrem komplex und fehleranfällig. Die ACA hingegen ist ein rein algebraisches Verfahren. Sie behandelt die Integrationsfunktion der BEM als ,,Black Box`` und arbeitet ausschließlich mit den resultierenden Zahlenwerten.
+    \item \textbf{Implementierungsaufwand:} Die ACA lässt sich in wenigen Dutzend Zeilen Code implementieren und direkt auf einen existierenden, unkomprimierten BEM-Code aufsetzen.
+    \item \textbf{Geometrieänderungen:} Bei der Bewegung der Levitationsplatte müssen bei der FMM aufwändige Translationsoperatoren neu berechnet werden. Bei der ACA wird lediglich die algebraische Näherung ferner Cluster aktualisiert.
+\end{itemize}
+
+\subsection{Mathematisches Prinzip der ACA}
+Die fundamentale Eigenschaft des BEM-Integralkerns (z.\,B. der Laplace-Kern $G(r) = \frac{1}{4\pi r}$) ist seine Asymptotik: Er ist singulär für $r \to 0$, wird aber für große Distanzen $r$ sehr glatt. 
+
+\paragraph{1. Clustering ($\mathcal{H}$-Matrix Struktur):}
+Zunächst wird das RWG-Oberflächennetz mittels eines Octrees oder einer Bounding-Box-Bisection hierarchisch in Gebiete (Cluster) zerlegt. Interagieren zwei Cluster $X$ und $Y$ miteinander, prüft man eine \textbf{Zulässigkeitsbedingung (Admissibility Condition)}:
+\begin{equation}
+    \min(\text{diam}(X), \text{diam}(Y)) \le \eta \cdot \text{dist}(X, Y)
+\end{equation}
+wobei $\eta > 0$ ein Steuerparameter ist. 
+Sind die Cluster nah beieinander (Nahfeld), wird der entsprechende Matrixblock $M \in \mathbb{C}^{m \times n}$ klassisch voll berechnet und gespeichert.
+Sind die Cluster weit entfernt (Fernfeld), ist die Funktion so glatt, dass der Matrixblock $M$ numerisch einen sehr kleinen Rang $k \ll \min(m, n)$ aufweist (Low-Rank-Eigenschaft).
+
+\paragraph{2. Low-Rank Approximation:}
+Das Ziel der ACA ist es, einen Fernfeld-Block $M$ durch zwei kleine Matrizen $U \in \mathbb{C}^{m \times k}$ und $V \in \mathbb{C}^{n \times k}$ zu approximieren, sodass gilt:
+\begin{equation}
+    M \approx \tilde{M} = U V^T
+\end{equation}
+Dadurch sinkt der Speicher- und Rechenaufwand für diesen Block von $m \cdot n$ auf $k(m + n)$. 
+
+\paragraph{3. Der Kreuz-Algorithmus (Cross Approximation):}
+Der geniale Trick der ACA besteht darin, dass die Matrizen $U$ und $V$ gefunden werden, \textit{ohne} den gesamten Block $M$ jemals aufzustellen. Der Algorithmus wertet sukzessive einzelne Zeilen und Spalten (ein ,,Kreuz``) von $M$ aus. Für die Berechnung eines Eintrags $M_{ij}$ ruft die ACA die exakt selbe numerische Integrationsroutine für RWG-Elemente auf, die auch im klassischen Code verwendet wird -- aber eben nur für dieses eine Elementenpaar $(i,j)$. 
+Sobald die Norm der neu hinzugefügten Kreuz-Terme eine vorgegebene Toleranzgrenze $\varepsilon$ (z.\,B. $10^{-4}$) unterschreitet, bricht der Algorithmus ab. Der Rang $k$ wird somit adaptiv gefunden.
+
+\subsection{Besonderheit bei vektoriellen RWG-Elementen: ACA+ und Pivoting}
+Bei der Anwendung der ACA auf dieses spezifische elektrodynamische Problem gibt es eine wichtige technische Hürde: Nullzeilen im Matrixblock.
+
+Da RWG-Elemente vektorielle Ströme über Dreieckskanten modellieren, beinhalten die BEM-Integrale Skalarprodukte der beteiligten Kantenvektoren. Wenn Kantenvektoren zufällig senkrecht aufeinander stehen (z.\,B. bei regelmäßigen Rechtecknetzen, die in Dreiecke unterteilt wurden), kann das Integral exakt Null werden. 
+
+Wenn der Standard-ACA-Algorithmus zufällig eine solche Spalte oder Zeile als Startpunkt wählt, berechnet er eine Null-Matrix, glaubt das Konvergenzkriterium sei erfüllt und bricht fälschlicherweise ab. Der Block wird als Rang-0 eingestuft, was zu massiven Fehlern in der BEM-Lösung führt.
+
+\textbf{Lösungsansatz:} Für BEM-Kopplungen mit RWG-Elementen muss zwingend eine Variante mit besserer Suchstrategie verwendet werden, üblicherweise als \textbf{ACA+ (ACA with Partial Pivoting)} oder \textbf{Fully Pivoted ACA} bezeichnet. 
+Diese Algorithmen werten nicht blind Zeilen aus, sondern nutzen intelligente heuristische Suchen (oft kombiniert mit wenigen zufälligen Testeinträgen), um sicherzustellen, dass das Maximum des Fehlers gefunden wird und keine ,,Null-Täler`` der vektoriellen Geometrie den Algorithmus vorzeitig stoppen.
+
+\subsection{Integration in den transienten Löserablauf}
+Mit der ACA ändert sich der Ablauf der transienten Simulation der Levitation (vgl. Abschnitt II.C im Paper 1996) wie folgt:
+\begin{enumerate}
+    \item \textbf{Bewegungsschritt:} Die Position der Levitationsplatte wird gemäß den Newton'schen Bewegungsgleichungen aktualisiert.
+    \item \textbf{Baum-Update:} Der hierarchische Cluster-Baum der bewegten BEM-Oberfläche wird extrem schnell (in $\mathcal{O}(N)$) verschoben.
+    \item \textbf{FEM-Assemblierung:} Aufstellen der dünnbesetzten Systemmatrix für $\vA$ im Volumen (schnell).
+    \item \textbf{Adaptive BEM-Assemblierung:} 
+    \begin{itemize}
+        \item Nahfeld-Blöcke werden konventionell numerisch integriert.
+        \item Fernfeld-Blöcke rufen den ACA+ Algorithmus auf. Es werden nur Bruchteile der Matrixeinträge berechnet, um die Faktoren $U$ und $V$ zu bilden.
+    \end{itemize}
+    \item \textbf{Iterative Lösung:} Das gekoppelte Gleichungssystem wird an einen Krylov-Unterraum-Löser (wie GMRES) übergeben. Bei der Multiplikation von Vektoren mit der gekoppelten Matrix multipliziert der Löser bei Fernfeldblöcken zuerst mit $V^T$ und anschließend mit $U$, was massiv Rechenzeit spart.
+\end{enumerate}
+
+Durch den Einsatz der Kantenelemente wird die Physik korrekt abgebildet, und durch die Kombination mit RWG-Elementen und ACA+ wird das System für praktische 3D-Simulationen mit bewegten Teilen effizient lösbar.
+
+
+\section{Implementierungsplan und Programmieraufgaben (C++/CUDA)}
+
+Die Entwicklung eines transienten, gekoppelten BEM-FEM-Lösers für hexaederbasierte Netze inklusive ACA-Kompression und CUDA-Beschleunigung ist ein hochkomplexes Softwareprojekt. Um die Übersicht zu behalten, wird die Implementierung in strikt getrennte Phasen unterteilt. 
+
+Das Designprinzip lautet: \textbf{CPU für komplexe Topologie-Vorverarbeitung und Baumstrukturen, GPU (CUDA) für massive lineare Algebra und Element-Integrationen.}
+
+\subsection{Phase 1: Speichermanagement und I/O-Grundlagen}
+In dieser Phase wird das Fundament für den Datenaustausch zwischen Festplatte, RAM (Host) und VRAM (Device) gelegt.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 1.1 - Unified Memory Wrapper:} Implementieren Sie eine Template-Klasse (z.\,B. \texttt{DeviceArray<T>}), die Speicher mittels \texttt{cudaMallocManaged} allokiert. Dies verhindert später ein unübersichtliches Chaos aus \texttt{cudaMemcpy}-Aufrufen, da CPU und GPU denselben Speicherraum referenzieren können.
+    \item \textbf{Aufgabe 1.2 - VTK-Reader:} Schreiben Sie einen Parser in C++, der die bereitgestellten VTK-Dateien (ASCII, \texttt{DATASET UNSTRUCTURED\_GRID}) einliest.
+    \item \textbf{Aufgabe 1.3 - Rohdaten-Strukturen:} Extrahieren Sie die Anzahl der Punkte, die Koordinaten (\texttt{POINTS}) sowie die Connectivity der Zellen (\texttt{CELLS}). Verifizieren Sie, dass nur Hexaeder (\texttt{CELL\_TYPES == 12}) eingelesen werden.
+\end{itemize}
+
+\subsection{Phase 2: Topologie-Extraktion (Die wichtigste Vorverarbeitung)}
+Da FEM-Kantenelemente und BEM-Rooftop-Elemente (auf Vierecken/Quads) verwendet werden, müssen Kanten und Randflächen eindeutig identifiziert und indiziert werden.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 2.1 - Kanten-Hashing (FEM):} Iterieren Sie über alle 12 lokalen Kanten jedes Hexaeders. Ordnen Sie die Knoten-IDs ($v_{min} < v_{max}$) und generieren Sie einen eindeutigen Schlüssel (z.\,B. mittels \texttt{std::unordered\_map}). Erstellen Sie eine globale Liste aller eindeutigen Kanten (\texttt{edges}).
+    \item \textbf{Aufgabe 2.2 - Hex-to-Edge Mapping:} Erstellen Sie ein Array der Größe $12 \times N_{\text{Hex}}$, welches speichert, welche 12 globalen Kanten-IDs zu einem bestimmten Hexaeder gehören. Speichern Sie zudem die Orientierung ($\pm 1$) der Kante relativ zum lokalen Koordinatensystem des Hexaeders.
+    \item \textbf{Aufgabe 2.3 - Flächen-Hashing und Randextraktion (BEM):} Iterieren Sie über die 6 lokalen Flächen (Quads) jedes Hexaeders. Hashen Sie die 4 Knoten-IDs. Flächen, die im gesamten Netz \textit{exakt einmal} vorkommen, bilden die BEM-Kopplungsfläche (\texttt{boundary\_faces}).
+    \item \textbf{Aufgabe 2.4 - BEM-to-FEM Mapping:} Ermitteln Sie für jedes Rand-Quad die 4 globalen Kanten-IDs aus Phase 2.1. Dies ist essenziell für die spätere Kopplungsmatrix $[T]$, um BEM-Oberflächenströme auf die FEM-Kantenelemente zu projizieren.
+\end{itemize}
+
+\subsection{Phase 3: Objektorientierung, Physik und Kinematik}
+Hier wird das Netz in logische physikalische Baugruppen unterteilt und in Bewegung versetzt.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 3.1 - Klassenstruktur für Objekte:} Entwerfen Sie eine abstrakte Basisklasse \texttt{PhysicalObject} sowie abgeleitete Klassen wie \texttt{CoilCurrentDriven}, \texttt{CoilVoltageDriven}, \texttt{LinearMetal}, und \texttt{NonlinearMetal}.
+    \item \textbf{Aufgabe 3.2 - Materialzuweisung:} Implementieren Sie eine Routine, die Hexaeder anhand ihrer Koordinaten (oder VTK-Cell-Data) den Instanzen der \texttt{PhysicalObject}-Klassen zuweist und die Materialparameter ($\kappa$, $\mu_r$ bzw. $B$-$H$-Kurve) verknüpft.
+    \item \textbf{Aufgabe 3.3 - Starrkörper-Kinematik (CUDA Kernel):} Schreiben Sie einen CUDA-Kernel, der die Koordinaten \texttt{nodes\_current} eines bewegten Objekts für einen Zeitpunkt $t$ berechnet. Die Transformation (Rotation um den Schwerpunkt $+$ Translation) muss zwingend immer auf die Ursprungskoordinaten \texttt{nodes\_initial} angewandt werden, um numerische Driftfehler zu vermeiden.
+\end{itemize}
+
+\subsection{Phase 4: Der ACA-Clusterbaum ($\mathcal{H}$-Matrix Struktur)}
+Zur Vorbereitung der Matrixkompression muss die BEM-Oberfläche hierarchisch strukturiert werden.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 4.1 - Bounding Boxes:} Berechnen Sie den Schwerpunkt (Centroid) und die Bounding Box für jedes Boundary-Quad.
+    \item \textbf{Aufgabe 4.2 - Baumaufbau (Octree/BVH):} Implementieren Sie auf der CPU einen rekursiven Algorithmus, der eine umschließende Box solange in Teilboxen unterteilt, bis ein Cluster-Knoten weniger als $N_{\text{leaf}}$ (z.\,B. 30) Quads enthält.
+    \item \textbf{Aufgabe 4.3 - Zulässigkeitsprüfung (Admissibility):} Schreiben Sie eine Funktion, die für zwei gegebene Cluster prüft, ob sie das Kriterium $\min(\text{diam}(X), \text{diam}(Y)) \le \eta \cdot \text{dist}(X, Y)$ erfüllen.
+    \item \textbf{Aufgabe 4.4 - Baum-Update Routine:} Schreiben Sie eine schnelle Routine, die nach der Verschiebung von Knoten (Phase 3.3) die Bounding Boxes der Baumknoten per Bottom-Up-Pass aktualisiert, ohne den Baum neu aufzubauen.
+\end{itemize}
+
+\subsection{Phase 5: Matrix-Assemblierung (Das mathematische Herzstück)}
+Hier erfolgt die Berechnung der Einträge für Steifigkeits- und Dämpfungsmatrizen.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 5.1 - FEM Hexaeder-Integration:} Implementieren Sie die Basisroutinen für Nédélec-Elemente 1. Art auf Hexaedern. Berechnen Sie die lokalen $12 \times 12$ Elementmatrizen für $\rot(\nu \rot \vW)$ und $\kappa \vW \cdot \vW$ mittels 3D-Gauss-Quadratur.
+    \item \textbf{Aufgabe 5.2 - Sparse-Matrix Setup (CSR):} Assoziieren Sie die Kanten und bauen Sie die Struktur einer dünnbesetzten Matrix im \textit{Compressed Sparse Row} (CSR) Format für die cuSPARSE-Bibliothek auf.
+    \item \textbf{Aufgabe 5.3 - BEM Singularitäts-Integration (Nahfeld):} Implementieren Sie die Doppel-Flächenintegrale ($4 \times 4$ Kopplungen zwischen zwei Quads) für den Laplace-Kern $\frac{1}{|\bm{r}-\bm{r}'|}$. Nutzen Sie semi-analytische oder speziell angepasste Gauss-Quadraturen für singuläre Elemente (wenn Beobachtungs- und Quell-Quad identisch sind oder sich berühren).
+    \item \textbf{Aufgabe 5.4 - ACA+ Algorithmus (Fernfeld):} Implementieren Sie die \textit{Adaptive Cross Approximation with Partial Pivoting}. Rufen Sie für benötigte Matrixeinträge $(i,j)$ die Nicht-Singulär-Integration aus 5.3 auf, bis das Konvergenzkriterium $\varepsilon$ erreicht ist. Speichern Sie die resultierenden Matrizen $U$ und $V$.
+\end{itemize}
+
+\subsection{Phase 6: Der gekoppelte GPU-Löser}
+Das Zusammenführen der FEM- und BEM-Teile in ein großes lineares (oder nichtlineares) Gleichungssystem.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 6.1 - Matrix-Vektor-Produkt (MV-Operator):} Schreiben Sie eine CUDA-Klasse, die die Operation $\bm{y} = A\bm{x}$ für das gesamte gekoppelte System durchführt. Diese muss aufrufen:
+    \begin{enumerate}
+        \item cuSPARSE SpMV für den FEM-Teil.
+        \item cuBLAS dense MV für die Nahfeld-BEM-Blöcke.
+        \item Zwei cuBLAS SpMV ($\bm{z} = V^T \bm{x}$, dann $\bm{y} = U \bm{z}$) für jeden ACA-Fernfeld-Block.
+    \end{enumerate}
+    \item \textbf{Aufgabe 6.2 - Krylov-Löser (GMRES / BiCGStab):} Implementieren Sie einen iterativen Löser für asymmetrische Systeme (aufgrund der BEM-Kopplung) auf der GPU. Übergeben Sie diesem den MV-Operator aus Aufgabe 6.1.
+    \item \textbf{Aufgabe 6.3 - Newton-Raphson Iteration (Optional, für nichtlineares Eisen):} Erweitern Sie den Löser um eine äußere Schleife, die die Reluktivität $\nu(|B|)$ in jedem Schritt anpasst und das Jacobisystem löst.
+\end{itemize}
+
+\subsection{Phase 7: Zeitschrittverfahren und Post-Processing}
+Die äußere Logik der Simulation zur Auswertung der physikalischen Größen.
+
+\begin{itemize}
+    \item \textbf{Aufgabe 7.1 - Impliziter Euler:} Setzen Sie die transiente Schleife auf, welche die Matrizen $[K]$ und $[C]$ gemäß $([K] + \frac{1}{\Delta t}[C]) \vA^{n+1} = \dots + \frac{1}{\Delta t}[C] \vA^n$ addiert.
+    \item \textbf{Aufgabe 7.2 - Kraftberechnung (Maxwell Tensor):} Berechnen Sie das Magnetfeld $\vB = \rot \vA$ und das tangentiale $\vH_t$-Feld aus der BEM-Lösung auf der Oberfläche. Integrieren Sie den Maxwell'schen Spannungstensor über alle Boundary-Quads, um Vektoren für Kraft $\bm{F}$ und Drehmoment $\bm{M}$ zu erhalten.
+    \item \textbf{Aufgabe 7.3 - Kopplung an die Bewegungsgleichung:} Übergeben Sie $\bm{F}$ und $\bm{M}$ an das physikalische Modell (Phase 3), berechnen Sie Beschleunigung und Geschwindigkeit und lösen Sie das Newton'sche Gesetz, um die Translation für den nächsten Zeitschritt zu erhalten.
+    \item \textbf{Aufgabe 7.4 - VTK-Export:} Schreiben Sie eine Routine, die die berechneten Felder ($\vA$, $\vB$, $\vJ_{Eddy}$) entweder auf die Kantenmittelpunkte oder in die Elementzentren (Cell Data) interpoliert und das Resultat jedes Zeitschritts als neue VTK-Datei für ParaView exportiert.
+\end{itemize}
+
+\section{BEM Singularitäts-Integration (Nahfeld)}
+
+Die Berechnung der Systemmatrizen in der Randelementmethode (BEM) erfordert die Auswertung von Doppel-Flächenintegralen der Form:
+\begin{equation}
+    I = \int_{\Gamma_p} \int_{\Gamma_q} \vW_p(\bm{r}) \cdot \vW_q(\bm{r}') \frac{1}{4\pi |\bm{r} - \bm{r}'|} \, d\Gamma_q \, d\Gamma_p
+\end{equation}
+wobei $\vW$ die vektoriellen Basis- und Testfunktionen (hier: Rooftop-Elemente) auf den Vierecken (Quads) $\Gamma_p$ und $\Gamma_q$ bezeichnen.
+
+Liegen das Beobachtungs-Quad $\Gamma_p$ und das Quell-Quad $\Gamma_q$ weit voneinander entfernt, ist der Kern $\frac{1}{|\bm{r} - \bm{r}'|}$ regulär und das Integral kann mit einer Standard-Gauss-Quadratur berechnet werden. 
+Sind die Quads jedoch identisch (Self-Patch) oder teilen sie sich eine Kante (Common-Edge) bzw. einen Knoten (Common-Vertex), so wird der Abstand $|\bm{r} - \bm{r}'|$ an der Berührungsstelle zu Null. Der Integrand divergiert ($\to \infty$). Eine direkte numerische Integration (Gauss-Quadratur) in diesem singulären Punkt schlägt fehl oder konvergiert extrem langsam, was die Genauigkeit der gesamten FEM-BEM-Kopplung zerstört.
+
+Um dieses Problem rigoros zu lösen, wird der \textit{Stand der Technik} für schwach singuläre BEM-Integrale implementiert: Die analytische Variablentransformation nach \textbf{Sauter und Schwab} (eine Verallgemeinerung der Duffy-Transformation).
+
+\subsection{Schritt 1: Topologische Zerlegung von Quads in Simplizes}
+Die Sauter-Schwab-Transformation ist für den 4D-Integrationsraum über Paaren von Dreiecken (Simplizes) mathematisch exakt hergeleitet. Da unser Netz aus Hexaedern besteht, liefert die Topologie-Extraktion viereckige Randelemente (Quads). 
+
+Um die Singularitätsbehandlung anwenden zu können, muss jedes BEM-Quad $Q$ mit den Knoten $\bm{v}_0, \bm{v}_1, \bm{v}_2, \bm{v}_3$ virtuell (nur für die Integration) entlang der Diagonale $\bm{v}_0-\bm{v}_2$ in zwei Dreiecke zerlegt werden:
+\begin{itemize}
+    \item Dreieck A ($T_A$): $\bm{v}_0, \bm{v}_1, \bm{v}_2$
+    \item Dreieck B ($T_B$): $\bm{v}_0, \bm{v}_2, \bm{v}_3$
+\end{itemize}
+Das singuläre Doppelintegral über ein identisches Quad ($Q \times Q$) zerfällt somit in eine Summe von vier Dreiecksintegralen:
+\begin{equation}
+    I_{Q \times Q} = \underbrace{I_{T_A \times T_A} + I_{T_B \times T_B}}_{\text{Identisch (Coincident)}} + \underbrace{I_{T_A \times T_B} + I_{T_B \times T_A}}_{\text{Gemeinsame Kante (Common Edge)}}
+\end{equation}
+
+\subsection{Schritt 2: Parametrisierung des 4D-Raums über Dreiecke}
+Ein Punkt $\bm{r}$ auf einem Dreieck wird über affine Baryzentrische Koordinaten $(u, v)$ im Referenzdreieck ($0 \le u \le 1,\; 0 \le v \le 1-u$) beschrieben:
+\begin{equation}
+    \bm{r}(u,v) = \bm{x}_1 + u(\bm{x}_2 - \bm{x}_1) + v(\bm{x}_3 - \bm{x}_1)
+\end{equation}
+Das Doppelintegral über zwei Dreiecke nimmt die Form an:
+\begin{equation}
+    I_{T \times T} = \int_0^1 \int_0^{1-u_1} \int_0^1 \int_0^{1-u_2} \frac{f(u_1,v_1, u_2,v_2)}{|\bm{r}(u_1,v_1) - \bm{r}'(u_2,v_2)|} \,dv_2 \,du_2 \,dv_1 \,du_1
+\end{equation}
+Die Funktion $f$ fasst das glatte Skalarprodukt der Rooftop-Basisvektoren und die Jacobi-Determinanten der Transformation vom Quad auf das Dreieck zusammen.
+
+\subsection{Schritt 3: Die analytische Sauter-Schwab Transformation}
+Ziel der Transformation ist es, den 4D-Integrationsraum $(u_1, v_1, u_2, v_2)$ in einen neuen 4D-Raum $(\eta_1, \eta_2, \eta_3, \xi)$ zu überführen. Der Parameter $\xi$ wird dabei so gewählt, dass er dem lokalen euklidischen Abstand zum singulären Berührungspunkt entspricht. 
+
+Durch die Transformation entsteht eine Jacobi-Determinante $\det(J_{Duffy})$. Die fundamentale Eigenschaft dieser Transformation ist, dass $\det(J_{Duffy}) \propto \xi^3$ (bzw. $\propto \xi^2$). Da die schwache Singularität im Nenner proportional zu $\frac{1}{\xi}$ ist, kürzt sich die Singularität \textit{exakt} heraus:
+\begin{equation}
+    \frac{\xi^3}{\xi} = \xi^2
+\end{equation}
+Der transformierte Integrand ist im gesamten neuen Definitionsbereich strikt glatt (polstellenfrei).
+
+Sauter und Schwab haben gezeigt, dass der 4D-Raum hierfür in \textbf{Sub-Simplizes} zerlegt werden muss, um die absolute Betragsfunktion des Abstands differenzierbar zu machen. Je nach topologischem Singularitätsfall ergeben sich:
+\begin{itemize}
+    \item \textbf{Identische Dreiecke (Coincident):} 6 Sub-Simplizes.
+    \item \textbf{Gemeinsame Kante (Common Edge):} 5 Sub-Simplizes (Knoten 1 und 2 beider Dreiecke bilden die Kante).
+    \item \textbf{Gemeinsamer Knoten (Common Vertex):} 2 Sub-Simplizes (Knoten 1 beider Dreiecke ist der Berührpunkt).
+\end{itemize}
+Jedes Sub-Simplex überführt die Koordinaten in den 4D-Einheitswürfel $[0,1]^4$.
+
+\subsection{Schritt 4: Quadratur im transformierten Raum}
+Nach der Sauter-Schwab-Transformation ist der Integrand völlig glatt. Die numerische Auswertung erfolgt nun über eine reguläre, geschachtelte 1D-Gauss-Legendre-Quadratur auf dem Hyperwürfel $[0,1]^4$. 
+
+Für Singularitäten der Ordnung $\frac{1}{r}$ liefert bereits eine 3-Punkt-Gauss-Regel in jeder der vier Dimensionen ($3^4 = 81$ Quadraturpunkte pro Sub-Simplex) Ergebnisse auf Ebene der Maschinengenauigkeit. 
+Das Integral über ein Sub-Simplex $\Delta_k$ berechnet sich somit als:
+\begin{equation}
+    I_{\Delta_k} \approx \sum_{i_1=1}^3 \sum_{i_2=1}^3 \sum_{i_3=1}^3 \sum_{i_4=1}^3 w_{i_1} w_{i_2} w_{i_3} w_{i_4} \cdot \tilde{f}(\eta_{1,i_1}, \eta_{2,i_2}, \eta_{3,i_3}, \xi_{i_4}) \cdot \det(J_{Duffy})
+\end{equation}
+wobei $w_i$ die konstanten 1D-Gauss-Gewichte und $\tilde{f}$ der glatte Rest-Integrand ist.
+
+\subsection{Schritt 5: GPU-Optimierungsstrategie (CUDA Architektur)}
+Die Implementierung all dieser Transformationstabellen (insgesamt 13 Sub-Simplizes mit unzähligen Zuweisungen) in einem einzigen CUDA-Kernel würde massives \textit{Register Spilling} (Auslagern von Thread-Variablen in den langsamen globalen Speicher) verursachen. Dies würde die Rechenleistung der GPU drastisch reduzieren.
+
+Daher wird folgende rigorose Software-Architektur umgesetzt:
+\begin{enumerate}
+    \item \textbf{Topologische Vorsortierung (CPU):} Bevor die GPU-Integration startet, iteriert die CPU über die Nahfeld-Paare und klassifiziert sie topologisch in die vier Listen: \texttt{Regular}, \texttt{Coincident}, \texttt{Common-Edge} und \texttt{Common-Vertex}. Alle Dreiecke in den Listen werden lokal umnummeriert, sodass die gemeinsamen Kanten/Knoten exakt auf den Indizes 1 und 2 liegen (Voraussetzung für Sauter-Schwab).
+    \item \textbf{Getrennte CUDA-Kernele:} Für jeden der vier Fälle wird ein isolierter, stark optimierter CUDA-Kernel gestartet. Dies garantiert, dass auf der GPU keine tiefen \texttt{if}-\texttt{else}-Verzweigungen (Warp Divergence) auftreten.
+    \item \textbf{Ausmultiplizierte Transformationen:} Die Matrix-Multiplikationen der Duffy-Transformation werden analytisch aufgelöst und als flacher Code (ohne lokale Arrays) implementiert, um die Anzahl der benutzten Register pro Thread minimal zu halten.
+\end{enumerate}
+Diese Struktur garantiert sowohl höchste mathematische Präzision als auch eine optimale Auslastung der Streaming Multiprocessors (SM) auf der GPU.
+
+\clearpage
+\section{BEM Singularitäts-Integration für das Double-Layer-Potential (DLP)}
+
+Während das Single-Layer-Potential den Kern $G(r, r') = \frac{1}{4\pi |r - r'|}$ nutzt, basiert das Double-Layer-Potential (DLP) auf der Normalableitung der Green'schen Funktion bezüglich der Quellkoordinate $r'$:
+\begin{equation}
+    K_{DLP}(r, r') = \frac{\partial G(r, r')}{\partial n'} = \frac{1}{4\pi} \frac{(r - r') \cdot n'}{|r - r'|^3}
+\end{equation}
+wobei $n'$ der Normalenvektor des Quelldreiecks $\Gamma_q$ ist. Auf den ersten Blick skaliert dieser Kern mit $\mathcal{O}(1/R^2)$ (mit $R = |r - r'|$), was eine stärkere Singularität als der $1/R$-Kern darstellt. 
+
+\subsection{Geometrische Regularisierung des Zählers}
+
+Da die BEM-Randelemente ebene Dreiecke sind, gilt für den Vektorabstand $(r - r')$ eine besondere geometrische Eigenschaft, wenn das Beobachtungsdreieck $T_p$ und das Quelldreieck $T_q$ benachbart sind. 
+
+Der Abstand eines Punktes $r \in T_p$ zur Ebene des Dreiecks $T_q$ ist exakt die Projektion $(r - r') \cdot n'$. 
+Wenn sich der Beobachtungspunkt $r$ der gemeinsamen Kante oder dem gemeinsamen Knoten nähert (also $R \to 0$), nähert sich $r$ auch der Ebene von $T_q$ an. Daher skaliert der Zähler linear mit dem Abstand zum Berührpunkt:
+\begin{equation}
+    (r - r') \cdot n' \sim \mathcal{O}(R)
+\end{equation}
+Eingesetzt in den Integralkern ergibt sich das asymptotische Verhalten:
+\begin{equation}
+    K_{DLP}(r, r') = \frac{\mathcal{O}(R)}{R^3} = \mathcal{O}\left(\frac{1}{R^2}\right)
+\end{equation}
+
+\subsection{Der Common-Edge-Fall (Gemeinsame Kante)}
+
+Seien $T_p$ und $T_q$ zwei Dreiecke, die sich die Kante $(v_1, v_2)$ teilen. Wir parametrisieren nach Schritt 2 des Skripts:
+\begin{align}
+    r(u_1, v_1) &= v_1 + u_1(v_2 - v_1) + v_1(v_3 - v_1) \\
+    r'(u_2, v_2) &= v_1 + u_2(v_2 - v_1) + v_2(v_4 - v_1)
+\end{align}
+Der Vektor $(r - r')$ lautet:
+\begin{equation}
+    r - r' = (u_1 - u_2)(v_2 - v_1) + v_1(v_3 - v_1) - v_2(v_4 - v_1)
+\end{equation}
+Da $n'$ orthogonal zu $T_q$ steht, gilt $(v_2 - v_1) \cdot n' = 0$ und $(v_4 - v_1) \cdot n' = 0$. Der Zähler reduziert sich exakt auf:
+\begin{equation}
+    (r - r') \cdot n' = v_1 \big[ (v_3 - v_1) \cdot n' \big]
+\end{equation}
+
+Wir wenden nun die analytische \textbf{Sauter-Schwab-Transformation} an. Im Common-Edge-Fall zerfällt der 4D-Raum in 5 Sub-Simplizes. In jedem Sub-Simplex wird eine lokale Abstandsvariable $\xi$ eingeführt, sodass alle Parameter skalieren als $u_1 \propto \xi, v_1 \propto \xi, u_2 \propto \xi, v_2 \propto \xi$.
+\begin{itemize}
+    \item Der physikalische Abstand ist $|r - r'| = \xi \cdot d_{local}$. Somit ist der Nenner $\mathcal{O}(\xi^3)$.
+    \item Aus Gleichung (6) folgt, da $v_1 = \xi \cdot \tilde{v}_1$, dass der Zähler mit $\mathcal{O}(\xi)$ skaliert.
+    \item Die \textbf{Jacobi-Determinante} der Sauter-Schwab-Transformation ist für den Common-Edge-Fall $\det(J_{Duffy}) \propto \xi^3$.
+\end{itemize}
+Zusammengesetzt ergibt sich für das transformierte Integral über das Sub-Simplex $\Delta_k$:
+\begin{equation}
+    I_{\Delta_k}^{DLP} = \int_{0}^{1} \dots \int_{0}^{1} \underbrace{\left( \frac{\xi \cdot \tilde{v}_1 [ (v_3 - v_1) \cdot n' ]}{\xi^3 \cdot d_{local}^3} \right)}_{\text{Singulärer Kern}} \cdot \underbrace{(\xi^3 \cdot \tilde{J})}_{\text{Jacobian}} \cdot \dots \, d\eta_1 d\eta_2 d\eta_3 d\xi
+\end{equation}
+\begin{equation}
+    I_{\Delta_k}^{DLP} = \int_{0}^{1} \dots \int_{0}^{1} \frac{\xi \cdot \tilde{v}_1 [ (v_3 - v_1) \cdot n' ]}{d_{local}^3} \cdot \tilde{J} \cdot \dots \, d\eta_1 d\eta_2 d\eta_3 d\xi
+\end{equation}
+\textbf{Fazit für Common-Edge:} Das $\xi^3$ aus Nenner und Jacobian kürzt sich exakt weg. Der transformierte Integrand ist proportional zu $\xi$ und geht am Singularitätspunkt ($\xi=0$) völlig glatt gegen $0$. Das Integral ist nicht nur regulär, sondern der Integrand verschwindet an der Kante!
+
+\subsection{Der Common-Vertex-Fall (Gemeinsamer Knoten)}
+
+Seien $T_p$ und $T_q$ Dreiecke, die sich nur den Knoten $v_1$ teilen.
+\begin{align}
+    r(u_1, v_1) &= v_1 + u_1(v_2 - v_1) + v_1(v_3 - v_1) \\
+    r'(u_2, v_2) &= v_1 + u_2(v_4 - v_1) + v_2(v_5 - v_1)
+\end{align}
+Der Zähler wird nach der Projektion auf die Normale $n'$ (wobei $(v_4-v_1)\cdot n'=0$ und $(v_5-v_1)\cdot n'=0$ gilt):
+\begin{equation}
+    (r - r') \cdot n' = u_1 \big[ (v_2 - v_1) \cdot n' \big] + v_1 \big[ (v_3 - v_1) \cdot n' \big]
+\end{equation}
+Auch hier liefert die Sauter-Schwab-Transformation (2 Sub-Simplizes) die Parameter $u_1 = \xi \tilde{u}_1$ und $v_1 = \xi \tilde{v}_1$. Der Zähler ist demnach wieder exakt $\mathcal{O}(\xi)$.
+Da die Jacobi-Determinante für den Common-Vertex-Fall ebenfalls $\det(J) \propto \xi^3$ aufweist, greift derselbe Kürzungsmechanismus wie im Common-Edge-Fall:
+\begin{equation}
+    \frac{\mathcal{O}(\xi)}{\mathcal{O}(\xi^3)} \cdot \underbrace{\mathcal{O}(\xi^3)}_{\text{Jacobian}} = \mathcal{O}(\xi)
+\end{equation}
+Die starke Singularität wird vollständig behoben.
+
+\subsection{Implementierungshinweise für CUDA (Erweiterung von Phase 5.3)}
+
+Die Genialität dieses mathematischen Resultats für Ihre Implementierung bedeutet: \textbf{Sie müssen an den Sauter-Schwab-Routinen (Koordinatentransformation und Sub-Simplizes) auf der GPU exakt gar nichts ändern!}
+
+Sie können dieselben Tabellen, denselben CUDA-Kernel und dieselben Gauss-Punkte verwenden wie für den $1/r$-Kern. Die einzige Änderung betrifft die Auswertung der Funktion $f$ im innersten Schleifenrumpf (Gleichung 19 im Skript):
+\begin{itemize}
+    \item \textbf{Single-Layer ($1/r$):} Berechne $dist = |r - r'|$. Setze $K = \frac{1}{dist}$. Multipliziere mit $\det(J)$. (Hierbei hat sich das $\xi^2$ des Kerns formal mit dem $\xi^3$ des Jacobians zu $\xi$ gekürzt).
+    \item \textbf{Double-Layer ($1/r^2$):} Berechne $dist = |r - r'|$. Berechne den Vektor $d\vec{r} = (r - r')$. Berechne das Skalarprodukt $dot = d\vec{r} \cdot n'$. Setze $K = \frac{dot}{dist^3}$. Multipliziere mit $\det(J)$. (Hier kürzt sich das $\xi/\xi^3$ mit $\xi^3$ exakt heraus).
+\end{itemize}
+
+\textit{Hinweis zum Self-Patch (Coincident):} Wenn $T_p = T_q$ ist, liegen $r$ und $r'$ in derselben Ebene. Der Vektor $(r - r')$ ist exakt orthogonal zu $n'$. Das Skalarprodukt $(r - r') \cdot n'$ ist somit strikt $0$. Das Double-Layer-Integral für identische Elemente ist analytisch $0$ und muss im CUDA-Code gar nicht erst numerisch integriert werden.
+
+\clearpage
+\section{Ergänzung: Geometrische Konsistenz und Reguläre Integration (DLP)}
+
+Bevor der Double-Layer-Operator in CUDA implementiert wird, müssen die topologische Orientierung der Normalenvektoren und der Ablauf für den unberührten Fernfeld-Fall (Regular) geklärt werden.
+
+\subsection{Der Normalenvektor $n'$ und die \texttt{d\_bem\_sign}-Konvention}
+
+In der bestehenden Implementierung für den Single-Layer-Kern ($1/r$) tauchte der Normalenvektor $n'$ des Quell-Elements nicht auf, da dieser Kern rein skalar vom Abstand abhängt. Für den Double-Layer-Kern benötigen wir ihn zwingend.
+
+\textbf{Wichtigste Erkenntnis zur Entkopplung:} 
+Die RWG-Orientierung (\texttt{d\_bem\_sign} $\in \{-1, 1\}$) steuert, ob der fiktive Strom über die betrachtete Kante \textit{in} das Dreieck hinein- oder \textit{aus} ihm herausfließt. Sie wird exklusiv auf die Basis- und Testfunktionen $\mathbf{W}_p$ und $\mathbf{W}_q$ angewandt. 
+Der Normalenvektor $n'$ hingegen ist eine \textbf{rein geometrische Eigenschaft} der BEM-Oberfläche (Kopplungsfläche) und existiert unabhängig von den Kantenströmen!
+
+Um das Vorzeichen konsistent zu halten, muss $n'$ lediglich der globalen Netz-Konvention folgen. Bei standardkonformen BEM-Netzen (nach außen gerichtete Normalen) sind die Knoten $(v_0, v_1, v_2, v_3)$ jedes Quads so geordnet, dass sie von außen betrachtet gegen den Uhrzeigersinn (Counter-Clockwise, CCW) drehen. 
+
+Gemäß der in Abschnitt 10.1 definierten Zerlegung in die Dreiecke $T_A(v_0, v_1, v_2)$ und $T_B(v_0, v_2, v_3)$ berechnen sich die \textbf{normierten} Normalenvektoren exakt als:
+\begin{align}
+    \mathbf{N}_A &= (v_1 - v_0) \times (v_2 - v_0), \quad &n'_A = \frac{\mathbf{N}_A}{|\mathbf{N}_A|} \\
+    \mathbf{N}_B &= (v_2 - v_0) \times (v_3 - v_0), \quad &n'_B = \frac{\mathbf{N}_B}{|\mathbf{N}_B|}
+\end{align}
+\textit{Implementierungshinweis:} Da die Jacobi-Determinante der Transformation vom Einheitsdreieck in den physikalischen Raum (die Skalierung $d\Gamma_q$) in Ihrem Code bereits im Faktor $\tilde{f}$ bzw. in der Flächenberechnung der RWG-Elemente enthalten ist, \textbf{muss} $n'$ hier zwingend auf die Länge 1 normiert werden. Ansonsten würden Sie die Dreiecksfläche doppelt multiplizieren!
+
+Sie müssen an Ihrer \texttt{d\_bem\_sign}-Logik für $\mathbf{W}_q$ absolut nichts ändern. Multiplizieren Sie einfach das Skalarprodukt $(r - r') \cdot n'$ in den Kern hinein.
+
+\subsection{Der Identische Fall (Coincident)}
+
+Wie in Ihren Vorüberlegungen völlig richtig festgestellt: Da wir im BEM-Netz ebene Quads bzw. ebene Dreiecke verwenden (planar elements), liegen der Beobachtungspunkt $r$ und der Quellpunkt $r'$ im Coincident-Fall in exakt derselben Ebene. 
+Der Differenzvektor $(r - r')$ ist damit für alle Gauß-Punkte eine Linearkombination der Dreieckskanten und folglich strikt orthogonal zum Flächennormalenvektor $n'$.
+
+Es gilt analytisch überall:
+\begin{equation}
+    (r - r') \cdot n' \equiv 0 \quad \forall \ r, r' \in T_q
+\end{equation}
+\textbf{Fazit für den Code:} Sie können den CUDA-Kernel-Aufruf für den Coincident-Fall (bzw. Self-Patch) für den Double-Layer-Operator komplett überspringen und den Matrix-Eintrag direkt auf $0.0$ setzen. Dies spart wertvolle Rechenzeit.
+
+\subsection{Der Reguläre Fall (Fernfeld)}
+
+Liegen die Beobachtungs- und Quell-Dreiecke weit voneinander entfernt (sie teilen sich weder Kante noch Knoten), ist der Abstand $|r - r'|$ strikt größer als Null. Der Kern weist keine Singularität auf.
+
+Hier benötigen Sie \textbf{keine} Sauter-Schwab-Transformation. Sie können exakt den bestehenden 4D-Gauß-Quadratur-Code (Tensorprodukt zweier 2D-Dreiecks-Gaußregeln) verwenden, den Sie vermutlich schon für das reguläre Single-Layer-Integral implementiert haben.
+
+Für ein Beobachtungsdreieck $T_p$ (Duffy-Parameter $u_1, v_1$) und ein Quelldreieck $T_q$ (Duffy-Parameter $u_2, v_2$) lautet die numerische Integration:
+\begin{equation}
+    I_{reg}^{DLP} \approx \sum_{i=1}^{N_p} \sum_{j=1}^{N_q} w_{p,i} w_{q,j} \ \mathbf{W}_p(r_i) \cdot \mathbf{W}_q(r'_j) \ \left[ \frac{(r_i - r'_j) \cdot n'_q}{4\pi |r_i - r'_j|^3} \right] \ det(J_{T_p}) \ det(J_{T_q})
+\end{equation}
+wobei:
+\begin{itemize}
+    \item $r_i = r(u_{1,i}, v_{1,i})$ der Auswertungspunkt auf dem Test-Dreieck ist.
+    \item $r'_j = r'(u_{2,j}, v_{2,j})$ der Auswertungspunkt auf dem Quell-Dreieck ist.
+    \item $n'_q$ die normierte Flächennormale des Quell-Dreiecks (aus Gl. 1 oder 2) ist.
+    \item $w_{p,i}, w_{q,j}$ die Gewichte der jeweiligen 2D-Gauß-Regel auf dem Standarddreieck sind.
+\end{itemize}
+
+\textbf{Hinweis zur ACA (Adaptive Cross Approximation):} 
+Da der reguläre Fall fast ausschließlich vom ACA-Algorithmus (Phase 5.4) für die Fernfeld-Cluster aufgerufen wird, profitiert dieser massiv von der Glattheit des Double-Layer-Kerns. Weil $|r - r'|$ im Fernfeld groß ist, konvergiert das Kreuz-Approximations-Verfahren für den $1/R^2$-Kern oft sogar mit einem \textit{kleineren} Rang $k$ als beim $1/R$-Kern. Auch hier fügt sich Ihre Erweiterung nahtlos und hochperformant in die Architektur aus dem Skript ein.
+
+\clearpage
+\section{Praxisbericht: Diagnose und Behebung einer Solver-Instabilität (Gauge-Aware ILU)}
+\label{sec:ilu-praxisbericht}
+
+Nach der Implementierung der ILU(0)-Vorkonditionierung für den gekoppelten BiCGStab-Löser (siehe Aufgabe 6.2) zeigte der Solver am TEAM-28-Levitationsproblem ein hartnäckiges Konvergenzproblem: Das relative Residuum oszillierte über 1000 Iterationen zwischen Werten von $\sim 13$ und $\sim 1000$, ohne die Toleranz ($10^{-6}$) zu erreichen, und die daraus berechneten Maxwell-Kräfte waren zeitweise unphysikalisch groß. Dieser Abschnitt dokumentiert die systematische Fehlereingrenzung und die Lösung.
+
+\subsection{Ausschlussverfahren: Ist die BEM-Kopplung die Ursache?}
+
+Da kurz zuvor das gekoppelte $2{\times}2$-Blocksystem ($T$/$G$/$H$-Kopplung, siehe Abschnitt~5.1) grundlegend überarbeitet worden war, lag der Verdacht zunächst dort. Ein Diagnose-Schalter (\texttt{nobem}), der die gesamte BEM-Assemblierung sowie \texttt{setup\_bem\_coupling()}/\texttt{setup\_bem\_mesh()} überspringt und den Operator auf das reine FEM-System zurückfallen lässt, widerlegte das jedoch eindeutig: Der Lauf ohne BEM-Kopplung zeigte \emph{exakt dasselbe} Fehlerbild (identische Oszillation, identisches ,,$x=0$ ist die beste gefundene Lösung``-Resultat nach 1000 Iterationen) wie der Lauf mit BEM. Die BEM-Kopplung konnte damit als Ursache ausgeschlossen werden.
+
+\subsection{Eingrenzung auf den ILU(0)-Vorkonditionierer}
+
+Ein zweiter Diagnose-Schalter (\texttt{noilu}) ersetzt \texttt{apply\_preconditioner()} durch die reine Identität (kein ILU, keine Dreieckslöser). Mit \texttt{noilu} konvergierte der Solver sauber und monoton bis auf $\sim 10^{-6}$, in den Folge-Zeitschritten sogar mit vorzeitigem Abbruch nach 839 bzw.\ 981 Iterationen. Damit war der ILU(0)-Vorkonditionierer (inklusive des zuvor eingeführten Gershgorin-Zeilennorm-Shifts) eindeutig als Ursache identifiziert.
+
+Bemerkenswert war dabei die \emph{Art} des Fehlers: Eine reine Identitäts-Vorkonditionierung funktionierte einwandfrei, während die ILU-Vorkonditionierung die Konvergenz nicht nur verlangsamte, sondern nach einer einzigen Iteration bereits um den Faktor $30$ verschlechterte. Dies deutete auf einen tieferliegenden strukturellen Effekt hin, nicht auf eine bloß unpassende, aber grundsätzlich harmlose Approximation.
+
+\subsection{Verfeinerte Diagnose: Amplifikationsfaktor des Vorkonditionierers}
+
+Um zu prüfen, ob $M^{-1}$ schlicht numerischen ,,Müll`` in beliebiger Größenordnung produziert, wurde das Amplifikationsverhältnis $\|\hat p\|/\|p\|$ (mit $\hat p = M^{-1} p$) für die ersten Iterationen protokolliert. Das Ergebnis war zunächst überraschend: Der Faktor war \emph{klein} ($\sim 0{,}0055 \to 0{,}0014 \to 0{,}00012$, fallend über die Iterationen), keineswegs explosionsartig groß. Trotzdem wuchs $\|p\|$ selbst über dieselben Iterationen um mehrere Größenordnungen ($554 \to 8{,}1\times 10^6 \to 1{,}6\times 10^9$).
+
+Die Interpretation: Der Gershgorin-Shift verhinderte zwar exakte Nullpivots, ließ die (im Nichtleitergebiet, $\kappa = 0$, strukturell singuläre) Baum-Teilmatrix aber weiterhin Teil der Faktorisierung. In mindestens einer Eigenrichtung von $A M^{-1}$ -- vermutlich genau der topologischen Nullraum-Richtung, die durch die Tree-Cotree-Eichung (Abschnitt~4) eigentlich beseitigt werden sollte -- approximierte $M$ die Matrix $A$ quantitativ zu schlecht, sodass sich der Fehler über die BiCGStab-Rekursion aufschaukelte. Ein fallender Amplifikationsfaktor bei gleichzeitig wachsender Norm ist dabei ein typisches Muster dafür, dass sich das Verfahren zunehmend auf genau diese schlecht approximierte Richtung ,,einschießt``.
+
+\subsection{Die Lösung: Gauge-Aware ILU}
+
+Die Idee: Die Baum-Kanten (geeichte Freiheitsgrade, $a_i = 0$) dürfen an der ILU-Faktorisierung gar nicht erst teilnehmen. Statt nur die Diagonale zu verschieben, wird die Arbeitskopie der Matrix für den Vorkonditionierer \emph{vor} der Faktorisierung zeilenweise angepasst:
+\begin{itemize}
+    \item \textbf{Geeichte Zeilen (Baum):} Alle Außerdiagonaleinträge werden auf $0$ gesetzt, die Diagonale auf $1$ -- die Zeile wird zur reinen Identität.
+    \item \textbf{Ungeeichte Zeilen (Kobaum, physikalisch):} Die Matrix bleibt wie sie ist, nur mit einem kleinen, skaleninvarianten Gershgorin-Shift ($\varepsilon \cdot \text{Zeilennorm}$) zur Pivot-Stabilisierung.
+\end{itemize}
+
+\paragraph{Warum das funktioniert (Nachvollzug über die Gauß-Elimination von \texttt{csrilu02}):} Da die zeilenweise ILU(0)-Faktorisierung Zeile für Zeile eliminiert, gilt für eine derart präparierte Identitätszeile $i$:
+\begin{itemize}
+    \item \emph{Sie kann nicht von anderen Zeilen verschmutzt werden:} Ihre Außerdiagonaleinträge sind bereits vor der Faktorisierung exakt $0$ -- unabhängig von der Eliminationsreihenfolge bleibt Zeile $i$ unverändert Identität.
+    \item \emph{Sie kann keine anderen Zeilen verschmutzen:} Wird Zeile $i$ als Pivot zur Elimination einer späteren Zeile $j$ verwendet, ist der Multiplikator $L_{ji} = A_{ji}/U_{ii} = A_{ji}$ (da $U_{ii}=1$), aber der Update-Term für alle übrigen Spalten $k \neq i$ ist $-L_{ji} \cdot U_{ik} = -L_{ji}\cdot 0 = 0$ (da $U_{i,k\neq i} \equiv 0$). Zeile $j$ wird also nur in Spalte $i$ selbst korrekt auf $0$ eliminiert, alle anderen Einträge bleiben unberührt.
+\end{itemize}
+Die topologische Nullraum-Richtung wird dadurch vollständig aus der Faktorisierung entkoppelt; ILU(0) wirkt effektiv nur noch auf dem gut konditionierten physikalischen Kobaum-Teilsystem. Dass die Eingabevektoren des Vorkonditionierers ($p$, $r$, $v$, $t$) durch die konsequente Nach-Eichung nach jedem Operator- bzw.\ Vorkonditionierer-Aufruf ohnehin bereits (nahezu) exakt $0$ auf den Baum-Kanten sind, passt dazu konsistent: Die Identitätszeile liefert dort exakt $0$ zurück.
+
+\emph{Implementierungshinweis:} \texttt{setup\_gauge()} muss vor \texttt{compute\_ilu()} aufgerufen werden, damit die Faktorisierung die Baum-Kanten kennt. Ist keine Eichung gesetzt, verhält sich der Kernel identisch zum reinen (ungerichteten) Gershgorin-Shift.
+
+\subsection{Ergebnis}
+
+Mit der Gauge-Aware ILU konvergierte derselbe Testfall (TEAM-28, 3 Zeitschritte) sauber und monoton:
+\begin{itemize}
+    \item Zeitschritt 1: Konvergenz nach 331 Iterationen (statt 1000 ohne Konvergenz zuvor).
+    \item Zeitschritt 2: Konvergenz nach 300 Iterationen.
+    \item Zeitschritt 3: Konvergenz nach 291 Iterationen, Rel.\ Residuum $8{,}9\times 10^{-7}$.
+\end{itemize}
+Die berechneten Maxwell-Kräfte stimmten dabei praktisch exakt mit der \texttt{noilu}-Referenzlösung überein (z.\,B.\ $F_z \approx -5{,}124\,\mathrm{N}$, $-20{,}475\,\mathrm{N}$, $-45{,}993\,\mathrm{N}$ für die drei Zeitschritte) -- ein starkes Indiz dafür, dass es sich um dieselbe (korrekte) physikalische Lösung handelt, nur mit signifikant weniger Iterationen erreicht (ILU bringt gegenüber der reinen Identität also wieder den erwarteten Geschwindigkeitsgewinn, ohne die Stabilität zu gefährden).
+
+\emph{Anmerkung:} Die vorstehenden Iterationszahlen (291--331) wurden mit deaktivierter BEM-Kopplung (\texttt{nobem}) gemessen, um den ILU-Fix isoliert zu verifizieren. Mit aktiver BEM-Kopplung bleibt ein Restproblem offen, siehe Abschnitt~\ref{sec:bem-precond-offen}.
+
+\subsection{Validierung der Kraftgrößenordnung anhand der TEAM-28-Messdaten}
+
+Da für dieses Problem gemessene Schwebehöhen $z(t)$ vorliegen (Tabelle~I der TEAM-28-Problembeschreibung), lässt sich die tatsächlich wirkende Magnetkraft in der fruehen Transientenphase grob über die zentrale Differenzenformel
+\begin{equation}
+    a(t) \approx \frac{z(t+\Delta t) - 2 z(t) + z(t-\Delta t)}{\Delta t^2}, \qquad F_{\text{mag}}(t) = m\,a(t) + m\,g
+\end{equation}
+abschätzen ($m = 0{,}107\,\mathrm{kg}$). Für $t \approx 9{,}9\,\mathrm{ms}$ bzw.\ $19{,}8\,\mathrm{ms}$ ergibt sich so $F_{\text{mag}} \approx 1{,}7\,\mathrm{N}$ bzw.\ $\approx 2{,}25\,\mathrm{N}$; bei der stationären Schwebehöhe ($a \approx 0$) muss $F_{\text{mag}} = m g \approx 1{,}05\,\mathrm{N}$ gelten.
+
+Der reine FEM-Lauf (\texttt{nobem}, künstlich abgeschnittener Außenraum) lieferte dagegen Kräfte von $-5{,}12$ bis $-46\,\mathrm{N}$ -- ein bis zwei Größenordnungen zu groß. Der Lauf mit voller BEM-Kopplung (siehe unten, trotz unvollständiger Konvergenz auf $\sim 2\times 10^{-4}$) lag mit $F_z \approx 0{,}46\,\mathrm{N}$ (Zeitschritt~1) bis $1{,}57\,\mathrm{N}$ (Zeitschritt~2) deutlich näher an der erwarteten Größenordnung. Dies stützt die Erwartung, dass das BEM-gekoppelte System die Physik des offenen Außenraums korrekt abbildet, während das reine FEM-System (mit implizitem künstlichem Rand) die Kraft systematisch überschätzt.
+
+\subsection{Offener Punkt: Preconditioner für das gekoppelte BEM-FEM-System}
+\label{sec:bem-precond-offen}
+
+Mit voller BEM-Kopplung und Gauge-Aware ILU auf dem FEM-Block, aber \textbf{Identität} als Vorkonditionierer auf dem $K$-Block, konvergiert derselbe Testfall nicht mehr auf $10^{-6}$, sondern plateauiert bei $\sim 2\times 10^{-4}$ (Zeitschritt~1) bzw.\ $\sim 7\times 10^{-5}$ (Zeitschritt~2), mit vereinzelten Near-Breakdown-Restarts. Zwei Versuche, dies zu beheben, scheiterten -- beide sind hier dokumentiert, damit sie nicht erneut ausprobiert werden, ohne die Lehre daraus zu berücksichtigen.
+
+\paragraph{Versuch 1: Jacobi-Diagonal-Vorkonditionierer für $K$.} Die Idee: $M_K = \mathrm{diag}(-\mu_0 G)$ statt Identität, mit der Diagonale aus den bereits vorhandenen Self-Patch-Dense-Blöcken extrahiert. Eine Diagnose der extrahierten Werte zeigte, dass die Extraktion selbst korrekt und unauffällig war ($|M_K^{-1}|$ zwischen $2{,}5\times 10^8$ und $9{,}3\times 10^9$, keine Ausreißer, keine Lücken). Das Ergebnis war trotzdem deutlich schlechter (Plateau bei $\sim 0{,}1$--$0{,}2$ statt $\sim 2\times 10^{-4}$, $\|p\|$ sprang um Faktor $\sim 320$ zwischen den ersten beiden Iterationen). Erklärung: Bei rechts-vorkonditioniertem BiCGStab sind $\hat p = M^{-1}p$ und $\hat s = M^{-1}s$ sowohl Eingabe für $v = A\hat p$ als auch die tatsächlichen Inkremente, mit denen $x$ aktualisiert wird ($x \mathrel{+}= \alpha \hat p + \omega \hat s$). Eine Skalierung des $K$-Anteils um $\sim 10^9$ verzerrt damit nicht nur die im gesamten Vektorraum gemeinsam berechneten Skalarprodukte/Normen, sondern auch die tatsächlichen Lösungs-Inkremente von $x_K$ relativ zu $x_A$.
+
+\paragraph{Versuch 2: Skalierung der gesamten $K$-Gleichung (,,Weg A``).} Um genau dieses Problem zu vermeiden, wurde stattdessen nur die \emph{Ausgabe} von \texttt{apply()} für den $K$-Block (also $0{,}5T + D_{\text{BEM}} - \mu_0 G$, angewandt auf den aktuellen Iterationsvektor) mit einer Konstante ($\approx 1{,}08\times 10^7$, aus dem gemessenen Verhältnis $\|\text{FEM-Anteil}\|/\|\text{BEM}(K)\text{-Anteil}\|$ abgeleitet) skaliert -- eine gültige Zeilenskalierung, die die Lösung nicht verändert (RHS$_K = 0 \cdot \text{Faktor} = 0$) und explizit \emph{nicht} den Vorkonditionierer oder die Inkremente $\hat p/\hat s$ berührt. Die Diagnose bestätigte das beabsichtigte Ziel ($\|\text{BEM}(K)\| \approx \|\text{FEM}\|$, $1903{,}68$ vs.\ $1907{,}74$) -- das Ergebnis war dennoch schlechter: sofortige Near-Breakdowns bereits ab Iteration~43, $\|p\|$ wuchs auf $4{,}7\times 10^5$ bis Iteration~3.
+
+\paragraph{Schlussfolgerung.} Beide Versuche haben ihr jeweiliges unmittelbares Ziel (korrekte Diagonalwerte bzw.\ ausgeglichene Residuum-Normen) nachweislich erreicht, das Gesamtverhalten aber trotzdem verschlechtert. Das deutet darauf hin, dass nicht die \emph{absolute} Skalierung des $K$-Blocks das eigentliche Problem ist, sondern die \emph{relative Konditionierung} der beiden Blöcke zueinander innerhalb eines gemeinsamen Krylov-Unterraums -- eine Eigenschaft, die sich mit einer einzelnen Diagonale oder einem konstanten Faktor offenbar nicht einfangen lässt. Ein tragfähiger Preconditioner für dieses gekoppelte System (z.\,B.\ ein echter Block-Preconditioner mit angepasster Norm, oder ein Schur-Komplement-Ansatz) bleibt als eigenständige, in Ruhe zu entwerfende Aufgabe offen. Der aktuell stabile Referenzzustand (Identität auf $K$, Gauge-Aware ILU auf $A$, Konvergenz auf $\sim 2\times 10^{-4}$) bleibt bis dahin die produktive Baseline.
+
+\end{document}

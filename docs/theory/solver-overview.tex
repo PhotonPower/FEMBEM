@@ -1,0 +1,538 @@
+\documentclass[a4paper,12pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+
+% Geometrie der Seite
+\geometry{left=2.5cm, right=2.5cm, top=3cm, bottom=3cm}
+
+% Code-Listing Einstellungen
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+
+\lstdefinestyle{mystyle}{
+    backgroundcolor=\color{backcolour},   
+    commentstyle=\color{codegreen},
+    keywordstyle=\color{magenta},
+    numberstyle=\tiny\color{codegray},
+    stringstyle=\color{codepurple},
+    basicstyle=\ttfamily\footnotesize,
+    breakatwhitespace=false,         
+    breaklines=true,                 
+    captionpos=b,                    
+    keepspaces=true,                 
+    numbers=left,                    
+    numbersep=5pt,                  
+    showspaces=false,                
+    showstringspaces=false,
+    showtabs=false,                  
+    tabsize=2
+}
+\lstset{style=mystyle}
+
+\title{\textbf{Dokumentation: TEAM Problem 28 Solver}\\
+\large Hybrid FEM-BEM Simulation elektrodynamischer Levitation}
+\author{FEMBEM -- Dokumentation (mit KI-Unterstützung erstellt)}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+\section{Einführung}
+Diese Software dient der numerischen Lösung des \textbf{TEAM Workshop Problem 28} (Electrodynamic Levitation Device). Das physikalische Problem besteht aus einer leitfähigen Aluminiumplatte, die über zwei konzentrischen Spulen schwebt. Die Spulen werden mit einem Wechselstrom (50 Hz) beaufschlagt, was Wirbelströme in der Platte induziert. Die resultierende Lorentzkraft wirkt der Schwerkraft entgegen und führt zur Levitation.
+
+Die Simulation löst das gekoppelte elektromagnetisch-mechanische Problem im Zeitbereich unter Verwendung einer hybriden Methode aus Finiten Elementen (FEM) und Randelementen (BEM), beschleunigt durch GPU-Solver (NVIDIA cuDSS).
+
+\section{Theoretische Grundlagen}
+
+\subsection{Elektromagnetisches Feldmodell ($\vec{A}$-Formulierung)}
+Da niedrige Frequenzen betrachtet werden, gilt die quasistationäre Näherung der Maxwell-Gleichungen (Vernachlässigung des Verschiebungsstroms). Wir verwenden das magnetische Vektorpotential $\vec{A}$ mit der Coulomb-Eichung, wobei $\vec{B} = \nabla \times \vec{A}$ und $\vec{E} = -\frac{\partial \vec{A}}{\partial t} - \nabla \phi$.
+
+Die fundamentale Differentialgleichung im leitfähigen Bereich (Wirbelstromgebiet $\Omega_{FEM}$) lautet:
+\begin{equation}
+    \nabla \times \left( \frac{1}{\mu} \nabla \times \vec{A} \right) + \sigma \frac{\partial \vec{A}}{\partial t} = \vec{J}_{src}
+\end{equation}
+Hierbei ist $\sigma$ die elektrische Leitfähigkeit und $\vec{J}_{src}$ die eingeprägte Quellstromdichte.
+
+\subsection{Diskretisierung mit Nédélec-Elementen (Kanten-Elemente)}
+Um die Physik korrekt abzubilden, werden keine knoten-basierten Elemente verwendet, sondern \textbf{Nédélec-Elemente erster Ordnung} auf Hexaedern. 
+\begin{itemize}
+    \item \textbf{Freiheitsgrade (DoFs):} Die Unbekannten sind die Zirkulationen des Vektorpotentials entlang der Kanten: $u_i = \int_{e_i} \vec{A} \cdot d\vec{l}$.
+    \item \textbf{Vorteil:} Diese Elemente erzwingen nur die Stetigkeit der Tangentialkomponente ($\vec{n} \times \vec{A}$), was physikalisch an Materialübergängen korrekt ist, und verhindern parasitäre Lösungen ("Spurious Modes").
+    \item \textbf{Ansatzfunktionen:} Für ein Referenz-Hexaeder $[-1,1]^3$ lauten die Ansatzfunktionen z.B. für Kanten in x-Richtung:
+    \begin{equation}
+        \vec{N}_i(\xi, \eta, \zeta) = \frac{1}{8} (1 \pm \eta)(1 \pm \zeta) \vec{e}_\xi
+    \end{equation}
+\end{itemize}
+
+\subsection{Hybrid FEM-BEM Kopplung}
+Der Luftraum um die Platte ist unendlich groß. Eine Diskretisierung mit FEM wäre ineffizient, besonders da sich die Platte bewegt. Stattdessen wird die \textbf{Randelementmethode (BEM)} verwendet.
+
+Die BEM koppelt alle Randkanten der Platte miteinander über eine vollbesetzte Matrix (Dense Matrix). Diese Matrix repräsentiert die magnetische "Steifigkeit" des Vakuums.
+\begin{equation}
+    S_{BEM}^{ij} \approx \frac{1}{4\pi\mu_0} \int_{\Gamma} \int_{\Gamma} \frac{1}{|\vec{r} - \vec{r}'|} (\vec{v}_i \cdot \vec{v}_j) \, d\Gamma d\Gamma'
+\end{equation}
+Im Code wird dies durch eine Kollokationsmethode auf den Kantenmitten approximiert. Diese Matrix wird zur FEM-Systemmatrix addiert.
+
+\subsection{Mechanische Kopplung und Zeitintegration}
+Die Lorentzkraft $\vec{F}$ auf die Platte berechnet sich aus:
+\begin{equation}
+    \vec{F} = \int_{V} (\vec{J}_{tot} \times \vec{B}_{tot}) \, dV
+\end{equation}
+Wobei sich die totale Stromdichte zusammensetzt aus dem Wirbelstromanteil und dem direkt induzierten Anteil:
+\begin{equation}
+    \vec{J}_{tot} = -\sigma \left( \frac{\partial \vec{A}_{FEM}}{\partial t} + \frac{\partial \vec{A}_{src}}{\partial t} \right)
+\end{equation}
+Die Bewegungsgleichung $m\ddot{z} = F_z - mg$ wird mittels eines Euler-Verfahrens integriert. Für die Zeitdiskretisierung der EM-Gleichung wird ein implizites Euler-Verfahren (Backward Euler) verwendet.
+
+\section{Software-Architektur und Klassen}
+
+Die Software ist in modernem C++ geschrieben und nutzt OpenMP für CPU-Parallelisierung sowie CUDA/cuDSS für GPU-Beschleunigung.
+
+\subsection{Datenstrukturen (Mesh.h)}
+
+\subsubsection{\texttt{struct Point3D}}
+Repräsentiert einen Punkt im 3D-Raum (x, y, z). Alle Koordinaten werden intern konsequent in SI-Einheiten (Metern) gehalten.
+
+\subsubsection{\texttt{struct EdgeData}}
+Zentraler Datentyp für die Kanten-Topologie.
+\begin{lstlisting}[language=C++]
+struct EdgeData {
+    int id;         // Globale, eindeutige Kanten-ID
+    int n1, n2;     // Globale Knoten-IDs
+    Point3D center; // Vorberechneter Mittelpunkt (Meter)
+    Point3D vec;    // Richtungsvektor
+    double length;  // Laenge
+};
+\end{lstlisting}
+
+\subsection{Kern-Klassen}
+
+\subsubsection{\texttt{class Mesh}}
+Speichert die reine Geometrie.
+\begin{itemize}
+    \item \texttt{nodes}: Vektor aller Knotenpunkte.
+    \item \texttt{elements}: Vektor von Hexaedern (je 8 Knoten-Indizes).
+    \item \texttt{saveToVTK()}: Exportiert das Netz im VTK-Format (Legacy ASCII) für Paraview.
+\end{itemize}
+
+\subsubsection{\texttt{class MeshOptimizerGA}}
+Dient der Erzeugung eines hochwertigen Hexaeder-Netzes für die runde Platte.
+\begin{itemize}
+    \item \textbf{Verfahren:} Transformiert ein strukturiertes Quadrat-Gitter analytisch auf einen Kreis ("Squircle"-Mapping).
+    \item \textbf{Optimierung:} Ein Genetischer Algorithmus (GA) verschiebt innere Knoten und lässt Randknoten auf dem Kreisumfang gleiten, um die Orthogonalität der Elemente zu maximieren und Verzerrungen zu minimieren.
+\end{itemize}
+
+\subsubsection{\texttt{class FEMContext}}
+Verwaltet die FEM-Topologie und Physik.
+\begin{itemize}
+    \item \texttt{buildTopology()}: Erzeugt die globale Kanten-Datenbank (\texttt{globalEdges}) aus dem Knotennetz. Identifiziert geteilte Kanten zwischen Elementen.
+    \item \texttt{computeLocalMatrix()}: Berechnet mittels Gauß-Integration ($2\times2\times2$) und Jacobimatrix-Transformation die lokalen $12\times12$ Steifigkeits- ($\mathbf{K}$) und Massenmatrizen ($\mathbf{M}$) für ein Element.
+\end{itemize}
+
+\subsubsection{\texttt{class BEMContext}}
+Verwaltet die Kopplung zum Außenraum.
+\begin{itemize}
+    \item \texttt{initialize()}: Identifiziert alle Kanten, die auf der Oberfläche des Netzes liegen.
+    \item \texttt{computeDenseMatrix()}: Berechnet die vollbesetzte Kopplungsmatrix basierend auf den geometrischen Abständen der Randkanten ($1/r$-Kern).
+\end{itemize}
+
+\subsubsection{\texttt{class SparseMatrixAssembler}}
+Hilfsklasse zur Assemblierung der Systemmatrix. Sammelt Matrix-Einträge ("Triplets") thread-safe in lokalen Puffern und konvertiert sie effizient in das \textbf{CSR (Compressed Sparse Row)} Format, welches vom GPU-Solver benötigt wird.
+
+\subsubsection{\texttt{class CUDSS\_Solver}}
+Wrapper um die NVIDIA \texttt{cuDSS} Bibliothek.
+\begin{itemize}
+    \item Verwaltet GPU-Speicher (Allokation/Deallokation).
+    \item Führt die Schritte \textit{Analysis}, \textit{Factorization} und \textit{Solve} für unsymmetrische, dünnbesetzte Gleichungssysteme auf der Grafikkarte aus.
+\end{itemize}
+
+\section{Dateiformate}
+
+\subsection{Geometrie-Export (*.vtk)}
+Die Geometrie wird im \textit{Visualization Toolkit (VTK) Legacy Format} (ASCII) exportiert. Dies ermöglicht die direkte Visualisierung in Tools wie ParaView.
+
+\textbf{Aufbau:}
+\begin{lstlisting}
+# vtk DataFile Version 3.0
+TEAM 28 Mesh
+ASCII
+DATASET UNSTRUCTURED_GRID
+POINTS <N> double
+x0 y0 z0
+...
+CELLS <N_cells> <size>
+8 n0 n1 n2 n3 n4 n5 n6 n7
+...
+CELL_TYPES <N_cells>
+12 (VTK_HEXAHEDRON)
+...
+\end{lstlisting}
+
+\subsection{Ergebnis-Export (results.csv)}
+Die Simulationsergebnisse werden als \textit{Comma-Separated Values} gespeichert.
+
+\textbf{Spalten:}
+\begin{enumerate}
+    \item \textbf{t}: Simulationszeit in Sekunden [s].
+    \item \textbf{current}: Momentaner Spulenstrom in Ampere [A].
+    \item \textbf{z\_mm}: Levitionshöhe (Unterkante Platte zu Oberkante Spule) in Millimetern [mm].
+    \item \textbf{force\_z}: Gesamte Lorentzkraft in vertikaler Richtung in Newton [N].
+\end{enumerate}
+
+\section{Kompilierung und Ausführung}
+Bau- und Ausführungsanweisungen stehen in \texttt{BUILD.md} im Wurzelverzeichnis
+des Repositories; sie sind die maßgebliche Quelle und werden mit dem Code
+gepflegt.
+
+\section{Zusammenfassung der numerischen Pipeline}
+\begin{enumerate}
+    \item \textbf{Preprocessing:} Erzeugen der Hexaeder-Netze, Skalierung auf SI-Meter, Aufbau der Kanten-Topologie, Vorberechnung der BEM-Matrix.
+    \item \textbf{Zeitschleife ($t_0 \to t_{end}$):}
+    \begin{enumerate}
+        \item Update Spulenstrom $I(t)$ und $\dot{I}(t)$.
+        \item Bestimmung der relativen Position Spule-Platte (basierend auf $z(t)$).
+        \item \textbf{Assemblierung:}
+        \begin{itemize}
+            \item Berechnen der lokalen FEM-Matrizen $\mathbf{K}, \mathbf{M}$.
+            \item Berechnen des Quellterms $\mathbf{b}$ (induzierte Spannung durch $\dot{\vec{A}}_{src}$).
+            \item Addieren des History-Terms ($\frac{1}{\Delta t}\mathbf{M} \vec{A}_{n-1}$).
+            \item Addieren des BEM-Blocks (Dense) zur Systemmatrix.
+        \end{itemize}
+        \item \textbf{Lösen:} $ \mathbf{A}_{curr} = \mathbf{System}^{-1} \cdot \mathbf{b} $ (auf GPU).
+        \item \textbf{Post-Processing:} Berechnen der Lorentzkraft $\vec{F}$ durch Integration von $\vec{J} \times \vec{B}$ über das Volumen.
+        \item \textbf{Mechanik:} Update von Geschwindigkeit und Position via Newton-Euler ($F=ma$).
+    \end{enumerate}
+    \item \textbf{Output:} Schreiben der CSV-Daten.
+\end{enumerate}
+\newpage
+\section{API-Referenz: Methoden zur Modellierung}
+
+Dieses Kapitel beschreibt die zentralen C++ Funktionen und Klassenmethoden, die zur Abbildung des TEAM 28 Experiments verwendet werden. Es werden die physikalische Bedeutung der Parameter sowie die Funktionsweise der Algorithmen erläutert.
+
+\subsection{Geometrie-Generierung (\texttt{Mesh.cpp})}
+
+Die geometrische Modellierung erfolgt parametrisch, um eine einfache Anpassung an die Experimentbeschreibung zu ermöglichen.
+
+\subsubsection{\texttt{generatePlate2D}}
+Erzeugt das initiale 2D-Netz für die leitfähige Platte.
+\begin{lstlisting}[language=C++]
+Mesh2D generatePlate2D();
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Funktion:} Erstellt ein strukturiertes Gitter auf einem Einheitsquadrat und bildet dieses mittels analytischem Mapping ("Squircle"-Transformation) auf eine Kreisfläche ab.
+    \item \textbf{Rückgabewert:} Ein \texttt{Mesh2D}-Objekt, das Knoten (z=0) und Viereckselemente (Quads) enthält.
+    \item \textbf{Relevante Konstanten:} \texttt{PLATE\_GRID\_N} bestimmt die Diskretisierungsfeinheit (Anzahl Unterteilungen pro Seite).
+\end{itemize}
+
+\subsubsection{\texttt{extrudePlate}}
+Extrudiert das 2D-Netz in die dritte Dimension.
+\begin{lstlisting}[language=C++]
+Mesh extrudePlate(const Mesh2D& m2d);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Parameter \texttt{m2d}:} Das optimierte 2D-Netz der Plattenbasis.
+    \item \textbf{Funktion:} Kopiert das 2D-Netz in $z$-Richtung entsprechend der Anzahl der Schichten (\texttt{PLATE\_LAYERS}) und verbindet die Knoten zu Hexaedern.
+    \item \textbf{Physik:} Die Gesamthöhe wird durch \texttt{PLATE\_THICKNESS} (3 mm) bestimmt.
+\end{itemize}
+
+\subsubsection{\texttt{generateCoil}}
+Erzeugt die Geometrie der Erregerspulen.
+\begin{lstlisting}[language=C++]
+Mesh generateCoil(double rIn, double w, double h, double z0);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Parameter \texttt{rIn}:} Innenradius der Spule [mm].
+    \item \textbf{Parameter \texttt{w}:} Breite des Wicklungspakets [mm].
+    \item \textbf{Parameter \texttt{h}:} Höhe des Wicklungspakets [mm].
+    \item \textbf{Parameter \texttt{z0}:} Vertikale Position der Unterkante der Spule [mm].
+    \item \textbf{Funktion:} Diskretisiert den Spulenquerschnitt in radiale und vertikale Elemente und rotiert diesen Querschnitt um die z-Achse, um einen Hohlzylinder aus Hexaedern zu erzeugen.
+    \item \textbf{Verwendung:} Dient primär der numerischen Integration des Biot-Savart-Gesetzes (Volumenintegration der Stromdichte).
+\end{itemize}
+
+\subsubsection{\texttt{scaleMesh}}
+Skaliert das gesamte Netz (Einheitenkonvertierung).
+\begin{lstlisting}[language=C++]
+void scaleMesh(Mesh& m, double factor);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Parameter \texttt{m}:} Das zu skalierende Netz (Referenz).
+    \item \textbf{Parameter \texttt{factor}:} Der Skalierungsfaktor (hier $0.001$ für mm $\to$ m).
+    \item \textbf{Wichtig:} Diese Methode muss \textit{einmalig} vor Beginn der Simulation aufgerufen werden, um konsistente SI-Einheiten sicherzustellen.
+\end{itemize}
+
+\subsection{Topologie und Optimierung}
+
+\subsubsection{\texttt{MeshOptimizerGA::optimize}}
+Verbessert die Netzqualität der Platte mittels eines genetischen Algorithmus.
+\begin{lstlisting}[language=C++]
+void MeshOptimizerGA::optimize();
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Problem:} Das analytische Mapping von Quadrat zu Kreis führt oft zu verzerrten Elementen ("Diamanten") an den Ecken.
+    \item \textbf{Verfahren:} Ein stochastischer Optimierer verschiebt die inneren Knoten und lässt die Randknoten entlang des Radius gleiten.
+    \item \textbf{Zielfunktion (Fitness):} Minimierung der Abweichung von $90^\circ$ Innenwinkeln und Maximierung der Kantenlängen-Gleichmäßigkeit.
+\end{itemize}
+
+\subsubsection{\texttt{FEMContext::buildTopology}}
+Erstellt die Datenbank der Kanten für die FEM-Berechnung.
+\begin{lstlisting}[language=C++]
+void FEMContext::buildTopology(const Mesh& mesh);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Funktion:} Iteriert über alle Hexaeder und identifiziert eindeutige Kanten. Weist jeder physikalischen Kante eine globale ID zu und speichert geometrische Eigenschaften (Länge, Mittelpunkt, Richtungsvektor) in der \texttt{globalEdges}-Struktur.
+    \item \textbf{Bedeutung:} Dies ist die Grundlage für die Nédélec-Elemente, da die Freiheitsgrade auf den Kanten liegen.
+\end{itemize}
+
+\subsection{Physikalische Berechnungsmethoden}
+
+\subsubsection{\texttt{computeLocalMatrix}}
+Berechnet die Elementmatrizen für die FEM.
+\begin{lstlisting}[language=C++]
+void FEMContext::computeLocalMatrix(const Mesh& mesh, int elementIdx, 
+                                    double matK[12][12], double matM[12][12]);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Rückgabe:} Füllt die $12 \times 12$ Steifigkeitsmatrix $\mathbf{K}$ (Curl-Curl-Term) und Massenmatrix $\mathbf{M}$ (Identitätsterm).
+    \item \textbf{Mathematik:} Verwendet eine $2\times2\times2$ Gauß-Legendre-Quadratur. Transformiert die Formfunktionen vom Referenzwürfel auf das physische Element mittels der Jacobimatrix und der Piola-Transformation für H(curl)-konforme Elemente.
+\end{itemize}
+
+\subsubsection{\texttt{calcBiotSavart}}
+Berechnet das magnetische Vektorpotential $\vec{A}$ einer Spule.
+\begin{lstlisting}[language=C++]
+Point3D calcBiotSavart(const Point3D& obs, const Mesh& coilMesh, 
+                       double I, double N_turns, double dir);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Parameter \texttt{obs}:} Beobachtungspunkt im Raum [m].
+    \item \textbf{Parameter \texttt{I}:} Augenblicksstrom in der Spule [A].
+    \item \textbf{Parameter \texttt{N\_turns}:} Windungszahl.
+    \item \textbf{Funktion:} Führt eine Volumenintegration über das Spulennetz durch:
+    $$ \vec{A}(\vec{r}) = \frac{\mu_0}{4\pi} \int_{V_{Spule}} \frac{\vec{J}}{|\vec{r} - \vec{r}'|} dV' $$
+    \item \textbf{Verwendung:} Berechnung der induzierten Spannung auf der rechten Seite des Gleichungssystems ($\vec{E}_{ind} = -\partial \vec{A} / \partial t$).
+\end{itemize}
+
+\subsubsection{\texttt{calcMagneticField}}
+Berechnet die magnetische Flussdichte $\vec{B}$ einer Spule.
+\begin{lstlisting}[language=C++]
+Point3D calcMagneticField(const Point3D& obs, const Mesh& coilMesh, 
+                          double I, double N_turns, double dir);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Unterschied zu BiotSavart:} Berechnet $\vec{B} = \nabla \times \vec{A}$ direkt durch Integration von $(\vec{J} \times \vec{r}) / r^3$.
+    \item \textbf{Verwendung:} Wird für die Berechnung der Lorentzkraft benötigt ($\vec{F} = \vec{J} \times \vec{B}_{ges}$).
+\end{itemize}
+
+\subsubsection{\texttt{calcLorentzForce}}
+Bestimmt die auf die Platte wirkende Gesamtkraft.
+\begin{lstlisting}[language=C++]
+Point3D calcLorentzForce(..., const std::vector<double>& solution_diff, 
+                         double dt, ..., double dI_dt);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Eingabe:} Die Änderung des Vektorpotentials (\texttt{solution\_diff}) und die zeitliche Änderung des Stroms (\texttt{dI\_dt}).
+    \item \textbf{Schritt 1:} Berechnung der Wirbelstromdichte $\vec{J}_{tot} = -\sigma (\dot{\vec{A}}_{FEM} + \dot{\vec{A}}_{ext})$.
+    \item \textbf{Schritt 2:} Berechnung des lokalen B-Feldes $\vec{B}_{tot} = \nabla \times \vec{A}_{FEM} + \vec{B}_{ext}$.
+    \item \textbf{Schritt 3:} Volumenintegration der Kraftdichte $\vec{f} = \vec{J}_{tot} \times \vec{B}_{tot}$.
+\end{itemize}
+
+\subsubsection{\texttt{BEMContext::computeDenseMatrix}}
+Berechnet die Kopplungsmatrix für den Außenraum.
+\begin{lstlisting}[language=C++]
+void BEMContext::computeDenseMatrix(const Mesh& mesh, const FEMContext& fem, 
+                                    const SurfaceMesh& surf);
+\end{lstlisting}
+\begin{itemize}
+    \item \textbf{Funktion:} Erzeugt eine vollbesetzte Matrix, die alle Randkanten miteinander koppelt.
+    \item \textbf{Physik:} Repräsentiert die magnetische Energie im unendlichen Außenraum. Ein Matrixelement $S_{ij}$ beschreibt die induktive Kopplung zwischen Kante $i$ und Kante $j$, abfallend mit $1/r_{ij}$. Dies ermöglicht das korrekte "Austreten" der Feldlinien aus dem Material.
+\end{itemize}
+
+\newpage
+\section{Berechnung der Lorentzkraft}
+
+Die korrekte Bestimmung der auf die Platte wirkenden Kraft ist das Kernziel von TEAM Problem 28. Da es sich um ein gekoppeltes Problem handelt, treibt diese Kraft die mechanische Bewegung an, welche wiederum die elektromagnetische Induktion beeinflusst.
+
+Dieses Kapitel beschreibt die Herleitung der Kraft aus den Feldgrößen und deren numerische Umsetzung in der Funktion \texttt{calcLorentzForce}.
+
+\subsection{Theoretische Grundlagen}
+
+Die Kraft auf einen stromdurchflossenen Körper im Magnetfeld wird durch die Lorentzkraftdichte $\vec{f}$ beschrieben:
+\begin{equation}
+    \vec{f} = \vec{J}_{tot} \times \vec{B}_{tot}
+\end{equation}
+Die Gesamtkraft $\vec{F}$ ergibt sich aus der Volumenintegration über die leitfähige Platte $\Omega$:
+\begin{equation}
+    \vec{F} = \int_{\Omega} \left( \vec{J}_{tot}(\vec{r}, t) \times \vec{B}_{tot}(\vec{r}, t) \right) \, dV
+    \label{eq:force_integral}
+\end{equation}
+
+\subsubsection{Zusammensetzung der Feldgrößen}
+Es ist essenziell zu beachten, dass sowohl die Stromdichte als auch die magnetische Flussdichte aus zwei Anteilen bestehen:
+\begin{enumerate}
+    \item \textbf{Reaktionsfeld (FEM):} Das Feld, das durch die Wirbelströme in der Platte selbst erzeugt wird ($\vec{A}_{fem}, \vec{B}_{fem}$).
+    \item \textbf{Quellfeld (Source):} Das Feld, das durch die externen Spulen erzeugt wird ($\vec{A}_{src}, \vec{B}_{src}$).
+\end{enumerate}
+
+\paragraph{Die magnetische Flussdichte $\vec{B}_{tot}$:}
+\begin{equation}
+    \vec{B}_{tot} = \nabla \times \vec{A}_{fem} + \vec{B}_{src}
+\end{equation}
+Der Term $\nabla \times \vec{A}_{fem}$ wird aus der FEM-Lösung berechnet, während $\vec{B}_{src}$ analytisch über das Biot-Savart-Gesetz bestimmt wird.
+
+\paragraph{Die Stromdichte $\vec{J}_{tot}$:}
+Nach dem Ohmschen Gesetz für bewegte Leiter gilt $\vec{J} = \sigma (\vec{E} + \vec{v} \times \vec{B})$. In der $\vec{A}$-Potential-Formulierung (ohne skalares Potential $\phi$, da keine externen Spannungsquellen an der Platte anliegen) und unter Berücksichtigung der Relativbewegung im Lagrange-Ansatz (das Koordinatensystem bewegt sich mit der Platte) vereinfacht sich dies zu:
+\begin{equation}
+    \vec{J}_{tot} = -\sigma \frac{\partial \vec{A}_{tot}}{\partial t} = -\sigma \left( \frac{\partial \vec{A}_{fem}}{\partial t} + \frac{\partial \vec{A}_{src}}{\partial t} \right)
+    \label{eq:j_tot}
+\end{equation}
+\textbf{Wichtig:} Der induzierte Strom wird nicht nur durch die Änderung des FEM-Potentials getrieben, sondern massgeblich auch durch die zeitliche Änderung des externen Spulenfeldes ($\partial \vec{A}_{src} / \partial t$).
+
+\subsection{Numerische Implementierung}
+
+Die Umsetzung erfolgt in der Funktion \texttt{calcLorentzForce} in \texttt{Mesh.cpp}. Da wir Nédélec-Elemente verwenden, sind die Felder innerhalb eines Elements nicht konstant, sondern ortsabhängig. Die Integration (\ref{eq:force_integral}) wird daher numerisch mittels Gauß-Quadratur durchgeführt.
+
+\subsubsection{Schritt 1: Rekonstruktion der Feldgrößen am Gaußpunkt}
+Die FEM-Lösung liefert Koeffizienten $u_i$ auf den Kanten. Das Vektorpotential $\vec{A}_{fem}$ im Inneren eines Hexaeders wird durch die Nédélec-Formfunktionen $\vec{N}_i$ approximiert:
+\begin{equation}
+    \vec{A}_{fem}(\vec{r}) = \sum_{i=1}^{12} u_i(t) \cdot \vec{N}_i(\vec{r})
+\end{equation}
+Daraus folgt für die magnetische Flussdichte der Wirbelströme:
+\begin{equation}
+    \vec{B}_{fem}(\vec{r}) = \nabla \times \vec{A}_{fem} = \sum_{i=1}^{12} u_i(t) \cdot (\nabla \times \vec{N}_i(\vec{r}))
+\end{equation}
+Im Code geschieht dies unter Verwendung der Piola-Transformation, um von den Referenzkoordinaten $(\xi, \eta, \zeta)$ auf die physischen Koordinaten $(x,y,z)$ zu schließen:
+\begin{lstlisting}[language=C++]
+// Berechnung von Curl A (B-Feld) mittels Jacobi-Matrix J
+for (int d=0; d<3; ++d) 
+    curlPhys[d] = (J[d][0]*cR[0] + J[d][1]*cR[1] + J[d][2]*cR[2]) / detJ;
+\end{lstlisting}
+
+\subsubsection{Schritt 2: Berechnung der Stromdichte}
+Zur Berechnung von $\vec{J}_{tot}$ gemäß Gl. (\ref{eq:j_tot}) wird die zeitliche Ableitung diskretisiert (Backward Euler). Die Funktion erhält dazu die Differenz der Lösung $\Delta u_i = u_i(t) - u_i(t-\Delta t)$ und die Zeitableitung des Erregerstroms $\dot{I}_{src}$.
+
+\begin{itemize}
+    \item \textbf{FEM-Anteil:} $\dot{\vec{A}}_{fem} \approx \frac{1}{\Delta t} \sum \Delta u_i \vec{N}_i$.
+    \item \textbf{Quell-Anteil:} $\dot{\vec{A}}_{src}$ wird durch den Aufruf von \texttt{calcBiotSavart} mit dem Argument $\dot{I}_{src}$ berechnet.
+\end{itemize}
+
+\begin{lstlisting}[language=C++]
+// Superposition der Aenderungsraten
+double J_tot[3];
+for (int d=0; d<3; ++d) {
+    J_tot[d] = -sigma * (dA_fem_dt[d] + dA_src_dt[d]);
+}
+\end{lstlisting}
+
+\subsubsection{Schritt 3: Kreuzprodukt und Integration}
+An jedem Gaußpunkt $k$ wird das lokale Kreuzprodukt gebildet und mit dem Determinanten der Jacobi-Matrix (Volumenelement) gewichtet aufsummiert:
+
+\begin{equation}
+    \vec{F} \approx \sum_{Elemente} \sum_{k=1}^{N_{Gauss}} \left( \vec{J}_{tot}(\xi_k) \times \vec{B}_{tot}(\xi_k) \right) \cdot \det(\mathbf{J}(\xi_k)) \cdot w_k
+\end{equation}
+
+Im Code entspricht dies:
+\begin{lstlisting}[language=C++]
+// Kreuzprodukt J x B
+double fx = J_tot[1]*B_tot[2] - J_tot[2]*B_tot[1];
+double fy = J_tot[2]*B_tot[0] - J_tot[0]*B_tot[2];
+double fz = J_tot[0]*B_tot[1] - J_tot[1]*B_tot[0];
+
+// Summation (detJ ist das physikalische Volumen-Gewicht)
+Fx += fx * detJ; 
+Fy += fy * detJ; 
+Fz += fz * detJ;
+\end{lstlisting}
+
+\subsection{Besonderheiten der Implementierung}
+\begin{itemize}
+    \item \textbf{Einheiten:} Da die Kraftberechnung extrem empfindlich auf Skalierungsfehler reagiert (Faktor $10^6$ bei mm vs. m), arbeitet die gesamte Routine strikt in SI-Einheiten (Metern).
+    \item \textbf{Parallelisierung:} Die Schleife über die Elemente ist mittels OpenMP parallelisiert (\texttt{\#pragma omp parallel for reduction...}), da die Auswertung der Biot-Savart-Integrale für das Quellfeld an jedem Gaußpunkt rechenintensiv ist.
+    \item \textbf{Selbstkonsistenz:} Durch die Verwendung derselben Formfunktionen wie im Solver wird sichergestellt, dass die berechnete Kraft energetisch konsistent zur Feldlösung ist.
+\end{itemize}
+\newpage
+\section{Netzoptimierung mittels Genetischem Algorithmus}
+
+Die Qualität der Finite-Elemente-Lösung hängt maßgeblich von der Qualität des Rechengitters ab. Da die analytische Abbildung eines Quadrats auf eine Kreisfläche ("Squircle"-Mapping) zu starken Verzerrungen führen kann, implementiert die Klasse \texttt{MeshOptimizerGA} einen stochastischen Optimierungsansatz, um das Netz zu regularisieren.
+
+\subsection{Motivation und Problemstellung}
+Das Ausgangsnetz wird topologisch als strukturiertes Gitter auf einem Einheitsquadrat erzeugt und anschließend auf den physischen Radius der Platte transformiert. Dabei treten systematische Probleme auf:
+\begin{itemize}
+    \item \textbf{Winkelverzerrung:} An den "Ecken" des ursprünglichen Quadrats entstehen rautenförmige Elemente mit sehr spitzen und stumpfen Winkeln, weit entfernt von den idealen $90^\circ$.
+    \item \textbf{Aspektverhältnis:} Elemente am Rand werden oft stark gestreckt oder gestaucht.
+\end{itemize}
+Da die Verschiebung eines einzelnen Knotens die Qualität von vier angrenzenden Elementen beeinflusst, ist die "Energielandschaft" dieses Optimierungsproblems komplex und voller lokaler Minima. Ein Genetischer Algorithmus (GA) eignet sich hier besser als gradientenbasierte Verfahren, da er robuster gegen diese lokalen Minima ist.
+
+\subsection{Knoten-Klassifizierung und Randbedingungen}
+Der Konstruktor der Klasse analysiert die Topologie und teilt jeden Knoten $n$ in eine von drei Kategorien (\texttt{nodeType}) ein, um physikalische Randbedingungen zu wahren:
+
+\begin{enumerate}
+    \item \textbf{Typ 2 (Ecken / Fixed):} Die vier Eckpunkte des ursprünglichen Gitters $(0,0), (0,N), (N,0), (N,N)$. Diese Knoten sind fixiert, um die Orientierung des Netzes im Raum zu verankern.
+    \item \textbf{Typ 1 (Rand / Sliding Boundary):} Alle Knoten, die auf dem Umfang des Kreises liegen (aber keine Ecken sind). Diese Knoten besitzen einen Freiheitsgrad: Sie dürfen sich entlang des Kreisumfangs bewegen ("Gleiten"), dürfen den Radius aber nicht verlassen.
+    \item \textbf{Typ 0 (Innen / Free):} Alle inneren Knoten. Diese besitzen zwei Freiheitsgrade und können sich in der $xy$-Ebene frei bewegen.
+\end{enumerate}
+
+Die Methode \texttt{projectToCircle(Point3D\& p)} erzwingt die Randbedingung für Typ-1-Knoten:
+\begin{equation}
+    \vec{x}_{neu} = R_{Platte} \cdot \frac{\vec{x}_{alt}}{|\vec{x}_{alt}|}
+\end{equation}
+
+\subsection{Die Fitness-Funktion}
+Die Methode \texttt{evaluateFitness} berechnet einen negativen Fehlerwert, den der Algorithmus zu maximieren versucht (Fehlerminimierung). Die Qualität eines Netzes bestimmt sich aus der Summe der Fehler aller Quad-Elemente $q$:
+
+\begin{equation}
+    E_{total} = \sum_{q \in Mesh} (w_{\alpha} E_{\alpha} + w_{L} E_{L} + E_{valid})
+\end{equation}
+
+Dabei werden drei Kriterien bewertet:
+
+\subsubsection{1. Orthogonalität ($E_{\alpha}$)}
+Die Abweichung der vier Innenwinkel $\alpha_i$ eines Elements vom Idealwinkel $\pi/2$ ($90^\circ$):
+\begin{equation}
+    E_{\alpha} = \sum_{i=1}^{4} (\alpha_i - \frac{\pi}{2})^2
+\end{equation}
+Dieser Term wird im Code stark gewichtet ($w_{\alpha} = 50.0$), um rechteckige Elemente zu erzwingen.
+
+\subsubsection{2. Kantenlängen-Homogenität ($E_{L}$)}
+Die Abweichung der vier Kantenlängen $l_i$ vom lokalen Durchschnitt $\bar{l}$:
+\begin{equation}
+    E_{L} = \sum_{i=1}^{4} (l_i - \bar{l})^2
+\end{equation}
+Dies verhindert langgestreckte Elemente (schlechtes Aspektverhältnis).
+
+\subsubsection{3. Topologische Validität ($E_{valid}$)}
+Über das Kreuzprodukt der Kantenvektoren wird geprüft, ob ein Element konvex ist. Sollte ein Element "umgestülpt" sein (negative oder verschwindende Fläche), wird eine extrem hohe Strafe ($50000.0$) addiert. Dies sorgt dafür, dass invalide Netze sofort aus dem Genpool entfernt werden.
+
+\subsection{Der Evolutionäre Ablauf}
+Die Methode \texttt{optimize} führt den genetischen Zyklus über eine feste Anzahl von Generationen (\texttt{GA\_GENERATIONS}) aus:
+
+\begin{enumerate}
+    \item \textbf{Initialisierung:} Eine Population von Netz-Varianten wird erzeugt. Eine Variante ist das Original, die anderen sind zufällig mutiert.
+    \item \textbf{Elitismus:} Das Netz mit der besten Fitness wird unverändert in die nächste Generation übernommen. Dies garantiert eine monotone Konvergenz.
+    \item \textbf{Turnier-Selektion:} Zwei Individuen werden zufällig gewählt, das bessere dient als Elternteil.
+    \item \textbf{Arithmetischer Crossover:} Ein Kind-Netz wird durch Mittelung der Knotenpositionen zweier Eltern erzeugt:
+    \begin{equation}
+        \vec{x}_{Kind} = 0.5 \cdot (\vec{x}_{Eltern1} + \vec{x}_{Eltern2})
+    \end{equation}
+    Dies wirkt als starker Glättungsoperator.
+    \item \textbf{Mutation mit Simulated Annealing:} Knoten werden mit einer Wahrscheinlichkeit (\texttt{GA\_MUTATION\_RATE}) zufällig verschoben. Die Stärke der Verschiebung nimmt mit der Zeit ab:
+    \begin{equation}
+        Scale(t) = Scale_{max} \cdot \left(1 - \frac{t}{T_{max}}\right)
+    \end{equation}
+    Dies ermöglicht zu Beginn große topologische Änderungen und am Ende ein feines Tuning der Knotenpositionen.
+\end{enumerate}
+
+Am Ende des Prozesses wird das Netz mit der höchsten Fitness als finale Geometrie für die Extrusion und FEM-Berechnung verwendet.
+\end{document}
