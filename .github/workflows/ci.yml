@@ -79,15 +79,17 @@ jobs:
   gmsh:
     name: Netze mit Gmsh
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: GL-Laufzeitbibliotheken (Gmsh laedt sie auch ohne Grafik)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libglu1-mesa libgl1 libxrender1 libxcursor1 libxft2 libxinerama1 libfontconfig1
+        timeout-minutes: 40
+        run: >
+          .github/scripts/apt-install.sh libglu1-mesa libgl1 libxrender1
+          libxcursor1 libxft2 libxinerama1 libfontconfig1
       - name: Gmsh installieren (Version festgelegt)
         run: python3 -m pip install -r tools/requirements-gmsh.txt
       - name: Netze erzeugen und pruefen
