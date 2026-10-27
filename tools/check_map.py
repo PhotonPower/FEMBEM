@@ -69,8 +69,10 @@ VTK_NAMES = {10: "Tetraeder", 12: "Hexaeder", 13: "Prisma", 14: "Pyramide"}
 #
 # r_min der Platte wird nicht als Mass geprueft. Der kleinste Knotenradius
 # sagt nichts ueber ein Loch: im Standardnetz team28.vtk liegt er bei
-# r = 1,84 mm, weil dort eine Mittelzelle die Achse ueberdeckt, deren Ecken so
-# weit aussen liegen -- die Platte ist trotzdem eine Vollscheibe.
+# r = 1,84 mm, weil dort eine Mittelzelle die Achse ueberdeckt, deren naechste
+# Ecke so weit aussen liegt (die uebrigen bis 4,8 mm) -- die Platte ist
+# trotzdem eine Vollscheibe. TEAM 28 hat kein Loch; ein Loch steht im Paper
+# nur als Ausblick.
 #
 # Stattdessen wird geprueft, dass die Platte die Achse UEBERDECKT (Knoten auf
 # der Achse oder eine Zelle, deren Grundriss die Achse umschliesst). Ein Loch

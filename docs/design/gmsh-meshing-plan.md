@@ -14,6 +14,10 @@ Vorgabe noch als Option noch als Notlösung für die Vernetzung der Mitte.
 
 Begründung:
 
+- **Das aktuelle TEAM-28-Problem hat kein Loch.** Ein Loch steht im Paper nur
+  als Ausblick. Die Masse von 0,107 kg (Sollkraft im Schwebegleichgewicht
+  0,107 kg · 9,81 = 1,0497 N) passt zur Vollscheibe (0,1075 kg bei
+  2700 kg/m³), nicht zu einer gelochten Platte.
 - Ein Loch ändert die **Topologie**. Die Platte wird zum Volltorus, der Raum
   um sie ist nicht mehr einfach zusammenhängend, und der Löser findet einen
   zusätzlichen Kohomologie-Generator (siehe Kommentar in `src/fem.cu` bei der
@@ -22,6 +26,10 @@ Begründung:
 - Ein Loch ändert die **Geometrie** des Benchmarks.
 - Ergebnisse wären nicht mehr mit dem Standardnetz vergleichbar, das eine
   Vollscheibe ist (Mittelzelle über der Achse).
+- Die älteren BDF-Netze für FEM-direkt (`team28_simple_air*.bdf`) haben eine
+  Platte mit r = 10,7…65 mm und weichen damit vom Benchmark ab; siehe den
+  Korrekturhinweis in [fem-direct-plan.md](fem-direct-plan.md). Phase 3
+  ersetzt sie durch Netze mit Vollscheibe.
 
 Durchsetzung: `tools/check_map.py` lehnt ein Plattennetz ab, das die Achse
 nicht überdeckt („LOCH auf der Achse — ausgeschlossen“, Exit-Code 1).

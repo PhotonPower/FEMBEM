@@ -45,7 +45,7 @@ Vergleich mit dem Standardnetz `data/team28/team28.vtk`:
 | Hexaeder | 4805 | 4944 |
 | Kanten | 18690 | 18651 |
 | Randflächen | 4136 | 3696 |
-| Mitte der Platte | Mittelzelle über der Achse, Ecken bei r = 1,84 mm | Knoten auf der Achse |
+| Mitte der Platte | Mittelzelle über der Achse (kein Knoten auf ihr, nächster bei r = 1,84 mm) | Knoten auf der Achse |
 | Kohomologie-Generatoren | 2 | 2 |
 | GMRES nach etwa 1000 Iterationen (1. Zeitschritt, CPU) | rel. Residuum ≈ 0,059 | rel. Residuum ≈ 0,054 |
 
