@@ -18,6 +18,19 @@
 > | Iterativ statt direkt: `--fem-direct-iterative` | **fertig und gemessen**: mit Projektion keine Stagnation mehr, aber ~1000 Iterationen je Dekade. Ohne AMS kein Ersatz für cuDSS |
 > | Gradientenprojektion des Quellterms | **fertig und bestätigt**: M2 erfüllt (5,4e-16), Scheingradient weg, Residuum 4,3e-15, Kraft unverändert |
 >
+> **Korrektur (27.10.2026): Die BDF-Netze haben ein Loch in der Platte, der
+> Benchmark nicht.** Die Netze `team28_simple_air*.bdf` haben eine Platte mit
+> $r$ = 10,7…65 mm. Das aktuelle TEAM-28-Problem hat **kein Loch**; ein Loch
+> steht im Paper nur als Ausblick. Die Platte ist eine Vollscheibe mit
+> 0,107 kg, also **1,0497 N Gewicht** (`HarmonicLorentz.cuh`, Kommentar zu den
+> Plattenmaßen in `src/fem.cu`). Die unten genannten **1,026 N sind das Gewicht
+> der gelochten Netzplatte, nicht das des Benchmarks**, und alle Kräfte in
+> diesem Dokument sind an dieser abweichenden Geometrie gemessen. Als Protokoll
+> bleiben sie stehen; für Vergleiche mit dem Benchmark taugen sie nur
+> eingeschränkt. Netze für FEM-direkt mit Vollscheibe soll der Gmsh-Generator
+> liefern (`docs/design/gmsh-meshing-plan.md`, Phase 3); `tools/check_map.py`
+> lehnt ein Plattennetz mit Loch ab.
+>
 > **Erste Kraftzahl** (BDF-Netz, $\varepsilon$ = 1e-8, Startlage):
 >
 > ```

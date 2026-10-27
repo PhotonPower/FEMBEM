@@ -36,11 +36,14 @@
 // -----------------------------------------------------------------------------
 // Auswertestelle
 // -----------------------------------------------------------------------------
-// Das Netz hat eine kleine zentrale Bohrung (Innenradius 1.8436 mm, ueblicher
-// O-Netz-Artefakt), es gibt also keine Knoten bei r = 0. Ausgewertet wird im
-// innersten Elementring bei r = 1.615 mm; dort weicht B_z um O((r/L)^2), also
-// etwa 0.2 %, vom Achsenwert ab. Gegenueber den gesuchten Abweichungen von
-// mehreren Prozent ist das unerheblich.
+// Die Platte ist eine Vollscheibe ohne Bohrung (TEAM 28 hat kein Loch). Im
+// Standardnetz ueberdeckt je Lage eine Mittelzelle die Achse; es liegt aber
+// kein Knoten genau auf ihr (der naechste bei r = 1.8436 mm). Ausgewertet wird
+// in den achsennaechsten Plattenelementen, deren Schwerpunkte bei r = 1.615 mm
+// liegen; dort weicht B_z um O((r/L)^2), also etwa 0.2 %, vom Achsenwert ab.
+// Gegenueber den gesuchten Abweichungen von mehreren Prozent ist das
+// unerheblich. (Fruehere Fassungen nannten hier eine "zentrale Bohrung" --
+// das war eine Fehldeutung des kleinsten Knotenradius.)
 // =============================================================================
 
 #include <cstddef>

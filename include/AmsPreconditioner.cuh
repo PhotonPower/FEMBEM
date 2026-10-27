@@ -40,8 +40,9 @@
 // Auf einem Gebiet mit b1 != 0 gibt es harmonische Felder: rotationsfrei, aber
 // keine Gradienten einer eindeutigen Funktion. Sie liegen im Nullraum von
 // curl-curl und werden weder von G noch von Pi erfasst. Bei TEAM 28 sind das
-// DREI Volltori (Platte mit zentraler Bohrung, zwei Ringspulen), also ein
-// dreidimensionaler harmonischer Nullraum. Die Kohomologie-Projektion muss
+// ZWEI Volltori (die beiden Ringspulen; die Platte ist eine Vollscheibe ohne
+// Loch), also ein zweidimensionaler harmonischer Nullraum -- der Loeser meldet
+// entsprechend 2 Kohomologie-Generatoren. Die Kohomologie-Projektion muss
 // daher erhalten bleiben, auch wenn die Baum-Kobaum-Eichung entfaellt.
 //
 // -----------------------------------------------------------------------------

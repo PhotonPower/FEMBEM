@@ -157,6 +157,19 @@ struct Problem {
     }
 };
 
+// Das Produkt a*b auf double runden, bevor es weiterverwendet wird.
+//
+// Ohne das fasst ein Compiler mit FMA (GCC ab x86-64-v3, Standard z. B. unter
+// RHEL 10) den Ausdruck "H + omega*C" zu einem einzigen fma(omega, C, H)
+// zusammen. Die Differenz ist dann der Rundungsfehler des Produkts (~1e-16)
+// statt exakt 0, obwohl H genau das gerundete Produkt enthaelt. Die Grenze
+// 0.0 in test_block_layout ist Absicht: ein falsches Vorzeichen oder ein
+// vertauschter Block verfehlt sie um O(1).
+static double rounded_product(double a, double b) {
+    volatile double r = a * b;
+    return r;
+}
+
 static std::vector<double> dense_from_csr(int nr, const std::vector<int>& ro,
                                           const std::vector<int>& ci,
                                           const std::vector<double>& v) {
@@ -209,8 +222,8 @@ static void test_block_layout(const Problem& p, const std::vector<int>& ro2,
     for (int i = 0; i < n; ++i)
         for (int j = 0; j < n; ++j) {
             e11 = std::fmax(e11, std::fabs(H[i*N + j]         - Kd[i*n + j]));
-            e12 = std::fmax(e12, std::fabs(H[i*N + n + j]     + p.omega * Cd[i*n + j]));
-            e21 = std::fmax(e21, std::fabs(H[(n+i)*N + j]     - p.omega * Cd[i*n + j]));
+            e12 = std::fmax(e12, std::fabs(H[i*N + n + j]     - rounded_product(-p.omega, Cd[i*n + j])));
+            e21 = std::fmax(e21, std::fabs(H[(n+i)*N + j]     - rounded_product(p.omega, Cd[i*n + j])));
             e22 = std::fmax(e22, std::fabs(H[(n+i)*N + n + j] - Kd[i*n + j]));
         }
     check("General: Block (1,1) = K", e11, 0.0);

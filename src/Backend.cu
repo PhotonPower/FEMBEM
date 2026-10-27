@@ -228,8 +228,8 @@ void print_usage(const char* exe_name) {
         << "                 ohne Eichung ist das System singulaer aber konsistent,\n"
         << "                 und ILU(0) konvergiert darauf ueberhaupt nicht, AMS schon.\n"
         << "                 Die Kohomologie-Projektoren bleiben aktiv -- AMS deckt\n"
-        << "                 Gradienten ab, nicht die harmonischen Felder der drei\n"
-        << "                 Volltori (Platte mit Bohrung, zwei Ringspulen).\n\n"
+        << "                 Gradienten ab, nicht die harmonischen Felder der zwei\n"
+        << "                 Volltori (die Ringspulen; die Platte ist eine Vollscheibe).\n\n"
         << "Pruefungen:\n"
         << "  --verify-field Magnetostatische Probe: Spulenstrom KONSTANT auf 20 A,\n"
         << "                 300 Schritte, damit die L/R-Transiente abklingt (tau =\n"
@@ -648,7 +648,16 @@ void prefetch_to_device_hint(const void* ptr, size_t bytes, int device_id, cudaS
 #ifndef _WIN32
     // Unter Windows (WDDM) ist cudaMemPrefetchAsync nicht nutzbar, siehe
     // urspruenglicher Kommentar in DeviceArray.cuh.
+#if CUDART_VERSION >= 13000
+    // CUDA 13 hat die Signatur geaendert: statt der Geraetenummer ein
+    // cudaMemLocation, dazu ein Flags-Argument (die alte Form gibt es nicht mehr).
+    cudaMemLocation loc{};
+    loc.type = cudaMemLocationTypeDevice;
+    loc.id   = device_id;
+    BF_CUDA_CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0u, stream));
+#else
     BF_CUDA_CHECK(cudaMemPrefetchAsync(ptr, bytes, device_id, stream));
+#endif
 #else
     (void)device_id; (void)stream;
 #endif
@@ -657,7 +666,14 @@ void prefetch_to_device_hint(const void* ptr, size_t bytes, int device_id, cudaS
 void prefetch_to_host_hint(const void* ptr, size_t bytes, cudaStream_t stream) {
     if (on_cpu() || ptr == nullptr || bytes == 0) return;
 #ifndef _WIN32
+#if CUDART_VERSION >= 13000
+    cudaMemLocation loc{};
+    loc.type = cudaMemLocationTypeHost;   // id wird bei Host ignoriert
+    loc.id   = 0;
+    BF_CUDA_CHECK(cudaMemPrefetchAsync(ptr, bytes, loc, 0u, stream));
+#else
     BF_CUDA_CHECK(cudaMemPrefetchAsync(ptr, bytes, cudaCpuDeviceId, stream));
+#endif
 #else
     (void)stream;
 #endif
