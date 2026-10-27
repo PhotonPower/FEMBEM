@@ -12,9 +12,21 @@ export DEBIAN_FRONTEND=noninteractive
 APT=(sudo DEBIAN_FRONTEND=noninteractive apt-get
      -o Acquire::Retries=3 -o Acquire::http::Timeout=60 -o Dpkg::Use-Pty=0)
 
+# Beobachtet (Annotationen der CI-Laeufe): die Haenger sitzen in
+# "apt-get install", nicht im Update; ein zweiter Versuch geht meist durch.
+# Vermutete Ursache, ohne Logs nicht belegt: der man-db-Trigger, der nach der
+# Installation den Handbuchindex neu aufbaut und auf Ubuntu-24.04-Runnern sehr
+# lange brauchen kann (CUDA-Toolkit und TeX bringen viele Handbuchseiten mit).
+# Das Abschalten ist unschaedlich: die CI braucht keinen Handbuchindex.
+if [ -e /var/lib/man-db/auto-update ]; then
+    sudo rm -f /var/lib/man-db/auto-update
+    echo "man-db: automatische Aktualisierung abgeschaltet"
+fi
+
 # Zeitgrenzen in Sekunden; ueberschreibbar, um das Skript selbst zu testen.
+# Ein normaler Durchlauf braucht unter einer Minute (CUDA-Toolkit, TeX).
 UPDATE_TIMEOUT="${APT_UPDATE_TIMEOUT:-300}"
-INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-1200}"
+INSTALL_TIMEOUT="${APT_INSTALL_TIMEOUT:-300}"
 
 for attempt in 1 2 3; do
     echo "::group::apt, Versuch $attempt: $*"

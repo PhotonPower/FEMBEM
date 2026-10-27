@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain installieren
-        timeout-minutes: 40
+        timeout-minutes: 35
         run: .github/scripts/apt-install.sh $CUDA_TOOLCHAIN_PACKAGES
       - name: Konfigurieren
         run: >
@@ -41,7 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Toolchain installieren
-        timeout-minutes: 40
+        timeout-minutes: 35
         run: .github/scripts/apt-install.sh $CUDA_TOOLCHAIN_PACKAGES
       - name: Konfigurieren (ohne Tests)
         run: >
@@ -78,7 +78,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: TeX installieren
-        timeout-minutes: 40
+        timeout-minutes: 35
         run: >
           .github/scripts/apt-install.sh latexmk texlive-latex-extra
           texlive-latex-recommended texlive-fonts-recommended texlive-science
