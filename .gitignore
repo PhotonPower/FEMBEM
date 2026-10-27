@@ -1,0 +1,117 @@
+# =============================================================================
+# Build-Verzeichnisse
+# =============================================================================
+# Ein CMakeCache.txt ist an seinen absoluten Pfad und seinen Generator gebunden.
+# Er laesst sich nicht zwischen Rechnern verschieben: CMake bricht dann mit
+# "The current CMakeCache.txt directory ... is different than the directory ...
+# where CMakeCache.txt was created" ab. Build-Verzeichnisse sind immer
+# wegwerfbar und gehoeren nie ins Repository oder in eine Kopie.
+build/
+build-*/
+out/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+*.cmake.stamp
+
+# =============================================================================
+# Visual Studio / MSBuild
+# =============================================================================
+.vs/
+*.sln
+*.vcxproj
+*.vcxproj.*
+*.obj
+*.pdb
+*.ilk
+*.exp
+*.lib
+*.exe
+x64/
+Release/
+Debug/
+
+# =============================================================================
+# GCC / Linux
+# =============================================================================
+*.o
+*.so
+*.a
+*.d
+
+# =============================================================================
+# CUDA
+# =============================================================================
+*.ptx
+*.cubin
+*.fatbin
+*.cudafe*
+tmpxft_*
+
+# =============================================================================
+# Simulationsausgaben
+# =============================================================================
+# Die Ergebnisdateien werden ins Wurzelverzeichnis geschrieben, weil
+# src/fem.cu relative Pfade benutzt.
+team28_out_*.vtk
+results.csv
+*.log
+build.log
+sanitizer.log
+memcheck.log
+initcheck.log
+
+# Uebersetzte Testprogramme
+t1
+t2
+t3
+t1.exe
+t2.exe
+t3.exe
+# Am Wurzelverzeichnis verankert. Ohne den fuehrenden Schraegstrich greift das
+# Muster auch auf tests/test_nedelec_*.cu, also auf QUELLDATEIEN -- deshalb
+# musste tests/test_nedelec_orientation.cpp seinerzeit mit "git add -f"
+# hineingezwungen werden, und die naechste Testdatei waere still liegen
+# geblieben. Gemeint waren immer nur die uebersetzten Programme hier oben.
+/test_nedelec*
+/test_signs*
+!tests/
+
+# =============================================================================
+# LaTeX
+# =============================================================================
+*.aux
+*.out
+*.toc
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+
+# =============================================================================
+# Zugangsdaten -- niemals einchecken
+# =============================================================================
+*token*.txt
+*.pem
+*.key
+.env
+
+# =============================================================================
+# Editor und Betriebssystem
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*~
+Thumbs.db
+desktop.ini
+.DS_Store
+team28_coarse_*.vtk
+# Dokumentation: Ergebnisse von make -C docs
+docs/_build/
+
+# Python
+__pycache__/
+*.pyc

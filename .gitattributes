@@ -1,0 +1,11 @@
+# Einheitliche Zeilenenden, damit das Projekt unter Windows und Linux gleich
+# aussieht. Im Repository steht immer LF; Git checkt unter Windows nativ aus,
+# wenn core.autocrlf entsprechend gesetzt ist. Sowohl MSVC als auch GCC
+# verarbeiten beides, der Nutzen liegt in sauberen Diffs und darin, dass
+# Werkzeuge nicht ueber vereinzelte CRLF-Dateien stolpern.
+* text=auto eol=lf
+
+# Binaerdateien nicht anfassen
+*.vtk   -text
+*.png   binary
+*.pdf   binary
