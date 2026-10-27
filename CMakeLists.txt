@@ -925,7 +925,7 @@ set_tests_properties(test_adjacent_bem PROPERTIES TIMEOUT 900)
 add_test(NAME test_amg COMMAND test_amg)
 set_tests_properties(test_amg PROPERTIES TIMEOUT 900)
 add_test(NAME test_ams_preconditioner COMMAND test_ams_preconditioner)
-set_tests_properties(test_ams_preconditioner PROPERTIES TIMEOUT 900)
+set_tests_properties(test_ams_preconditioner PROPERTIES LABELS "host" TIMEOUT 900)
 add_test(NAME test_discrete_gradient COMMAND test_discrete_gradient)
 set_tests_properties(test_discrete_gradient PROPERTIES TIMEOUT 900)
 add_test(NAME test_biot_savart COMMAND test_biot_savart)
@@ -935,6 +935,7 @@ set_tests_properties(test_mesh_refinement PROPERTIES TIMEOUT 900)
 
 # Baut genau die Tests mit der Marke "host".
 add_custom_target(host_tests DEPENDS
+    test_ams_preconditioner
     test_nedelec_orientation
     test_edge_sign_convention
     test_curl_gradient_nullspace
