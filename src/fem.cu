@@ -1172,7 +1172,7 @@ int mainloop(int argc, char** argv) {
         // Baum-Koordinatenmaske auf. Mit einer Maske aus lauter false wird
         // k_project_gauge zur Identitaet, die Kohomologie-Projektion bleibt aber
         // vollstaendig erhalten. Genau das ist gewollt: AMS deckt die
-        // Gradientenmoden ab, die harmonischen Felder der drei Volltori nicht.
+        // Gradientenmoden ab, die harmonischen Felder der zwei Volltori (Ringspulen) nicht.
         for (int i = 0; i < total_dofs; ++i)
             d_is_gauged[i] = bf::no_gauge() ? 0 : gauge.is_gauged[i];
         d_is_gauged.prefetch_to_device();
@@ -1662,8 +1662,9 @@ int mainloop(int argc, char** argv) {
             //
             // Die Kohomologie-Projektoren bleiben in BEIDEN Faellen aktiv: AMS
             // deckt die Gradientenmoden ab, nicht die harmonischen Felder, und
-            // die gibt es hier wegen der drei Volltori (Platte mit Bohrung,
-            // zwei Ringspulen).
+            // die gibt es hier wegen der zwei Volltori (die beiden Ringspulen;
+            // die Platte ist eine Vollscheibe ohne Loch und traegt keinen bei --
+            // der Loeser findet entsprechend genau 2 Kohomologie-Generatoren).
             if (bf::no_gauge()) {
                 std::cout << "[Gauge] --nogauge: Maske ist leer, die "
                              "Baum-Kobaum-Eichung wirkt damit nicht. "
@@ -3356,7 +3357,9 @@ int mainloop(int argc, char** argv) {
                         // Zahl ist null. Hat das Plattennetz ein Loch auf der
                         // Achse -- check_map meldet r_min = 0,5 mm --, ist die
                         // Platte topologisch ein Volltorus und es gibt genau
-                        // einen Generator.
+                        // einen Generator. Ein solches Netz entspricht nicht dem
+                        // Benchmark: TEAM 28 hat KEIN Loch in der Platte (ein
+                        // Loch steht im Paper nur als Ausblick).
                         // Die Generatorensuche laeuft als AUSKUNFT, nicht als
                         // Bedingung -- und sie darf den Lauf nicht abbrechen.
                         //

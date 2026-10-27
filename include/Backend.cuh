@@ -123,7 +123,7 @@ extern double g_plate_z_mm;
 /// (nachgemessen: G^T b/||b|| = 2.1e-4), und ein AMS-Vorkonditionierer kommt
 /// damit zurecht, ILU(0) nicht. Die Kohomologie-Projektoren bleiben in beiden
 /// Faellen aktiv -- AMS deckt Gradienten ab, nicht die harmonischen Felder der
-/// drei Volltori.
+/// zwei Volltori (die Ringspulen; die Platte ist eine Vollscheibe).
 extern bool g_no_gauge;
 
 /// --ams. Auxiliary-Space Maxwell Solver statt ILU(0) als

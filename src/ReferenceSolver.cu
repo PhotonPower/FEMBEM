@@ -1196,15 +1196,15 @@ int run_reference_solver(Mesh& mesh,
             d_A.prefetch_to_host();
             bf::sync();
 
-            // Die achsennaechsten Plattenelemente heraussuchen. Das Netz hat
-            // eine kleine zentrale Bohrung (Innenradius 1.84 mm, ein
-            // ueblicher O-Netz-Artefakt), es gibt also keine Knoten bei r = 0.
-            // Die innersten Elementmitten liegen bei r ~ 1.6 mm; dort ist B_z
-            // bis auf O((r/L)^2) ~ 0.2 % der Achsenwert, was gegenueber den
-            // gesuchten Abweichungen von zehn Prozent nicht ins Gewicht faellt.
-            // Auswertepunkte: innerster Plattenelementring. Begruendung zur
-            // zentralen Bohrung und zum O((r/L)^2)-Fehler in
-            // include/FieldVerification.cuh.
+            // Die achsennaechsten Plattenelemente heraussuchen. Die Platte ist
+            // eine VOLLSCHEIBE ohne Bohrung (TEAM 28 hat kein Loch). Im
+            // Standardnetz ueberdeckt je Lage eine Mittelzelle die Achse; es
+            // liegt nur kein Knoten genau auf ihr (der naechste bei r = 1.84 mm).
+            // Die Schwerpunkte dieser Mittelzellen liegen bei r ~ 1.6 mm; dort
+            // ist B_z bis auf O((r/L)^2) ~ 0.2 % der Achsenwert, was gegenueber
+            // den gesuchten Abweichungen von zehn Prozent nicht ins Gewicht
+            // faellt. Auswertepunkte: die achsennaechsten Plattenelemente.
+            // Begruendung zum O((r/L)^2)-Fehler in include/FieldVerification.cuh.
             std::vector<FieldSample> samples;
             double r_min = 1e30;
             for (int h : plate.get_hex_indices()) {
