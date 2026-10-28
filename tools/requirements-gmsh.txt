@@ -1,0 +1,5 @@
+# Python-Pakete fuer die Gmsh-Werkzeuge (tools/gmsh/). Getestete Version
+# festgehalten; die Netze sollen reproduzierbar bleiben.
+#   python3 -m venv ~/venv-gmsh && ~/venv-gmsh/bin/pip install -r tools/requirements-gmsh.txt
+gmsh==4.15.2
+numpy

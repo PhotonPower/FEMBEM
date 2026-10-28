@@ -990,4 +990,68 @@ add_custom_target(host_tests DEPENDS
     test_fem_direct_preflight
 )
 
+
+# ----------------------------------------------------------------------------
+# Python-Werkzeuge (tools/): nur registrieren, wenn Python und die Pakete
+# vorhanden sind. Ohne sie bleiben die C++-Tests unveraendert.
+#
+#   ctest --test-dir build -L tools     # Pruefmodule (braucht numpy)
+#   ctest --test-dir build -L gmsh      # Netzgenerator (braucht gmsh)
+#
+# Ein anderes Python (z. B. eine virtuelle Umgebung mit gmsh) waehlt
+#   -DPython3_EXECUTABLE=~/venv-gmsh/bin/python
+# ----------------------------------------------------------------------------
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(_fembem_py_numpy 1)
+set(_fembem_py_gmsh 1)
+if (Python3_Interpreter_FOUND)
+    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import numpy"
+                    RESULT_VARIABLE _fembem_py_numpy OUTPUT_QUIET ERROR_QUIET)
+    execute_process(COMMAND ${Python3_EXECUTABLE} -c "import gmsh"
+                    RESULT_VARIABLE _fembem_py_gmsh OUTPUT_QUIET ERROR_QUIET)
+endif()
+
+set(_tools ${CMAKE_CURRENT_SOURCE_DIR}/tools)
+if (_fembem_py_numpy EQUAL 0)
+    add_test(NAME tools_meshcheck_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_meshcheck.py)
+    add_test(NAME tools_check_map_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_check_map.py)
+    add_test(NAME tools_standard_mesh
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/meshcheck.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk
+                     --require-hex --separate-bodies)
+    set_tests_properties(tools_meshcheck_tests tools_check_map_tests tools_standard_mesh
+                         PROPERTIES LABELS "tools" TIMEOUT 120)
+    message(STATUS "FEMBEM: Tests tools  aktiv (${Python3_EXECUTABLE})")
+else()
+    message(STATUS "FEMBEM: Tests tools  aus (Python mit numpy nicht gefunden)")
+endif()
+
+if (_fembem_py_numpy EQUAL 0 AND _fembem_py_gmsh EQUAL 0)
+    # Jeder Lauf prueft das erzeugte Netz selbst und endet bei einem Fehler
+    # mit 1 (tools/gmsh/team28_hex.py).
+    add_test(NAME gmsh_team28_hex
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_hex.py -o gmsh_team28_hex.vtk)
+    add_test(NAME gmsh_team28_hex_coarse
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_hex.py --scale 0.5
+                     -o gmsh_team28_hex_coarse.vtk)
+    add_test(NAME gmsh_team28_hex_variant
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_hex.py --n-quarter 9
+                     --plate-grading 0.85 --plate-z0 9.8 -o gmsh_team28_hex_variant.vtk)
+    add_test(NAME gmsh_team28_fem_air_coarse
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_fem_air.py --scale 0.5
+                     -o gmsh_team28_fem_air_coarse.vtk)
+    add_test(NAME gmsh_team28_fem_air_truncation2
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_fem_air.py --scale 0.5
+                     --truncation 2 --plate-z0 11.3 -o gmsh_team28_fem_air_t2.vtk)
+    set_tests_properties(gmsh_team28_hex gmsh_team28_hex_coarse gmsh_team28_hex_variant
+                         gmsh_team28_fem_air_coarse gmsh_team28_fem_air_truncation2
+                         PROPERTIES LABELS "gmsh" TIMEOUT 300)
+    message(STATUS "FEMBEM: Tests gmsh   aktiv")
+else()
+    message(STATUS "FEMBEM: Tests gmsh   aus (Python-Paket gmsh nicht gefunden; "
+                   "-DPython3_EXECUTABLE=<python mit gmsh>)")
+endif()
+
 endif()  # FEMBEM_BUILD_TESTS (CTest)

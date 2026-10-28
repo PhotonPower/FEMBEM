@@ -1193,9 +1193,13 @@ int mainloop(int argc, char** argv) {
                               ? CohomologyGaugeResult{}
                               : find_cohomology_generators(
             mesh, gauge, d_materials.data(), 0.0);
+        // Erwartet fuer TEAM 28: im BEM-FEM-Pfad 2 (je Ringspule ein
+        // Volltorus-Loch), im FEM-direkt-Pfad mit Luft 0 (leitend ist nur die
+        // Platte, und die ist eine Vollscheibe). Ein Loch in der Platte gaebe
+        // einen mehr -- und entspraeche nicht dem Benchmark.
         std::cout << "[Gauge] " << cohomology.generators.size()
-                  << " Kohomologie-Generatoren gefunden (ein Volltorus-Loch je "
-                     "Ringspule).\n";
+                  << " Kohomologie-Generatoren gefunden (TEAM 28: BEM-FEM 2, "
+                     "einer je Ringspule; FEM-direkt mit Luft 0).\n";
 
         // Auf den Baum-Koordinaten null setzen (siehe CohomologyGauge.h,
         // "Anwendung als Eichung") -- sonst waere die Gesamtprojektion
@@ -4542,8 +4546,19 @@ int mainloop(int argc, char** argv) {
                         std::cout << "[FEM-direkt]   M = (" << res[0][3] << ", "
                                   << res[0][4] << ", " << res[0][5]
                                   << ") Nm um den Plattenschwerpunkt\n";
-                        std::cout << "[FEM-direkt]   F_z = " << res[0][2]
-                                  << " N  <== die Levitationskraft\n";
+                        {
+                            // Sechs Stellen, unabhaengig von der Genauigkeit, die
+                            // eine fruehere Ausgabe am Stream eingestellt hat: mit
+                            // drei Stellen lassen sich Messreihen (Abschneidestudie,
+                            // 1,06 gegen 1,04 N) nicht hochrechnen.
+                            const auto fl = std::cout.flags();
+                            const auto pr = std::cout.precision();
+                            std::cout << "[FEM-direkt]   F_z = " << std::defaultfloat
+                                      << std::setprecision(6) << res[0][2]
+                                      << " N  <== die Levitationskraft\n";
+                            std::cout.flags(fl);
+                            std::cout.precision(pr);
+                        }
 
                         // Gegenprobe. Die Differenz ist der Beitrag der
                         // kuenstlich leitenden Gebiete. Sie MUSS klein gegen

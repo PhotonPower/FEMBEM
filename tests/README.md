@@ -18,6 +18,8 @@ ctest --test-dir build --output-on-failure
 | Marke | Bedeutung |
 |---|---|
 | `host` | Läuft ohne GPU und ohne Dateien von der Platte; baut Netze und Matrizen selbst. Geeignet für CI. |
+| `tools` | Python-Prüfmodule für Netze (`tools/tests/`), brauchen numpy; nur registriert, wenn Python mit numpy gefunden wird. |
+| `gmsh` | Netzgenerator `tools/gmsh/team28_hex.py`, prüft jedes erzeugte Netz; nur registriert, wenn das Python-Paket gmsh gefunden wird (`-DPython3_EXECUTABLE=...`). |
 | (keine) | Braucht teils eine GPU, teils das Netz `team28.vtk`. Das Netz liegt nach dem Konfigurieren im Build-Verzeichnis, CTest startet die Tests dort. |
 
 `host_tests` ist ein CMake-Ziel, das genau die Tests mit der Marke `host`

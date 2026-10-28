@@ -96,7 +96,8 @@ FEMBEM/
 ├── src/                  Implementierung (.cpp, .cu); Einstieg: main.cpp -> fem.cu
 ├── include/              Header, je Modul mit erklärendem Kopfkommentar
 ├── tests/                Testprogramme, bei CTest registriert
-├── tools/                Python-Werkzeuge: Netzimport, Netzstudie, Plots
+├── tools/                Python-Werkzeuge: Netzprüfung, Netzimport, Plots
+│   ├── gmsh/             Netze mit Gmsh erzeugen
 │   └── plot/
 ├── data/team28/          Standardnetz und Vergleichsdaten zu TEAM 28
 └── docs/
@@ -108,7 +109,8 @@ FEMBEM/
 
 ## Dokumentation
 
-Einstieg und Übersicht: [docs/README.md](docs/README.md). Die LaTeX-Dokumente
+Einstieg und Übersicht: [docs/README.md](docs/README.md). Netze erzeugen und
+prüfen: [docs/meshing.md](docs/meshing.md). Die LaTeX-Dokumente
 lassen sich mit `make -C docs` zu PDF übersetzen.
 
 ## Mitmachen
