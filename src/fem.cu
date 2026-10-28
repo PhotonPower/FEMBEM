@@ -4098,8 +4098,19 @@ int mainloop(int argc, char** argv) {
                         std::cout << "[FEM-direkt]   M = (" << res[0][3] << ", "
                                   << res[0][4] << ", " << res[0][5]
                                   << ") Nm um den Plattenschwerpunkt\n";
-                        std::cout << "[FEM-direkt]   F_z = " << res[0][2]
-                                  << " N  <== die Levitationskraft\n";
+                        {
+                            // Sechs Stellen, unabhaengig von der Genauigkeit, die
+                            // eine fruehere Ausgabe am Stream eingestellt hat: mit
+                            // drei Stellen lassen sich Messreihen (Abschneidestudie,
+                            // 1,06 gegen 1,04 N) nicht hochrechnen.
+                            const auto fl = std::cout.flags();
+                            const auto pr = std::cout.precision();
+                            std::cout << "[FEM-direkt]   F_z = " << std::defaultfloat
+                                      << std::setprecision(6) << res[0][2]
+                                      << " N  <== die Levitationskraft\n";
+                            std::cout.flags(fl);
+                            std::cout.precision(pr);
+                        }
 
                         // Gegenprobe. Die Differenz ist der Beitrag der
                         // kuenstlich leitenden Gebiete. Sie MUSS klein gegen

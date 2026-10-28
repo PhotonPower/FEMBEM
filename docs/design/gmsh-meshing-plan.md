@@ -78,7 +78,7 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 | 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0) | **abgeschlossen**, siehe „Ergebnis Phase 3“ unten |
 | 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | offen |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | **abgeschlossen** bis auf den CHANGELOG-Eintrag: der folgt beim Zusammenführen, um einen Konflikt mit offenen PRs zu vermeiden |
-| 6 | optional: Netzserie auf dem Server rechnen — hängt die Stagnation des Lösers vom Netz ab? | offen |
+| 6 | Netz- und Abschneideserien auf dem Server | **begonnen**: FEM-direkt konvergiert am Gleichgewicht gegen den Sollwert, siehe [gmsh-phase6-report.md](gmsh-phase6-report.md) |
 
 ## Ergebnis Phase 1
 
