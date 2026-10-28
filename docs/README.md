@@ -13,6 +13,7 @@ das Paket `babel-german`, ohne es bleibt die Trennung englisch).
 | Dokument | Inhalt |
 |---|---|
 | [architecture.md](architecture.md) | Module, Datenfluss, wo was im Quelltext liegt |
+| [meshing.md](meshing.md) | Netze: Format, Regeln (u. a. kein Loch in der Platte), Prüfen, Erzeugen mit Gmsh |
 | **Theorie** | |
 | [theory/solver-overview.tex](theory/solver-overview.tex) | Überblick über das TEAM-28-Modell und die numerische Pipeline |
 | [theory/numerics-and-gpu.tex](theory/numerics-and-gpu.tex) | Theorie, Numerik und GPU-Beschleunigung |
@@ -24,6 +25,9 @@ das Paket `babel-german`, ohne es bleibt die Trennung englisch).
 | [design/fem-direct-plan.md](design/fem-direct-plan.md) | Plan und Messreihen für den FEM-direkt-Pfad |
 | [design/bem-block-preconditioning.md](design/bem-block-preconditioning.md) | Vorkonditionierung des BEM-Blocks |
 | [design/nan-and-thresholds.md](design/nan-and-thresholds.md) | Vergleiche, die NaN nicht sehen: Muster und Durchsicht des Codes |
+| [design/gmsh-meshing-plan.md](design/gmsh-meshing-plan.md) | Vernetzung mit Gmsh: feste Entscheidungen (u. a. **kein Loch in der Platte**) und Phasen |
+| [design/gmsh-phase0-report.md](design/gmsh-phase0-report.md) | Gmsh, Phase 0: Prototyp, Messungen, Vergleich mit dem Standardnetz |
+| [design/gmsh-phase6-report.md](design/gmsh-phase6-report.md) | Gmsh, Phase 6: FEM-direkt am Gleichgewicht, Netzfeinheit und Größe des Luftgebiets |
 
 Die Berichte und Arbeitsnotizen halten fest, was zu einem bestimmten Zeitpunkt
 gemessen wurde. Zahlen darin gelten für den damaligen Code und das damalige

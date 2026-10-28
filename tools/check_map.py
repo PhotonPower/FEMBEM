@@ -67,15 +67,45 @@ VTK_NAMES = {10: "Tetraeder", 12: "Hexaeder", 13: "Prisma", 14: "Pyramide"}
 # (team28_simple_air.bdf gegen team28_simple_air_113.bdf). Eine feste
 # z-Erwartung dort wuerde bei jedem neuen Netz falsch anschlagen.
 #
-# r_min der Platte wird ebenfalls nicht geprueft: sie ist eine Scheibe, ihr
-# innerer Rand ist eine Vernetzungsfrage (in team28.vtk liegt er bei r = 1.8)
-# und keine Massangabe.
+# r_min der Platte wird nicht als Mass geprueft. Der kleinste Knotenradius
+# sagt nichts ueber ein Loch: im Standardnetz team28.vtk liegt er bei
+# r = 1,84 mm, weil dort eine Mittelzelle die Achse ueberdeckt, deren naechste
+# Ecke so weit aussen liegt (die uebrigen bis 4,8 mm) -- die Platte ist
+# trotzdem eine Vollscheibe. TEAM 28 hat kein Loch; ein Loch steht im Paper
+# nur als Ausblick.
+#
+# Stattdessen wird geprueft, dass die Platte die Achse UEBERDECKT (Knoten auf
+# der Achse oder eine Zelle, deren Grundriss die Achse umschliesst). Ein Loch
+# ist ausgeschlossen: es aendert die Topologie (ein zusaetzlicher
+# Kohomologie-Generator, die Platte wird zum Volltorus) und die Geometrie.
+# Siehe docs/design/gmsh-meshing-plan.md.
 EXPECTED = {
     1: ("Aussenspule", (80.0, 95.0), (-52.0, 0.0)),
     2: ("Innenspule", (27.0, 55.0), (-52.0, 0.0)),
     3: ("Platte", (None, 65.0), None),
 }
 PLATTENDICKE = 3.0   # mm
+
+
+def covers_axis(pts, cells, idx, tol=1e-9):
+    """True, wenn die Zellen idx die z-Achse ueberdecken (Vollscheibe).
+
+    Entweder liegt ein Knoten auf der Achse, oder der Grundriss einer Zelle
+    enthaelt sie: dann haben die Knotenwinkel um die Achse keine Luecke
+    groesser als pi (die Achse liegt in der konvexen Huelle oder auf ihrem
+    Rand). Eine Luecke von genau pi heisst: die Achse liegt auf einer Kante
+    zwischen zwei Zellen -- auch das ist eine Vollscheibe.
+    """
+    for i in idx:
+        xy = pts[cells[i]][:, :2]
+        r = np.hypot(xy[:, 0], xy[:, 1])
+        if (r < tol).any():
+            return True
+        ang = np.sort(np.arctan2(xy[:, 1], xy[:, 0]))
+        gaps = np.diff(np.concatenate([ang, ang[:1] + 2 * np.pi]))
+        if gaps.max() <= np.pi + 1e-9:
+            return True
+    return False
 
 
 def main(path):
@@ -113,6 +143,10 @@ def main(path):
             elif int(cid) == 3:
                 # Statt der Hoehe die Dicke pruefen -- die aendert sich nicht
                 ok = ok and abs((z.max() - z.min()) - PLATTENDICKE) < 0.5
+                # Vollscheibe: die Platte muss die Achse ueberdecken (kein Loch)
+                if not covers_axis(pts, cells, idx):
+                    ok = False
+                    name = "Platte (LOCH auf der Achse -- ausgeschlossen)"
             if not ok:
                 verdict = f"{name}  <== PASST NICHT"
                 beanstandet.append(int(cid))
