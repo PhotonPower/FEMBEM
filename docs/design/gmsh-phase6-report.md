@@ -103,6 +103,35 @@ daher bei etwa 1,02–1,03 N liegen, 2–3 % unter dem Sollwert — abgeschätzt
 nicht gemessen. Der Sollwert selbst ist nur auf etwa 0,5 % genau (Masse
 0,107 kg auf drei Stellen).
 
+### Netzfeinheit am ausgeschöpften Luftgebiet (radial 7 / axial 10)
+
+| `--scale` | 0,75 | 1,0 |
+|---|---|---|
+| nnz(LU) | 2,35e9 | 6,22e9 |
+| F_z | 1,03822 N | **1,02702 N** |
+
+−1,1 % je Stufe, wie zuvor abgeschätzt. Bei `--scale 1.0` liegt F_z **2,2 %
+unter dem Sollwert** 1,0497 N. `--scale 1.25` (nnz(LU) über 8e9) lief nicht
+durch.
+
+Hochrechnung auf unendliche Feinheit aus diesen zwei Punkten: 0,99 N bei
+angenommener Konvergenzordnung 1, 1,01 N bei Ordnung 2. Die Ordnung ist aus
+zwei Punkten nicht bestimmbar; dazu fehlt ein dritter.
+
+### Startlage (Unterkante 3,8 mm, radial 7 / axial 10, `--scale 0,75`)
+
+F_z = **3,39048 N** (radial 3 / axial 3: 3,84 N; radial 3 / axial 10:
+3,48 N).
+
+### Abweichung als Schwebehöhe
+
+Aus Start- und Gleichgewichtslage folgt bei exponentiellem Abfall der Kraft
+eine Abklinglänge von 6,3 mm, also |dF/dz| ≈ 0,16 N/mm bei 11,3 mm. Das
+Kraftdefizit von 0,023 N (2,2 %) entspricht damit einer um **etwa 0,14 mm
+tieferen Schwebehöhe** (rund 11,16 statt 11,3 mm). Die Abschätzung beruht auf
+zwei Punkten und der Annahme exponentiellen Abfalls; eine lineare Verbindung
+der beiden Punkte gäbe die doppelte Steigung und die halbe Höhenabweichung.
+
 ## Folgerungen
 
 - Axial genügt Faktor 10. **Radial genügt Faktor 3 nicht** (eine frühere
@@ -117,9 +146,8 @@ nicht gemessen. Der Sollwert selbst ist nur auf etwa 0,5 % genau (Masse
 
 ## Nächste Messungen
 
-Mit dem gefundenen Luftgebiet (radial 7 / axial 10, um den Abschneidefehler
-ganz auszuschließen):
-
-- `--scale 1.0` und `1.25` am Gleichgewicht: der Beitrag der Netzfeinheit,
-  gemessen statt abgeschätzt (`FEMBEM_CUDSS_HYBRID=1`).
-- Startlage (`--plate-z0 3.8`).
+Offen ist die Konvergenzordnung in der Netzfeinheit. `--scale` verfeinert
+auch das Luftgebiet, das den Speicher bestimmt; `--scale 1.25` passt nicht
+mehr. Günstiger ist, gezielt die Platte zu verfeinern (`--plate-nz`, `--h`)
+bei grobem Außenraum, um zu sehen, welcher Teil der Auflösung die −1,1 % je
+Stufe trägt.
