@@ -66,26 +66,36 @@ dem Schreiben in die Konvention des Lösers gedreht.
 | `--h-air` | 35 | Kantenlänge am Außenrand der Luft, mm |
 | `--coil-nz`, `--gap-nz`, `--plate-nz` | 6, 3, 4 | Schichten über Spulenhöhe, Spalt und Plattendicke |
 | `--air-first`, `--air-growth` | 3, 1.4 | erste Luftschicht am Leiter (mm) und Wachstum nach außen |
-| `--truncation` | 3 | Abschneidefaktor radial und axial (einzeln: `--truncation-radial`, `--truncation-axial`) |
+| `--truncation-radial`, `--truncation-axial` | 5, 10 | Abschneidefaktor in x/y und in z (beide gleich: `--truncation`) |
 | `--plate-z0` | 3.8 | Unterkante der Platte in mm, muss > 0 sein |
 | `--scale` | 1.0 | Feinheit: teilt Kantenlängen, vervielfacht Schichtzahlen |
 
 Der Abschneidefaktor folgt der Definition des Programms (Ausdehnung der Luft /
-Ausdehnung der Leiter, je Achse; `FemDirectRun.cpp`). Das Programm warnt unter 2.
+Ausdehnung der Leiter, je Achse; `FemDirectRun.cpp`). Das Programm warnt unter 2,
+aber 2 oder 3 reichen bei weitem nicht: Die Vorgaben 5 / 10 stammen aus einer
+Messreihe am Schwebegleichgewicht ([Bericht](../../docs/design/gmsh-phase6-report.md)).
+Mit 3 / 3 lag F_z 24 % zu hoch; axial ist bei 10 ausgeschöpft, radial bei 7,
+radial 5 liegt 0,7 % daneben.
 
-Gemessene Größen (Prismen gesamt, davon Platte):
+Gemessene Größen mit den Vorgaben 5 / 10 (Prismen gesamt, davon Platte), dazu
+die Größe der Zerlegung aus Serverläufen (cuDSS, nnz(LU)):
 
-| Aufruf | Prismen | Platte | Blocksystem (2n) |
+| Aufruf | Prismen | Platte | nnz(LU) |
 |---|---|---|---|
-| `--scale 0.5` | 24 684 | | 104 106 Zeilen |
-| Vorgabe | 140 616 | 5 904 | |
-| `--truncation 2` / `5` | 96 416 / 249 798 | | |
-| `--plate-nz 6 --h 4` | 206 944 | | |
+| `--scale 0.5` | 52 300 | 812 | |
+| `--scale 0.75` | 131 544 | 2 484 | 1,5·10⁹ |
+| Vorgabe (`--scale 1`) | 282 030 | 5 904 | |
+
+Bei großen Zerlegungen `FEMBEM_CUDSS_HYBRID=1` setzen: cuDSS lagert dann Teile
+in den Hauptspeicher aus. `--scale 0.75` liegt bei der Kraft nur rund 1 % neben
+`--scale 1` und ist für Reihen die günstige Wahl.
 
 Die meisten Prismen liegen in der Luft: Jede Schicht, die Spulen und Platte
 auflöst, reicht radial durch das ganze Luftgebiet. Das ist der Preis des reinen
 Prismennetzes (AP2).
 
-Im Programm geprüft (grobes Netz): **0 Kohomologie-Generatoren**, wie für eine
-Vollscheibe mit Luft erwartet; die Vorprüfung des FEM-direkt-Pfads meldet
-keine Beanstandung und den eingestellten Abschneidefaktor.
+Im Programm geprüft: **0 Kohomologie-Generatoren**, wie für eine Vollscheibe
+mit Luft erwartet; die Vorprüfung des FEM-direkt-Pfads meldet keine
+Beanstandung und den eingestellten Abschneidefaktor. Am Schwebegleichgewicht
+(`--plate-z0 11.3`) liefert der Lauf F_z = 1,037 N bei ausgeschöpftem
+Luftgebiet und `--scale 0.75`, Sollwert 1,0497 N.

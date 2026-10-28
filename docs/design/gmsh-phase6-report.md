@@ -85,22 +85,41 @@ einige Prozent zu hoch. Nebenbei: Startlage und radial 3 / axial 7 haben
 dieselbe nnz(LU), weil beide Netze gleich viele Luftschichten haben (je 10;
 die Schichten wachsen nach außen geometrisch).
 
+### Radial bei axial 10 (`--scale 0,75`)
+
+| radial | 3 | 5 | 7 | 10 |
+|---|---|---|---|---|
+| nnz(LU) | 9,0e8 | 1,49e9 | 2,35e9 | 4,08e9 |
+| F_z | 1,09881 N | 1,04469 N | 1,03822 N | **1,03707 N** |
+
+Radial ist bei Faktor 7 ausgeschöpft (7 → 10: −0,1 %); 5 liegt 0,7 % daneben.
+Radial 15 (nnz(LU) 8,4e9) lieferte nach der Zerlegung keine Kraft mehr
+(Abbruch, vermutlich Speicher oder Laufzeit).
+
+**Mit ausgeschöpftem Luftgebiet ist F_z = 1,037 N bei `--scale 0,75`, 1,2 %
+unter dem Sollwert 1,0497 N.** Die Netzfeinheit senkt die Kraft je Stufe um
+etwa 1 % (gemessen an kleineren Luftgebieten); voll konvergiert dürfte F_z
+daher bei etwa 1,02–1,03 N liegen, 2–3 % unter dem Sollwert — abgeschätzt, noch
+nicht gemessen. Der Sollwert selbst ist nur auf etwa 0,5 % genau (Masse
+0,107 kg auf drei Stellen).
+
 ## Folgerungen
 
 - Axial genügt Faktor 10. **Radial genügt Faktor 3 nicht** (eine frühere
   Fassung dieses Berichts behauptete das; der radiale Fehler war nur vom
-  axialen verdeckt). Wie viel radial nötig ist, zeigt die nächste Reihe.
-- Die Vorgabe des Generators (3 / 3) überschätzt F_z am Gleichgewicht um rund
-  24 %. Sie sollte axial 10 werden, radial nach der nächsten Reihe.
+  axialen verdeckt). Radial ist bei 7 ausgeschöpft, 5 liegt 0,7 % daneben.
+- Die frühere Vorgabe des Generators (3 / 3) überschätzte F_z am Gleichgewicht
+  um rund 24 %. **Neue Vorgabe: radial 5, axial 10** (0,7 % vom ausgeschöpften
+  Wert, deutlich billiger als 7 / 10).
 - Eine Hochrechnung auf ein unendliches Luftgebiet aus 5 / 7 / 10 ergibt etwa
   1,01 bis 1,03 N; die Spanne kommt vor allem von der Rundung auf drei
   Stellen.
 
 ## Nächste Messungen
 
-`--plate-z0 11.3 --scale 0.75`, axial 10:
+Mit dem gefundenen Luftgebiet (radial 7 / axial 10, um den Abschneidefehler
+ganz auszuschließen):
 
-- radial 5, 7, 10, 15 — wie viel radial ist nötig? (radial 10 / axial 10
-  zur Kontrolle neu mit sechs Stellen)
-- danach das gefundene Luftgebiet mit `--scale 1.0` und `1.25`, um den
-  Beitrag der Netzfeinheit abzuschätzen, und die Startlage.
+- `--scale 1.0` und `1.25` am Gleichgewicht: der Beitrag der Netzfeinheit,
+  gemessen statt abgeschätzt (`FEMBEM_CUDSS_HYBRID=1`).
+- Startlage (`--plate-z0 3.8`).

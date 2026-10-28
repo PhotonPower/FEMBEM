@@ -43,7 +43,10 @@ Legacy-VTK, ASCII, `UNSTRUCTURED_GRID` (`src/VtkReader.cpp`):
    (`component_id` 0); dort sitzt die Randbedingung A × n = 0. Prismen müssen
    affin sein (senkrecht extrudiert), sonst bleibt ein Fehler, der linear mit
    der Verzerrung wächst. Der Abschneidefaktor (Ausdehnung Luft / Ausdehnung
-   Leiter) sollte mindestens 2 sein; das Programm warnt darunter.
+   Leiter) braucht **radial mindestens 5 und axial 10**: Mit 3 / 3 lag die
+   Kraft am Schwebegleichgewicht 24 % zu hoch (Messreihe in
+   [design/gmsh-phase6-report.md](design/gmsh-phase6-report.md)). Das Programm
+   warnt erst unter 2.
 6. **Konform, richtig orientiert:** jede Fläche gehört höchstens zwei Zellen,
    die Jacobi-Determinante ist an allen Ecken positiv.
 
@@ -83,12 +86,10 @@ Gmsh braucht auch ohne Grafik die GL-Laufzeitbibliotheken (Ubuntu:
 `libglu1-mesa`, `libgl1` und einige X-Bibliotheken; RHEL: vermutlich
 `mesa-libGLU`).
 
-Für den FEM-direkt-Pfad mit Luftgebiet, auch als Abschneidestudie:
+Für den FEM-direkt-Pfad mit Luftgebiet (Vorgabe radial 5 / axial 10):
 
     ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py -o team28_fem_air.vtk
-    for t in 2 3 5; do
-        ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py --truncation $t -o kasten_$t.vtk
-    done
+    ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py --plate-z0 11.3 --scale 0.75 -o gleichgewicht.vtk
 
 Eine Netzserie für die Frage, ob das Verhalten des Lösers von der
 Netzfeinheit abhängt:

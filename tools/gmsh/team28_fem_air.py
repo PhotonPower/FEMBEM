@@ -296,9 +296,13 @@ def main():
     ap.add_argument("--air-first", type=float, default=3.0, help="erste Luftschicht am Leiter, mm")
     ap.add_argument("--air-growth", type=float, default=1.4, help="Wachstum der Luftschichten nach aussen")
     ap.add_argument("--truncation", type=float, default=None,
-                    help="Abschneidefaktor radial UND axial (Kurzform)")
-    ap.add_argument("--truncation-radial", type=float, default=3.0, help="Abschneidefaktor in x und y")
-    ap.add_argument("--truncation-axial", type=float, default=3.0, help="Abschneidefaktor in z")
+                    help="Abschneidefaktor radial UND axial gleich (Kurzform)")
+    # Vorgaben aus der Messreihe in docs/design/gmsh-phase6-report.md: am
+    # Schwebegleichgewicht ist F_z axial bei 10 ausgeschoepft (10 -> 15:
+    # -0,08 %), radial bei 7 (7 -> 10: -0,1 %); radial 5 liegt 0,7 % daneben
+    # und kostet deutlich weniger. Mit 3 / 3 lag F_z 24 % zu hoch.
+    ap.add_argument("--truncation-radial", type=float, default=5.0, help="Abschneidefaktor in x und y")
+    ap.add_argument("--truncation-axial", type=float, default=10.0, help="Abschneidefaktor in z")
     ap.add_argument("--plate-z0", type=float, default=3.8, help="Unterkante der Platte in mm, > 0")
     ap.add_argument("--scale", type=float, default=1.0,
                     help="Feinheit: teilt Kantenlaengen, vervielfacht Schichtzahlen (Netzserie)")
