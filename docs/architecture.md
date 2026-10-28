@@ -34,6 +34,7 @@ dieser Reihenfolge:
 | **Löser** | `CoupledSolver`, `TransientSolver` | gekoppeltes System (GMRES), impliziter Euler, Maxwell-Spannungstensor |
 | **Harmonisch** | `HarmonicSolver`, `HarmonicBlockSystem`, `HarmonicLorentz`, `HarmonicMaxwell`, `HarmonicPhaseAverage` | eingeschwungener Zustand, reelle 2n-Blockform, zeitgemittelte Kraft |
 | **FEM-direkt** | `FemDirectBC`, `FemDirectRun`, `SparseDirectSolver` | Dirichlet-Rand, Vorbedingungen, dünn besetzter Direktlöser (cuDSS, optional) |
+| **Knotenbasis** | `NodalDispatch`, `NodalHexahedron` | skalare Knotenformfunktionen und ihre physikalischen Gradienten für alle Elementtypen; Grundlage des vektoriellen AMS-Hilfsraums und des Referenzlösers |
 | **Vorkonditionierer** | `AmsPreconditioner`, `AlgebraicMultigrid`, `BlockPreconditionerStudy`, `RitzSpectrum` | AMS auf Aggregations-AMG, Deckenmessung für den BEM-Block, Konditionsschätzung |
 | **Referenz** | `ReferenceSolver`, `NodalHexahedron`, `NodalBem`, `NodalMaxwell`, `DenseLinalg`, `BiotSavart`, `FieldVerification` | unabhängige Zweitrechnung mit Knotenelementen und vollbesetzter BEM, analytisches Quellfeld |
 | **Backend** | `Backend`, `DeviceArray`, `HostLinalg` | GPU/CPU-Umschaltung, Speicher, CPU-Ersatz für cuBLAS und cuSPARSE |

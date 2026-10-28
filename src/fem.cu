@@ -1157,8 +1157,8 @@ int mainloop(int argc, char** argv) {
                               : build_tree_cotree_gauge(mesh, d_materials.data(), 0.0);
         d_materials.prefetch_to_device();
         if (bf::want_fem_direct()) {
-            std::cout << "[Gauge] uebersprungen (--fem-direct regularisiert "
-                         "stattdessen).\n";
+            std::cout << "[Gauge] uebersprungen -- --fem-direct behandelt den "
+                         "Nullraum selbst (--fem-direct-nullspace).\n";
         } else
         std::cout << "[Gauge] " << gauge.num_gauged << " von " << total_dofs
                   << " Freiheitsgraden geeicht (Nullraumdimension). "
@@ -1673,7 +1673,12 @@ int mainloop(int argc, char** argv) {
                 std::cout << "[Gauge] --nogauge: Maske ist leer, die "
                              "Baum-Kobaum-Eichung wirkt damit nicht. "
                              "Kohomologie-Projektoren bleiben aktiv.\n";
-                if (!bf::use_ams()) {
+                // Bei --fem-direct ist no_gauge() automatisch gesetzt, ohne
+                // dass jemand --nogauge geschrieben haette, und der Pfad baut
+                // seinen eigenen Loeser samt eigenem Vorkonditionierer. Die
+                // Warnung waere dort ein Fehlalarm ueber einen ILU(0), der gar
+                // nicht zum Einsatz kommt.
+                if (!bf::use_ams() && !bf::want_fem_direct()) {
                     std::cout << "[Gauge] WARNUNG: --nogauge ohne --ams. ILU(0) "
                                  "konvergiert auf dem ungeeichten System nicht.\n";
                 }
@@ -3323,10 +3328,51 @@ int mainloop(int argc, char** argv) {
                     // Preflight zur Nachbedingung: beanstandet sie danach
                     // noch etwas, hat die Regularisierung ein Gebiet nicht
                     // erfasst. Das ist die nuetzlichere Aussage.
-                    // --- 1. Nullraum beseitigen: Regularisierung ODER Eichung
-                    // Beides zugleich waere sinnlos: die Eichung waehlt ihren
+                    // --- 1. Nullraum: Regularisierung, Eichung ODER AMS ---
+                    // Die drei schliessen einander aus, siehe
+                    // FemDirectNullspace in Backend.cuh. Regularisierung und
+                    // Eichung zugleich waeren sinnlos: die Eichung waehlt ihren
                     // Baum ueber kappa == 0, und nach der Regularisierung hat
                     // kein Element mehr kappa == 0 -- der Baum bliebe leer.
+                    const bool use_ams_nullspace = bf::fem_direct_ams();
+
+                    // Zwei Vorbedingungen des AMS-Modus, beide hart. Sie stehen
+                    // hier und nicht erst beim Loeser: eine Rechnung, die 20
+                    // Minuten assembliert und dann abbricht, ist aergerlich,
+                    // eine, die durchlaeuft und ein falsches Ergebnis liefert,
+                    // ist schlimmer.
+                    if (use_ams_nullspace) {
+                        if (!bf::fem_direct_iterative()) {
+                            // Kann nur eintreten, wenn die Argumente den
+                            // iterativen Weg nach --fem-direct-ams wieder
+                            // abgeschaltet haben.
+                            std::cout << "[FEM-direkt] ABBRUCH: --fem-direct-ams "
+                                         "verlangt den iterativen Loeser. Ohne "
+                                         "Regularisierung und ohne Eichung ist die "
+                                         "2n-Blockform echt singulaer; cuDSS "
+                                         "pivotiert darauf ins Nichts und meldet es "
+                                         "NICHT -- auf diesem Pfad ist eine "
+                                         "singulaere Matrix schon einmal mit "
+                                         "info = 0 zerlegt worden.\n";
+                            return 1;
+                        }
+                        if (!bf::fem_direct_project()) {
+                            std::cout << "[FEM-direkt] ABBRUCH: --fem-direct-ams und "
+                                         "--fem-direct-no-project sind unvertraeglich. "
+                                         "Das singulaere System ist nur loesbar, wenn "
+                                         "die rechte Seite konsistent ist, also "
+                                         "G^T b = 0 -- und genau das stellt die "
+                                         "Projektion her (gemessen 6e-16 gegen "
+                                         "6,1e-03 ohne).\n";
+                            return 1;
+                        }
+                        std::cout << "[FEM-direkt] Nullraummodus AMS: KEINE "
+                                     "Regularisierung, KEINE Eichung. Das System "
+                                     "bleibt singulaer und konsistent; den "
+                                     "Gradientenraum traegt der vektorielle "
+                                     "AMS-Hilfsraum.\n";
+                    }
+
                     std::vector<char> gauged_edges;   // leer = keine Eichung
 
                     if (bf::fem_direct_gauge()) {
@@ -3413,7 +3459,7 @@ int mainloop(int argc, char** argv) {
                                          "Baumeichung ausreichend."
                                       << std::endl;
                         }
-                    } else {
+                    } else if (!use_ams_nullspace) {
                         const double sigma_ref = plate.get_properties().kappa;
                         const double eps = bf::fem_direct_eps();
                         const size_t changed = fem_direct::regularize_nonconducting_regions(
@@ -3422,6 +3468,36 @@ int mainloop(int argc, char** argv) {
                                   << " Elemente auf sigma = " << eps << " * " << sigma_ref
                                   << " = " << eps * sigma_ref << " gesetzt"
                                   << " (--fem-direct-eps)\n";
+                    }
+
+                    // Gegenprobe zur Nichtleiter-Maske. Im AMS-Modus wird
+                    // nichts regularisiert, also MUSS kappa > 0 nach wie vor
+                    // genau die Leiter treffen -- d_regularized ist dann
+                    // redundant. Genau deshalb wird es geprueft und nicht
+                    // weggelassen: die Maske ist der einzige Schutz davor,
+                    // dass Luft und Spulen ins Kraftintegral laufen, und ihr
+                    // Beitrag betraegt regularisiert rund 1,9 N gegen eine
+                    // gesuchte Kraft von etwa 1 N. Faellt der Modus spaeter
+                    // einmal auf einen anderen Weg zurueck, schlaegt das hier
+                    // an und nicht erst an der Kraft.
+                    if (use_ams_nullspace) {
+                        size_t mismatched = 0;
+                        for (size_t h = 0; h < mesh.num_hexes; ++h) {
+                            const bool conducting = d_materials[static_cast<int>(h)].kappa > 0.0;
+                            if (conducting == (d_regularized[h] != 0)) ++mismatched;
+                        }
+                        if (mismatched) {
+                            std::cout << "[FEM-direkt] ABBRUCH: die Nichtleiter-Maske "
+                                         "passt auf " << mismatched
+                                      << " Elementen nicht mehr zu kappa. Im AMS-Modus "
+                                         "darf kappa unberuehrt bleiben; wird es das "
+                                         "nicht, laufen Luft und Spulen ins "
+                                         "Kraftintegral.\n";
+                            return 1;
+                        }
+                        std::cout << "[FEM-direkt] Nichtleiter-Maske stimmt mit kappa "
+                                     "ueberein (" << mesh.num_hexes
+                                  << " Elemente geprueft) -- kappa ist unberuehrt.\n";
                     }
 
                     // --- 2. Vorbedingungen -----------------------------------
@@ -3434,7 +3510,7 @@ int mainloop(int argc, char** argv) {
                         // Weg und falsch fuer diesen.
                         const auto pre = fem_direct::preflight_fem_direct(
                             mesh, d_materials.data(), 0, 2.0,
-                            bf::fem_direct_gauge());
+                            bf::fem_direct_nullspace_handled());
                         std::cout << pre.to_string();
                         truncation_min = pre.truncation_factor_min;
                         if (!pre.ok()) {
@@ -3501,11 +3577,27 @@ int mainloop(int argc, char** argv) {
                                   << "\n";
                         if (!(cmax > 0.0)) {
                             std::cout << "[FEM-direkt] ABBRUCH: C ist identisch null. "
-                                         "Dann ist K der ganze Operator und auf den "
-                                         "Gradienten der nichtleitenden Gebiete "
-                                         "singulaer. Die Regularisierung hat die "
-                                         "Assemblierung nicht erreicht.\n";
+                                         "Dann ist K der ganze Operator, das Problem "
+                                         "ist magnetostatisch und der Nullraum "
+                                         "umfasst die Gradienten des GANZEN Gebiets. "
+                                         "Erwartet wird ein Beitrag der Platte.\n";
                             return 1;
+                        }
+
+                        // Im AMS-Modus wechselt die BEDEUTUNG dieser Kennzahl,
+                        // nicht bloss ihr Wert. Regularisiert misst sie, ob
+                        // sigma_Luft die Assemblierung erreicht hat. Ohne
+                        // Regularisierung traegt nur die Platte zu C bei, und
+                        // dass der Quotient klein ist, ist dann kein Mangel,
+                        // sondern die Aufgabe: genau dieser Groessenunterschied
+                        // ist der Grund, warum ILU(0) hier scheitert und der
+                        // Gradientenraum einen eigenen Hilfsraum braucht.
+                        if (use_ams_nullspace) {
+                            std::cout << "[FEM-direkt]   ohne Regularisierung traegt "
+                                         "nur die Platte zu C bei. Der kleine Quotient "
+                                         "IST die Aufgabe, nicht der Fehler -- er ist "
+                                         "der Abstand, um den die Gradientenmoden unter "
+                                         "dem Rest des Spektrums liegen.\n";
                         }
                     }
 
@@ -3517,17 +3609,35 @@ int mainloop(int argc, char** argv) {
                     bf::memcpy_d(ci_h.data(), csr_matrix.col_indices.data(),
                                  ci_h.size() * sizeof(int), cudaMemcpyDeviceToHost);
 
+                    // Im AMS-Modus wird die 2n-Matrix NICHT gebaut. Der
+                    // C-to-R-Vorkonditionierer wendet H matrixfrei ueber (W+T)
+                    // und omega*C an, beide im n-Raum.
+                    //
+                    // Am Netz "Platte fein" (158 238 Kanten, nnz = 2 574 966)
+                    // sind das 4*nnz Werte: 82 MB Werte, 41 MB Spaltenindizes,
+                    // zusammen mit rhs, x und der Geraetekopie rund 260 MB, die
+                    // nichts tun. Der eigentliche Brocken ist ohnehin nicht die
+                    // Matrix, sondern der LU-Faktor von cuDSS darauf -- und den
+                    // gibt es hier gar nicht, weil der Direktloeser in diesem
+                    // Modus ausgeschlossen ist.
+                    //
+                    // (Hier stand vor der ersten Messung die Schaetzung
+                    // "330 MB". Sie war geraten, nnz war noch unbekannt. Die
+                    // Zahlen oben sind gerechnet.)
                     std::vector<int> ro2, ci2;
-                    fem_direct::build_block_structure(csr_matrix.num_rows,
+                    std::vector<double> v2, rhs2;
+                    if (!use_ams_nullspace) {
+                        fem_direct::build_block_structure(csr_matrix.num_rows,
+                                                          ro_h.data(), ci_h.data(),
+                                                          ro2, ci2);
+                        v2.resize(ci2.size());
+                        fem_direct::fill_block_values(csr_matrix.num_rows,
                                                       ro_h.data(), ci_h.data(),
-                                                      ro2, ci2);
-                    std::vector<double> v2(ci2.size());
-                    fem_direct::fill_block_values(csr_matrix.num_rows,
-                                                  ro_h.data(), ci_h.data(),
-                                                  h_K.data(), h_C.data(), omega,
-                                                  fem_direct::BlockForm::General,
-                                                  v2.data());
-                    std::vector<double> rhs2(ro2.size() - 1);
+                                                      h_K.data(), h_C.data(), omega,
+                                                      fem_direct::BlockForm::General,
+                                                      v2.data());
+                        rhs2.assign(ro2.size() - 1, 0.0);
+                    }
                     // --- 4b. Gradientenanteil aus dem Quellterm entfernen ---
                     // Muss VOR fill_block_rhs stehen: danach liegt b in der
                     // 2n-Form, und der diskrete Gradient ist dort je Haelfte
@@ -3641,16 +3751,59 @@ int mainloop(int argc, char** argv) {
                                      "und wird verworfen." << std::endl;
                     }
 
-                    fem_direct::fill_block_rhs(csr_matrix.num_rows, b_r.data(),
-                                               nullptr,
-                                               fem_direct::BlockForm::General,
-                                               rhs2.data());
+                    if (!use_ams_nullspace) {
+                        fem_direct::fill_block_rhs(csr_matrix.num_rows, b_r.data(),
+                                                   nullptr,
+                                                   fem_direct::BlockForm::General,
+                                                   rhs2.data());
+                    }
 
                     // --- 5. Dirichlet A x n = 0 -----------------------------
                     // Der Kantensatz gilt fuer n Kanten; im 2n-System sind
                     // BEIDE Haelften betroffen (Real- und Imaginaerteil
                     // derselben Kante).
-                    {
+                    //
+                    // Im AMS-Modus wird stattdessen im n-Raum festgehalten, und
+                    // zwar in W = K + omega*C UND in C getrennt. Das ist keine
+                    // Abkuerzung, sondern die einzige Stelle, an der die
+                    // Diagonalwerte auseinandergehen muessen:
+                    //
+                    //   W_ee = d,  (omega*C)_ee = 0
+                    //
+                    // Denn H = [[W - wC, -wC], [wC, W - wC]], und die
+                    // festgehaltene Zeile soll [d, 0] beziehungsweise [0, d]
+                    // lauten. Bekaeme C auf der Diagonale ebenfalls d, stuende
+                    // dort [d-d, -d] = [0, -d] -- eine Gleichung, die den
+                    // Imaginaerteil an den Realteil bindet, statt beide auf null
+                    // zu setzen. Sichtbar wuerde das nur als seltsame
+                    // Iterationszahl.
+                    double ams_diag_value = 0.0;
+                    if (use_ams_nullspace) {
+                        const auto dw = fem_direct::apply_homogeneous_dirichlet(
+                            csr_matrix.num_rows, ro_h.data(), ci_h.data(),
+                            h_wt.data(), b_r.data(), fixed_edges);
+                        ams_diag_value = dw.diag_value;
+
+                        // C: dieselben Zeilen und Spalten nullen, aber die
+                        // Diagonale danach auf null setzen. Der Aufruf bekommt
+                        // deshalb keinen rhs -- b haengt an W, nicht an C.
+                        fem_direct::apply_homogeneous_dirichlet(
+                            csr_matrix.num_rows, ro_h.data(), ci_h.data(),
+                            h_C.data(), nullptr, fixed_edges);
+                        for (int r = 0; r < csr_matrix.num_rows; ++r) {
+                            if (!fixed_edges[r]) continue;
+                            for (int k = ro_h[r]; k < ro_h[r + 1]; ++k)
+                                if (ci_h[k] == r) h_C[k] = 0.0;
+                        }
+
+                        std::cout << "[FEM-direkt] Dirichlet im n-Raum: "
+                                  << dw.num_constrained << " von "
+                                  << csr_matrix.num_rows
+                                  << " Kanten festgehalten, Diagonalwert in W "
+                                  << dw.diag_value << " (freie Diagonale "
+                                  << dw.diag_min_free << " .. " << dw.diag_max_free
+                                  << "), Diagonale in C dort null\n";
+                    } else {
                         // Derselbe Satz, den die Projektion oben schon
                         // bekommen hat. Nicht erneut sammeln: liefen die
                         // beiden Aufrufe je auseinander, waere b auf Kanten
@@ -3684,22 +3837,248 @@ int mainloop(int argc, char** argv) {
                     }
 
                     // --- 6. Zerlegen und loesen -----------------------------
-                    // Die Werte muessen fuer cuDSS auf dem Geraet liegen.
-                    const int N2 = static_cast<int>(ro2.size() - 1);
-                    DeviceArray<int>    d_ro2(ro2.size());
-                    DeviceArray<int>    d_ci2(ci2.size());
-                    DeviceArray<double> d_v2(v2.size());
-                    DeviceArray<double> d_b2(rhs2.size());
-                    DeviceArray<double> d_x2(rhs2.size());
-                    for (size_t i = 0; i < ro2.size(); ++i) d_ro2[i] = ro2[i];
-                    for (size_t i = 0; i < ci2.size(); ++i) d_ci2[i] = ci2[i];
-                    for (size_t i = 0; i < v2.size();  ++i) d_v2[i]  = v2[i];
-                    for (size_t i = 0; i < rhs2.size(); ++i) { d_b2[i] = rhs2[i]; d_x2[i] = 0.0; }
-                    d_ro2.prefetch_to_device(); d_ci2.prefetch_to_device();
-                    d_v2.prefetch_to_device();  d_b2.prefetch_to_device();
-                    d_x2.prefetch_to_device();  bf::sync();
+                    // d_x2 tragen ALLE drei Wege, damit Schritt 7 und 8
+                    // unveraendert bleiben: die Diagnosen, die Aufteilung in
+                    // x_r/x_i, die Plattenauswertung und der Kraftpfad haengen
+                    // an diesem einen Vektor. Ein eigener Ausgabeweg je Loeser
+                    // waere die Sorte Verzweigung, die spaeter genau einmal
+                    // vergessen wird.
+                    const int N2 = 2 * csr_matrix.num_rows;
+                    DeviceArray<double> d_x2(static_cast<size_t>(N2));
+                    for (int i = 0; i < N2; ++i) d_x2[i] = 0.0;
+                    d_x2.prefetch_to_device(); bf::sync();
 
-                    if (bf::fem_direct_iterative()) {
+                    // Die 2n-Arrays nur, wenn sie gebraucht werden.
+                    DeviceArray<int>    d_ro2(use_ams_nullspace ? 1 : ro2.size());
+                    DeviceArray<int>    d_ci2(use_ams_nullspace ? 1 : ci2.size());
+                    DeviceArray<double> d_v2(use_ams_nullspace ? 1 : v2.size());
+                    DeviceArray<double> d_b2(use_ams_nullspace ? 1 : rhs2.size());
+                    if (!use_ams_nullspace) {
+                        for (size_t i = 0; i < ro2.size(); ++i) d_ro2[i] = ro2[i];
+                        for (size_t i = 0; i < ci2.size(); ++i) d_ci2[i] = ci2[i];
+                        for (size_t i = 0; i < v2.size();  ++i) d_v2[i]  = v2[i];
+                        for (size_t i = 0; i < rhs2.size(); ++i) d_b2[i] = rhs2[i];
+                        d_ro2.prefetch_to_device(); d_ci2.prefetch_to_device();
+                        d_v2.prefetch_to_device();  d_b2.prefetch_to_device();
+                        bf::sync();
+                    }
+
+                    if (use_ams_nullspace) {
+                        // --- 6c. C-to-R aussen, AMS innen -------------------
+                        //
+                        // Kein neuer Loeser. solve_harmonic() steht schon und
+                        // rechnet H matrixfrei ueber (W+T) = K + omega*C und
+                        // omega*C; der C-to-R-Vorkonditionierer nach
+                        // Axelsson/Kucherov braucht je Anwendung zwei Loesungen
+                        // mit (W+T). Das ist ein REELLER Operator der Bauart
+                        // curl-curl + beta*Masse -- genau die, auf die AMS
+                        // zielt. Gemessen an team28_coarse_12: 38 Iterationen
+                        // mit C-to-R gegen 4000 stagnierende ohne.
+                        //
+                        // Die 2n-Blockform ist also NICHT die Ursache der
+                        // AMS-Schwierigkeit, und der Wechsel zu komplexer
+                        // Arithmetik behebt sie auch nicht: G^T K G = 0 gilt
+                        // unabhaengig von der Arithmetik, der skalare
+                        // Hilfsraum ist in beiden Faellen singulaer. Siehe
+                        // doc/harmonische-fem.tex, Abschnitt 6.
+
+                        // W = K + omega*C, nach der Dirichlet-Behandlung, in
+                        // die vorhandene CSR-Struktur zurueckgeschrieben. h_wt
+                        // ist genau das, was assemble_at(1/omega) geliefert hat.
+                        bf::memcpy_d(csr_matrix.values.data(), h_wt.data(),
+                                     h_wt.size() * sizeof(double),
+                                     cudaMemcpyHostToDevice);
+                        bf::memcpy_d(csr_C.values.data(), h_C.data(),
+                                     h_C.size() * sizeof(double),
+                                     cudaMemcpyHostToDevice);
+                        bf::sync();
+
+                        CoupledMVOperator op_ams(csr_matrix.num_rows);
+                        op_ams.setup_fem_matrix(csr_matrix.num_rows, csr_matrix.nnz,
+                                                csr_matrix.row_offsets.data(),
+                                                csr_matrix.col_indices.data(),
+                                                csr_matrix.values.data());
+                        // KEIN setup_gauge, KEIN Kohomologie-Projektor, KEINE
+                        // BEM-Kopplung. Der Nullraum bleibt im System stehen;
+                        // ihn zu projizieren waere genau der Weg, den dieser
+                        // Modus ersetzt.
+                        op_ams.setup_equilibration();
+                        op_ams.compute_ilu();   // Rueckfall, falls AMS entartet
+
+                        // Materialkoeffizienten des Alpha-Poisson-Operators.
+                        // beta = omega*sigma, NICHT sigma/dt: der harmonische
+                        // Massenterm ist omega*C, und der Hilfsraum muss zu der
+                        // Matrix passen, die er vorkonditioniert. Mit dt = 1/omega
+                        // ist sigma/dt zwar derselbe Wert -- aber nur, weil
+                        // assemble_at genau so aufgerufen wird, und diese
+                        // Kopplung soll hier nicht stillschweigend vorausgesetzt
+                        // werden.
+                        d_materials.prefetch_to_host();
+                        bf::sync();
+                        std::vector<double> ams_nu(mesh.num_hexes);
+                        std::vector<double> ams_beta(mesh.num_hexes);
+                        for (size_t h = 0; h < mesh.num_hexes; ++h) {
+                            const MaterialProperties& m = d_materials[static_cast<int>(h)];
+                            ams_nu[h]   = 1.0 / (m.mu_relative * 4.0 * M_PI * 1e-7);
+                            ams_beta[h] = omega * m.kappa;
+                        }
+                        op_ams.set_ams_alpha_coefficients(ams_nu.data(), ams_beta.data());
+                        op_ams.setup_ams(mesh);
+
+                        if (!op_ams.ams_ready()) {
+                            std::cout << "[FEM-direkt] ABBRUCH: setup_ams() hat keinen "
+                                         "Vorkonditionierer geliefert. Ohne ihn bleibt "
+                                         "nur ILU(0) auf einem singulaeren System, und "
+                                         "das ist als stagnierend vermessen.\n";
+                            return 1;
+                        }
+
+                        // Die Kennzahl, die ueber den Modus entscheidet. Der
+                        // skalare Hilfsraum DARF hier schlecht sein -- er ist
+                        // ausserhalb der Platte ausgeblendet, weil G^T A G dort
+                        // bis auf Rundung null ist. Der vektorielle darf es
+                        // nicht: er allein traegt die Gradientenmoden der Luft.
+                        const double conv_pi = op_ams.ams_vector_convergence();
+                        std::cout << "[FEM-direkt] AMS-Hilfsraeume: skalar "
+                                  << op_ams.ams_scalar_convergence()
+                                  << ", vektoriell " << conv_pi << "\n";
+                        if (!(conv_pi > 0.0) || conv_pi > 0.6) {
+                            std::cout << "[FEM-direkt]   WARNUNG: der vektorielle "
+                                         "Hilfsraum liegt ueber 0.6 (Bezug auf dem "
+                                         "3D-Laplace: 0.30). In diesem Modus traegt er "
+                                         "den Gradientenraum ALLEIN -- der skalare ist "
+                                         "ausserhalb der Platte ausgeblendet. Erwarte "
+                                         "ein stagnierendes aeusseres GMRES.\n";
+                        }
+
+                        // Rechte Seite: b_i = 0, weil der Quellterm bei t = T/4
+                        // ausgewertet wird (Konvention i(t) = I*cos(omega*t)).
+                        // In den Tilde-Raum, weil op_ams.apply() dort rechnet.
+                        DeviceArray<double> d_br(static_cast<size_t>(csr_matrix.num_rows));
+                        DeviceArray<double> d_bi(static_cast<size_t>(csr_matrix.num_rows));
+                        DeviceArray<double> d_xr(static_cast<size_t>(csr_matrix.num_rows));
+                        DeviceArray<double> d_xi(static_cast<size_t>(csr_matrix.num_rows));
+                        for (int i = 0; i < csr_matrix.num_rows; ++i) {
+                            d_br[i] = b_r[i]; d_bi[i] = 0.0;
+                            d_xr[i] = 0.0;    d_xi[i] = 0.0;
+                        }
+                        d_br.prefetch_to_device(); d_bi.prefetch_to_device();
+                        d_xr.prefetch_to_device(); d_xi.prefetch_to_device();
+                        bf::sync();
+
+                        // b_tilde = D * b, NICHT b / D.
+                        //
+                        // apply() rechnet y_tilde = D * A * (D * x_tilde), der
+                        // Operator im Tilde-Raum ist also A~ = D A D. Aus
+                        // A x = b mit x = D x_tilde folgt D A D x_tilde = D b.
+                        // Dieselbe Konvention wie an den beiden anderen
+                        // Aufrufstellen (fem.cu:2149 und der --harmonic-Pfad).
+                        //
+                        // Die Richtung ist hier nicht bloss eine Skalierung,
+                        // sondern entscheidet ueber die LOESBARKEIT. Das System
+                        // ist singulaer und nur bei konsistenter rechter Seite
+                        // loesbar. Mit n im Nullraum von A ist der Nullraum von
+                        // A~ gerade D^-1 n, und
+                        //
+                        //   richtig:  (D b) . (D^-1 n) = b . n     = 0   ok
+                        //   falsch:   (b/D) . (D^-1 n) = b^T D^-2 n != 0
+                        //
+                        // Im regularisierten Modus faellt das nicht auf -- dort
+                        // ist A regulaer und jede rechte Seite konsistent. Hier
+                        // erzeugt es ein aeusseres Residuum, das bei einem
+                        // festen Wert stehen bleibt, statt zu fallen: gemessen
+                        // 0,058 ab Iteration 60, voellig flach.
+                        op_ams.scale_by_D(d_br.data());
+                        op_ams.scale_by_D(d_bi.data());
+                        bf::sync();
+
+                        // Gegenprobe im Tilde-Raum. relative_gradient_content()
+                        // rechnet intern zurueck (v_phys = v_tilde / D) und
+                        // misst dann ||G^T v||/||v||. Bei richtiger Skalierung
+                        // kommt genau die Zahl der Quellterm-Projektion heraus,
+                        // also rund 1e-16; bei falscher Richtung steht dort
+                        // b/D^2 und der Wert springt auf Prozentniveau.
+                        //
+                        // Das ist die Pruefung, die den Fehler oben von sich aus
+                        // gefunden haette. Sie kostet einen Durchlauf ueber die
+                        // Kanten und laeuft genau einmal je Lauf.
+                        op_ams.setup_divergence_check(
+                            mesh.edges.data(),
+                            static_cast<int>(mesh.num_nodes),
+                            static_cast<int>(mesh.num_edges));
+                        d_br.prefetch_to_host(); bf::sync();
+                        const double grad_tilde =
+                            op_ams.relative_gradient_content(d_br.data());
+                        std::cout << "[FEM-direkt] Konsistenz im Tilde-Raum: "
+                                     "||G^T b||/||b|| = " << grad_tilde << "\n";
+                        if (grad_tilde > 1e-8) {
+                            std::cout << "[FEM-direkt] ABBRUCH: die rechte Seite ist "
+                                         "im Tilde-Raum NICHT konsistent, obwohl sie "
+                                         "es physikalisch war. Das System ist "
+                                         "singulaer; eine inkonsistente rechte Seite "
+                                         "laesst das aeussere Residuum auf einem "
+                                         "festen Wert stehen, statt zu fallen. "
+                                         "Verdaechtig ist die Richtung der "
+                                         "Aequilibrierung -- b_tilde = D * b.\n";
+                            return 1;
+                        }
+                        d_br.prefetch_to_device(); bf::sync();
+
+                        const double tol = 1e-8;
+                        std::cout << "[FEM-direkt] ITERATIV mit AMS: aeusseres GMRES("
+                                  << bf::harmonic_outer_restart() << ") auf der "
+                                     "2n-Blockform, C-to-R, inneres (W+T) mit AMS "
+                                     "bis " << bf::harmonic_inner_tol() << "\n";
+
+                        const auto t0 = std::chrono::steady_clock::now();
+                        const auto hres = bf::solve_harmonic(
+                            op_ams, csr_C,
+                            csr_matrix.num_rows, csr_matrix.num_rows, omega,
+                            d_br.data(), d_bi.data(), d_xr.data(), d_xi.data(),
+                            tol,
+                            (bf::harmonic_outer_cap() > 0 ? bf::harmonic_outer_cap()
+                                                          : bf::max_iter()),
+                            bf::harmonic_outer_restart(),
+                            bf::harmonic_inner_tol(),
+                            std::max(4000, bf::gmres_restart()));
+                        const auto t1 = std::chrono::steady_clock::now();
+
+                        // Zurueck in den physikalischen Raum.
+                        op_ams.scale_by_D(d_xr.data());
+                        op_ams.scale_by_D(d_xi.data());
+                        d_xr.prefetch_to_host(); d_xi.prefetch_to_host();
+                        bf::sync();
+
+                        std::cout << "[FEM-direkt]   " << hres.iterations
+                                  << " aeussere Iterationen, relatives Residuum "
+                                  << hres.relative_res << ", "
+                                  << hres.inner_solves << " innere Loesungen mit "
+                                  << hres.inner_iters << " Iterationen zusammen, "
+                                  << std::chrono::duration<double>(t1 - t0).count()
+                                  << " s\n";
+                        if (!hres.converged) {
+                            std::cout << "[FEM-direkt]   NICHT konvergiert. Die Kraft "
+                                         "unten ist entsprechend unsicher -- und anders "
+                                         "als im regularisierten Fall laesst sich hier "
+                                         "NICHT damit argumentieren, das Restresiduum "
+                                         "sitze im traegen Gradientenraum: der ist "
+                                         "genau das, was dieser Modus behandeln "
+                                         "soll.\n";
+                        }
+
+                        // In die 2n-Ablage, damit Schritt 7 und 8 unberuehrt
+                        // bleiben. Reihenfolge wie fill_block_rhs: erst der
+                        // ganze Realteil, dann der ganze Imaginaerteil.
+                        for (int i = 0; i < csr_matrix.num_rows; ++i) {
+                            d_x2[i] = d_xr[i];
+                            d_x2[csr_matrix.num_rows + i] = d_xi[i];
+                        }
+                        // Auf dem Host lassen: Schritt 7 und 8 lesen dort. Die
+                        // anderen beiden Zweige holen d_x2 am Ende ebenfalls
+                        // zurueck; nach dem Loeser braucht es auf dem Geraet
+                        // niemand mehr.
+                        d_x2.prefetch_to_host(); bf::sync();
+                    } else if (bf::fem_direct_iterative()) {
                         // --- 6a. Iterativ: GMRES(m) auf DERSELBEN Matrix ----
                         // Der Vergleich ist nur etwas wert, wenn die einzige
                         // Variable der Loeser ist. GMRES bekommt deshalb
@@ -3868,7 +4247,55 @@ int mainloop(int argc, char** argv) {
                     // System, das tatsaechlich geloest wurde. Ein kleines
                     // Residuum hier ist die einzige Zusicherung, die ein
                     // Direktloeser ueberhaupt geben kann.
-                    {
+                    //
+                    // Im AMS-Modus gibt es keine 2n-Matrix, gegen die man
+                    // rechnen koennte. Nachgerechnet wird deshalb aus W und C
+                    // im n-Raum, mit K = W - omega*C:
+                    //
+                    //   r_r = b_r - W x_r + omega*C (x_r + x_i)
+                    //   r_i =     - W x_i + omega*C (x_i - x_r)
+                    //
+                    // Das ist NICHT bloss eine Wiederholung dessen, was
+                    // solve_harmonic() meldet. Der Loeser rechnet im
+                    // Tilde-Raum und mit der matrixfreien Anwendung; diese
+                    // Probe laeuft im physikalischen Raum und ueber die
+                    // CSR-Werte. Weichen die beiden Zahlen ab, liegt der Fehler
+                    // in der Skalierung oder in der Blockanwendung -- und genau
+                    // dieser Fehler hat in HarmonicSolver.cu schon einmal ein
+                    // aeusseres Residuum von exakt 1 erzeugt, ohne Absturz und
+                    // ohne NaN.
+                    if (use_ams_nullspace) {
+                        const int n = csr_matrix.num_rows;
+                        std::vector<double> xr_h(n), xi_h(n);
+                        for (int i = 0; i < n; ++i) {
+                            xr_h[i] = d_x2[i];
+                            xi_h[i] = d_x2[n + i];
+                        }
+                        double num = 0.0, den = 0.0;
+                        for (int r = 0; r < n; ++r) {
+                            double wxr = 0.0, wxi = 0.0, cs = 0.0, cd = 0.0;
+                            for (int k = ro_h[r]; k < ro_h[r + 1]; ++k) {
+                                const int c = ci_h[k];
+                                wxr += h_wt[k] * xr_h[c];
+                                wxi += h_wt[k] * xi_h[c];
+                                cs  += h_C[k] * (xr_h[c] + xi_h[c]);
+                                cd  += h_C[k] * (xi_h[c] - xr_h[c]);
+                            }
+                            const double rr = b_r[r] - wxr + omega * cs;
+                            const double ri =        - wxi + omega * cd;
+                            num += rr * rr + ri * ri;
+                            den += b_r[r] * b_r[r];
+                        }
+                        const double rel = (den > 0.0) ? std::sqrt(num / den)
+                                                       : std::sqrt(num);
+                        std::cout << "[FEM-direkt] relatives Residuum im n-Raum "
+                                     "||b - Hx||/||b|| = " << rel << "\n";
+                        std::cout << "[FEM-direkt]   unabhaengig nachgerechnet aus W "
+                                     "und C, im physikalischen Raum. Weicht der Wert "
+                                     "von dem des Loesers ab, sitzt der Fehler in der "
+                                     "Aequilibrierung oder in der Blockanwendung, "
+                                     "nicht im Krylov-Verfahren.\n";
+                    } else {
                         double num = 0.0, den = 0.0;
                         for (int r = 0; r < N2; ++r) {
                             double ax = 0.0;
@@ -3971,7 +4398,28 @@ int mainloop(int argc, char** argv) {
                         const double share = (max_i > 0.0) ? p_i / max_i : 0.0;
                         std::cout << "[FEM-direkt] Anteil des Imaginaerteils in der "
                                      "Platte: " << share;
-                        if (bf::fem_direct_project()) {
+                        if (use_ams_nullspace) {
+                            // Ohne Regularisierung gibt es kein eps, an dem
+                            // dieser Quotient haengen koennte, und die
+                            // Erwartung "um 1" war an den eps-Reihen geeicht.
+                            // Was bleibt, ist das Verhaeltnis zweier
+                            // physikalischer Groessen: A_i ist dort am
+                            // groessten, wo die Wirbelstroeme sitzen und
+                            // unmittelbar darum herum -- ein Wert unter 1 heisst
+                            // hier nur, dass das globale Maximum knapp
+                            // AUSSERHALB der Platte liegt. Gemessen am Netz
+                            // "Platte fein": 0,33.
+                            //
+                            // Ein Alarmwert waere das Gegenteil, naemlich A_i
+                            // gross weit weg von jedem Leiter. Dafuer taugt
+                            // dieser Quotient nicht, dafuer steht die Kraft da.
+                            std::cout << " -- ohne Regularisierung ist das nur das"
+                                         " Verhaeltnis zweier physikalischer Maxima."
+                                         " Kein eps, an dem es haengen koennte; die"
+                                         " frueher hier genannte Erwartung \"um 1\""
+                                         " war an den eps-Reihen geeicht und gilt in"
+                                         " diesem Modus nicht.\n";
+                        } else if (bf::fem_direct_project()) {
                             std::cout << " -- mit Projektion ist ein Wert um 1 erwartet:"
                                          " ohne Scheingradient ist das globale Maximum"
                                          " nicht mehr um 1/eps groesser als das der"
@@ -4119,8 +4567,23 @@ int mainloop(int argc, char** argv) {
                         const double dz = res[1][2] - res[0][2];
                         std::cout << "[FEM-direkt]   ohne Maske waere F_z = "
                                   << res[1][2] << " N, also " << dz
-                                  << " N Scheinkraft aus dem regularisierten "
-                                     "Luftgebiet\n";
+                                  << (use_ams_nullspace
+                                        ? " N Beitrag aus den Nichtleitern\n"
+                                        : " N Scheinkraft aus dem regularisierten "
+                                          "Luftgebiet\n");
+                        if (use_ams_nullspace) {
+                            // Ohne Regularisierung ist kappa dort exakt null,
+                            // also ist auch J = kappa*omega*A exakt null und die
+                            // Differenz Rundung. Gemessen -2,2e-15 N gegen 1 N.
+                            // Damit ist die Maske in diesem Modus nachweislich
+                            // redundant -- sie bleibt trotzdem, aber jetzt als
+                            // GEPRUEFTE Redundanz und nicht als stiller Schutz,
+                            // auf den sich niemand mehr besinnt.
+                            std::cout << "[FEM-direkt]   ohne Regularisierung ist "
+                                         "kappa dort exakt null, also J = 0 und diese "
+                                         "Differenz reine Rundung. Die Maske ist hier "
+                                         "nachweislich redundant.\n";
+                        }
                         if (std::fabs(res[0][2]) > 0.0 &&
                             std::fabs(dz) > 0.05 * std::fabs(res[0][2])) {
                             std::cout << "[FEM-direkt]   HINWEIS: die Scheinkraft ist "

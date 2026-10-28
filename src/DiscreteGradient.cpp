@@ -1,5 +1,6 @@
 #include "DiscreteGradient.cuh"
 #include "NodalHexahedron.cuh"
+#include "NodalDispatch.cuh"   // typabhaengige Knotengradienten und Quadratur
 
 #include <algorithm>
 #include <cmath>
@@ -336,7 +337,13 @@ HostCsr build_alpha_poisson_matrix(const Mesh& mesh, const double* nu_per_hex,
     // bewegt sich, und der Hilfsraum-Operator muss zur assemblierten Matrix
     // desselben Zeitschritts passen.
     mesh.nodes_current.prefetch_to_host();
+    if (mesh.elem_types.size()) mesh.elem_types.prefetch_to_host();
     bf::sync();
+
+    // Elementtypen: leeres Array heisst "alles Hexaeder" (siehe Mesh.cuh). Der
+    // Zeiger wird EINMAL geholt und dann ueber element_type_or_hex() gelesen,
+    // damit der Hexaederfall bitgleich bleibt wie vor dem Dispatch.
+    const int* types = mesh.elem_types.size() ? mesh.elem_types.data() : nullptr;
 
     // Erst die Kopplungen sammeln (Knoten -> Menge der Nachbarknoten inkl.
     // sich selbst), dann werteweise akkumulieren.
@@ -344,8 +351,15 @@ HostCsr build_alpha_poisson_matrix(const Mesh& mesh, const double* nu_per_hex,
 
     for (int h = 0; h < nh; ++h) {
         const Hexahedron& hex = mesh.hex_nodes.data()[h];
+        const int type = element_type_or_hex(types, static_cast<size_t>(h));
+        const int nv   = element_num_nodes(type);
+
+        // NUR die belegten Plaetze lesen. Auf hex.v[nv..7] steht bei
+        // Tetraedern und Prismen eine -1, und mesh.nodes_current[-1] ist der
+        // Zugriff, der hier vorher stattfand.
         double3 nd[8];
-        for (int i = 0; i < 8; ++i) nd[i] = mesh.nodes_current.data()[hex.v[i]];
+        for (int i = 0; i < nv; ++i) nd[i] = mesh.nodes_current.data()[hex.v[i]];
+        for (int i = nv; i < 8; ++i) nd[i] = make_double3(0.0, 0.0, 0.0);
 
         const double nu   = (nu_per_hex   != nullptr) ? nu_per_hex[h]   : 1.0;
         const double beta = (beta_per_hex != nullptr) ? beta_per_hex[h] : 0.0;
@@ -354,18 +368,27 @@ HostCsr build_alpha_poisson_matrix(const Mesh& mesh, const double* nu_per_hex,
         // Gelumpte Masse: nur die Diagonale. Dass die Zeilensummen-Diagonale
         // spektral aequivalent zur konsistenten Massenmatrix ist, ist ein
         // Standardresultat -- und die Zeilensumme laesst sich hier direkt
-        // ausrechnen, weil die trilinearen Formfunktionen eine Zerlegung der
-        // Eins bilden: Summe_j Integral phi_i phi_j = Integral phi_i.
+        // ausrechnen, weil die Formfunktionen eine Zerlegung der Eins bilden:
+        // Summe_j Integral phi_i phi_j = Integral phi_i. Das gilt fuer alle
+        // drei Elementtypen, die Lumpung ist also nicht hexaederspezifisch.
         // Fuer AMG ist die gelumpte Variante ausserdem robuster als die
         // konsistente.
         double me[8] = {};
-        for (int g = 0; g < nodal_gauss_count(); ++g) {
+        // Dieselbe Quadratur wie die Kantenassemblierung: 2x2x2-Gauss auf dem
+        // Hexaeder (Gewicht 1), 4 Punkte auf dem Tetraeder (Gewicht 1/24, die
+        // Summe ist das Referenzvolumen 1/6), 6 auf dem Prisma. Fuer den
+        // Hexaeder liefert element_quadrature_point() Punkt fuer Punkt
+        // dieselben Werte in derselben Reihenfolge wie das frueher hier
+        // benutzte nodal_gauss_point() -- der bestehende transiente Pfad
+        // rechnet also bitgleich weiter.
+        const int nq = element_num_quad_points(type);
+        for (int g = 0; g < nq; ++g) {
             double xi, eta, zeta, w;
-            nodal_gauss_point(g, xi, eta, zeta, w);
+            element_quadrature_point(type, g, xi, eta, zeta, w);
 
             double3 gradN[8];
             double detJ = 0.0;
-            evaluate_nodal_gradients(nd, xi, eta, zeta, gradN, detJ);
+            element_nodal_gradients(type, nd, xi, eta, zeta, gradN, detJ);
 
             // Ein entartetes Element traegt nichts bei. Die Pruefung ist
             // relativ gedacht -- detJ hat die Dimension eines Volumens, und
@@ -375,8 +398,8 @@ HostCsr build_alpha_poisson_matrix(const Mesh& mesh, const double* nu_per_hex,
 
             const double vol   = w * std::fabs(detJ);
             const double scale = nu * vol;
-            for (int i = 0; i < 8; ++i) {
-                for (int j = 0; j < 8; ++j) {
+            for (int i = 0; i < nv; ++i) {
+                for (int j = 0; j < nv; ++j) {
                     ke[i][j] += scale * (gradN[i].x * gradN[j].x +
                                          gradN[i].y * gradN[j].y +
                                          gradN[i].z * gradN[j].z);
@@ -384,13 +407,13 @@ HostCsr build_alpha_poisson_matrix(const Mesh& mesh, const double* nu_per_hex,
             }
             if (beta != 0.0) {
                 double N[8];
-                evaluate_nodal_shape(xi, eta, zeta, N);
-                for (int i = 0; i < 8; ++i) me[i] += beta * vol * N[i];
+                element_shape_functions(type, xi, eta, zeta, N);
+                for (int i = 0; i < nv; ++i) me[i] += beta * vol * N[i];
             }
         }
 
-        for (int i = 0; i < 8; ++i) {
-            for (int j = 0; j < 8; ++j) {
+        for (int i = 0; i < nv; ++i) {
+            for (int j = 0; j < nv; ++j) {
                 rows[hex.v[i]][hex.v[j]] += ke[i][j];
             }
             rows[hex.v[i]][hex.v[i]] += me[i];

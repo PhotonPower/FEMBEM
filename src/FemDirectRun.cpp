@@ -210,9 +210,11 @@ PreflightReport preflight_fem_direct(
         if (zero_kappa > 0 && nullspace_handled) {
             rep.warnings.push_back(
                 std::to_string(zero_kappa) + " Elemente mit kappa = 0, nicht "
-                "regularisiert. Der Nullraum wird geeicht -- die Eichmaske muss "
-                "jeden Knoten dieser Gebiete erreichen, sonst bleibt K dort "
-                "singulaer.");
+                "regularisiert -- der Nullraum wird anders behandelt. Bei der "
+                "Eichung muss die Maske jeden Knoten dieser Gebiete erreichen, "
+                "sonst bleibt K dort singulaer. Beim AMS-Modus bleibt K dort "
+                "singulaer UND SOLL ES: dann traegt der vektorielle Hilfsraum "
+                "den Gradientenraum, und die rechte Seite muss konsistent sein.");
         }
         if (max_kappa <= 0.0) {
             rep.problems.push_back(

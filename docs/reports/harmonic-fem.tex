@@ -358,9 +358,9 @@ stimmen sie auf unter ein Prozent überein, und $F_z$ ist in beiden Fällen
 $\nabla\times\nabla\varphi = 0$ und er die Platte nicht erreicht. Darauf
 verlassen sollte man sich nicht -- ein Löser, dessen gemeldetes Residuum von
 einem trägen Unterraum beherrscht wird, hat kein verwendbares
-Abbruchkriterium. Die eigentliche Antwort wäre ein Vorkonditionierer für den
-Gradientenraum (AMS); ob er auf die $2n$-Blockform übertragbar ist, ist
-ungeprüft.
+Abbruchkriterium. Die eigentliche Antwort ist ein Vorkonditionierer für den
+Gradientenraum (AMS), und zwar auf dem inneren, reellen Operator statt auf der
+$2n$-Blockform -- siehe Abschnitt~\ref{sec:ams-modus}.
 
 
 \section{Warum reell und nicht komplex, und was das für AMS bedeutet}
@@ -401,7 +401,7 @@ begründete Weg wäre \texttt{solve\_harmonic} mit C-to-R gewesen; die
 Rechtfertigung, dieselbe Matrix wie cuDSS zu verwenden, war formal richtig und
 in der Abwägung falsch.
 
-\subsection{Warum AMS auf dieser Form nicht direkt anwendbar ist}
+\subsection{Warum AMS auf dieser Form nicht ohne Weiteres anwendbar ist}
 
 AMS (Hiptmair--Xu) glättet auf den Kanten und projiziert das verbleibende
 Residuum über die diskrete Gradientenmatrix $G$ auf die Knoten, wo ein
@@ -437,6 +437,12 @@ $\int \sigma\,\nabla\varphi\cdot\nabla\psi$, ist also ein $\sigma$-gewichteter
 Poisson-Operator. Mit $\sigma = 0$ in der Luft hat $S$ einen Nullraum aus
 allen $\varphi$, die dort leben -- derselbe Nullraum wie zuvor, nur von den
 Kanten auf die Knoten verschoben.
+
+Das ist richtig, und es ist trotzdem kein Ausschlusskriterium: der singuläre
+Fall ist der \emph{Normalfall} des Verfahrens, nicht seine Grenze. Der Nullraum
+wird nicht im skalaren Hilfsraum behandelt, sondern im vektoriellen.
+Abschnitt~\ref{sec:ams-modus} führt das aus; der dort beschriebene Modus ist
+inzwischen umgesetzt. Die Einschätzung in diesem Abschnitt war zu pessimistisch.
 
 \paragraph{Und das überlebt den Wechsel zu komplex.} Für das komplexe System
 ist der AMS-Knotenoperator
@@ -487,6 +493,142 @@ einen um $1/\varepsilon$ \emph{verstärkten} Wert zuweist, nicht indem sie ihn
 unterdrückt. Gemessen wächst max$|\Ai|$ von $0{,}0671$ auf $671$, wenn
 $\varepsilon$ von $10^{-6}$ auf $10^{-10}$ fällt -- exakt linear in
 $1/\varepsilon$ über vier Dekaden (Abschnitt~\ref{sec:schein}).
+
+\subsection{Umgesetzt: AMS ohne Regularisierung (\texttt{--fem-direct-ams})}
+\label{sec:ams-modus}
+
+Der Abschnitt oben schließt, das Hindernis sei die Singularität von
+$S = \omega\,G^{\!\top}CG$. Das stimmt, ist aber kein Hindernis, sondern der
+\emph{Normalfall} des Verfahrens. Hypre kennt dafür den singulären Modus
+(\texttt{HYPRE\_AMSSetBetaPoissonMatrix(NULL)}): der skalare Hilfsraum wird
+dort stillgelegt, wo er nichts trägt, und die Gradientenmoden übernimmt der
+\emph{vektorielle} Hilfsraum über den Alpha-Poisson-Operator mit
+$\nu = 1/\mu_0 > 0$ überall. Die Ausblendung ist im Projekt seit längerem
+vorhanden (\texttt{ams\_mask\_meaningless\_rows}); was fehlte, war die
+Entscheidung, sie auch so zu benutzen.
+
+Damit lässt sich die Regularisierung ersatzlos streichen. Der Modus
+\texttt{--fem-direct-nullspace=ams} tut das:
+
+\begin{itemize}[nosep]
+\item Kein $\sigma_{\text{Luft}}$, keine Baum-Kobaum-Eichung. Das System bleibt
+  singulär und konsistent.
+\item Die $2n$-Matrix wird nicht gebaut. \texttt{solve\_harmonic} wendet $H$
+  matrixfrei über $W = K + \omega C$ und $C$ an; C-to-R braucht je Anwendung
+  zwei Lösungen mit $W$, und das ist der reelle Operator, auf den AMS zielt.
+\item Der Direktlöser ist ausgeschlossen und der iterative Weg erzwungen. Auf
+  einer echt singulären Matrix pivotiert cuDSS ins Nichts, ohne dass
+  \texttt{CUDSS\_DATA\_INFO} es meldet -- auf diesem Pfad ist eine singuläre
+  Matrix schon einmal mit \texttt{info = 0} zerlegt worden.
+\item Die Quellterm-Projektion ist Pflicht statt Option. Konsistenz heißt
+  $G^{\!\top}b = 0$, und Abschnitt~\ref{sec:quellterm} liefert dafür
+  $6\cdot10^{-16}$.
+\end{itemize}
+
+Zwei Punkte der Umsetzung sind keine Nebensache.
+
+\paragraph{Der Alpha-Poisson-Operator musste erst auf Tetraeder gebracht
+werden.} Er war hexaederfest -- acht Knoten, trilineare Formfunktionen -- und
+las auf einem Tetraedernetz Knotenplätze, auf denen $-1$ steht. Ohne ihn ist
+der vektorielle Hilfsraum auf den Netzen dieses Pfades gar nicht aufbaubar.
+Gemessener AMG-Konvergenzfaktor je V-Zyklus auf strukturierten Netzen mit
+Leiter/Luft-Grenze:
+
+\begin{center}
+\begin{tabular}{lrrr}
+\toprule
+ & $8^3$ & $12^3$ & $16^3$ \\
+\midrule
+Hexaeder  & 0,248 & 0,264 & 0,278 \\
+Tetraeder & 0,300 & 0,375 & 0,373 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Zum Vergleich liegt der 7-Punkt-Laplace bei 0,30. Der Tetraederfall ist
+zwischen den beiden feinsten Netzen flach; der Anstieg davor ist der Vorsprung
+des groben Netzes, dessen Hierarchie nur drei Ebenen tief ist und dessen
+Grobgitterproblem fast direkt gelöst wird.
+
+\paragraph{Die Dirichlet-Bedingung braucht in $W$ und $C$ verschiedene
+Diagonalwerte.} Festgehalten wird im $n$-Raum, in beiden Matrizen, und zwar mit
+\begin{equation}
+  W_{ee} = d, \qquad (\omega C)_{ee} = 0 .
+\end{equation}
+Nur dann lautet die festgehaltene Zeile $[d, 0]$ beziehungsweise $[0, d]$, und
+Real- und Imaginärteil der Randkante werden unabhängig voneinander auf null
+gesetzt. Bekäme $C$ dort denselben Wert $d$, stünde da $[d - \omega d,\,
+-\omega d]$: eine Gleichung, die den Imaginärteil an den Realteil \emph{koppelt}.
+Das System bliebe lösbar, es wäre nur ein anderes, und sichtbar würde das
+allein als seltsame Iterationszahl.
+\texttt{tests/test\_harmonic\_dirichlet\_split} prüft es an der Form, die der
+Löser wirklich anwendet, und enthält die Gegenprobe mit dem absichtlich
+eingebauten Fehler.
+
+\paragraph{Gemessen.} Netz „Platte fein", 133\,899 Tetraeder,
+158\,238 Kanten, RTX 3090.
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+ & $\varepsilon$ + cuDSS & AMS ohne Regularisierung \\
+\midrule
+$\max|B_r|$ Platte      & 0,0719\,T   & 0,072\,T \\
+$F_z$                   & 1,020\,N    & 1,0\,N \\
+Beitrag der Nichtleiter & $-3{,}83\cdot10^{-5}$\,N & $-2{,}2\cdot10^{-15}$\,N \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Die Abnahme war ausdrücklich \emph{nicht} das Residuum -- die
+Baum-Kobaum-Eichung aus Abschnitt~\ref{sec:baum} erreichte
+$4{,}9\cdot10^{-14}$ und lieferte trotzdem ein anderes Feld. Geprüft ist $B$,
+und $B$ stimmt.
+
+Der Löser braucht 15 äußere Iterationen auf ein relatives Residuum von
+$5\cdot10^{-9}$, dafür 30 innere Lösungen mit $(W+T)$ -- genau zwei je äußerer
+Iteration, wie C-to-R es verlangt -- mit zusammen 3995 Iterationen, im Mittel
+133. Laufzeit 1100\,s.
+
+Zwei Zahlen sind wichtiger als diese:
+
+\begin{itemize}[nosep]
+\item Das Residuum wurde \emph{unabhängig} nachgerechnet, im physikalischen
+  Raum aus $W$ und $C$ statt im Tilde-Raum matrixfrei:
+  $1{,}4\cdot10^{-8}$ gegen $5\cdot10^{-9}$. Die beiden Wege entstehen
+  getrennt; ihre Übereinstimmung schließt einen Fehler in der Äquilibrierung
+  oder in der Blockanwendung aus.
+\item Der Beitrag der Nichtleiter ist $-2{,}2\cdot10^{-15}$\,N. Ohne
+  Regularisierung ist $\sigma$ dort exakt null, also $J = 0$ und die Differenz
+  reine Rundung. Die Nichtleiter-Maske ist in diesem Modus nachweislich
+  redundant.
+\end{itemize}
+
+\paragraph{Ein Fehler auf dem Weg dorthin, weil er lehrreich ist.} Der erste
+Lauf blieb ab Iteration 60 bei einem relativen Residuum von 0,058 stehen --
+völlig flach über 150 weitere Iterationen. Ursache war die Richtung der
+Äquilibrierung: die rechte Seite wurde durch $D$ geteilt statt multipliziert.
+
+Das ist keine bloße Skalierung. Der Operator im Tilde-Raum ist
+$\tilde A = DAD$, sein Nullraum also $D^{-1}n$, und
+\begin{equation}
+  \underbrace{(Db)\cdot(D^{-1}n) = b\cdot n = 0}_{\text{richtig}},
+  \qquad
+  \underbrace{(b/D)\cdot(D^{-1}n) = b^{\!\top}D^{-2}n \neq 0}_{\text{falsch}} .
+\end{equation}
+Die Quelltermprojektion hatte $G^{\!\top}b$ im physikalischen Raum auf
+$5{,}79\cdot10^{-16}$ gebracht; die falsche Richtung trug den Gradientenanteil
+danach wieder hinein, gewichtet mit $D^{-2}$. Im regularisierten Modus fällt
+das nicht auf -- dort ist $A$ regulär und jede rechte Seite konsistent.
+
+Das völlig flache Plateau ist die Signatur: ein Krylov-Verfahren kann den
+Anteil außerhalb des Bildraums prinzipiell nicht verkleinern. Der Lauf prüft
+die Konsistenz jetzt im Tilde-Raum, bevor er anfängt.
+
+\paragraph{Noch offen: die Netzreihe.} Ein Messpunkt zeigt, dass das Verfahren
+richtig rechnet, nicht dass es skaliert. Ob die äußere Iterationszahl über die
+Netzreihe ungefähr konstant bleibt, ist die eigentliche Zusage von AMS und
+steht noch aus.
 
 \subsection{Der verbleibende Weg: projiziertes GMRES}
 

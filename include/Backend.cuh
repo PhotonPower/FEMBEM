@@ -254,7 +254,57 @@ extern bool   g_fem_direct_no_project;
 /// geschlossenen Strom. Mit Eichung wird der Eintrag von b auf einer
 /// Baumkante stillschweigend verworfen -- eine schiefe Projektion, nicht die
 /// orthogonale auf ker(G^T). Beide bleiben unabhaengig voneinander aktiv.
-extern bool   g_fem_direct_gauge;
+///
+/// Der Text oben beschreibt den Modus Gauge des Schalters darunter. Er stand
+/// frueher an einem eigenen bool g_fem_direct_gauge; der ist im Tri-State
+/// aufgegangen, die Begruendung bleibt.
+
+// -----------------------------------------------------------------------------
+// --fem-direct-nullspace=eps|gauge|ams
+// -----------------------------------------------------------------------------
+// Der Curl-Curl-Operator ist auf den Gradientenfeldern der nichtleitenden
+// Gebiete singulaer -- Luft UND die stromgetriebenen Spulen, die kappa = 0
+// tragen. Es gibt drei Wege, damit umzugehen, und sie schliessen einander aus:
+//
+//   Regularize  sigma_Luft = eps * sigma_Leiter (--fem-direct-eps). Macht die
+//               Matrix regulaer und damit direkt zerlegbar. Der Preis steht in
+//               doc/harmonische-fem.tex: die Regularisierung weist dem
+//               Gradientenanteil einen um 1/eps VERSTAERKTEN Wert zu, sie
+//               unterdrueckt ihn nicht.
+//
+//   Gauge       Baum-Kobaum-Eichung (frueher --fem-direct-gauge). Versucht und
+//               verworfen: Residuum 4,9e-14, aber B in der Platte weicht um
+//               2,4 % ab und F_z liegt bei 1,25 statt 1,02 N. B ist
+//               eichinvariant -- das ist also ein anderes Feld und nicht ein
+//               anderer Eichrepraesentant. Der Schalter bleibt, damit die
+//               Messung wiederholbar ist.
+//
+//   Ams         Gar nichts tun und das singulaere, aber KONSISTENTE System
+//               loesen. Das ist der Normalfall bei Hiptmair-Xu und in hypre der
+//               singulaere Modus (HYPRE_AMSSetBetaPoissonMatrix(NULL)): der
+//               skalare Hilfsraum wird ausserhalb des Leiters stillgelegt --
+//               G^T A G ist dort bis auf Rundung null --, und die
+//               Gradientenmoden traegt der VEKTORIELLE Hilfsraum ueber den
+//               Alpha-Poisson-Operator mit nu > 0 ueberall.
+//
+//               Voraussetzung ist G^T b = 0. Die Quellterm-Projektion liefert
+//               das (gemessen 6e-16); --fem-direct-no-project ist mit diesem
+//               Modus deshalb unvertraeglich.
+//
+//               SCHLIESST DEN DIREKTLOESER AUS. Ohne Regularisierung und ohne
+//               Eichung ist die 2n-Blockform echt singulaer; cuDSS pivotiert
+//               darauf ins Nichts, und CUDSS_DATA_INFO meldet das nicht -- auf
+//               diesem Pfad ist eine singulaere Matrix schon einmal mit
+//               info = 0 zerlegt worden. --fem-direct-ams erzwingt deshalb den
+//               iterativen Weg.
+//
+// Die drei sind bewusst EIN Schalter und nicht drei Flaggen. Eichung und
+// Regularisierung zugleich waeren sinnlos -- die Eichung waehlt ihren Baum
+// ueber kappa == 0, und nach der Regularisierung hat kein Element mehr
+// kappa == 0, der Baum bliebe leer. Als drei unabhaengige bool laesst sich das
+// hinschreiben, ohne dass es auffaellt.
+enum class FemDirectNullspace { Regularize, Gauge, Ams };
+extern FemDirectNullspace g_fem_direct_nullspace;
 
 /// --harmonic-inner-tol=X und --harmonic-outer-cap=N.
 ///
@@ -437,7 +487,15 @@ inline bool   want_fem_direct()      { return g_fem_direct; }
 inline double fem_direct_eps()       { return g_fem_direct_eps; }
 inline bool   fem_direct_iterative() { return g_fem_direct_iterative; }
 inline bool   fem_direct_project()   { return !g_fem_direct_no_project; }
-inline bool   fem_direct_gauge()     { return g_fem_direct_gauge; }
+inline FemDirectNullspace fem_direct_nullspace() { return g_fem_direct_nullspace; }
+inline bool   fem_direct_gauge()     { return g_fem_direct_nullspace == FemDirectNullspace::Gauge; }
+inline bool   fem_direct_ams()       { return g_fem_direct_nullspace == FemDirectNullspace::Ams; }
+/// Wird der Nullraum ANDERS als durch Regularisierung beseitigt? Genau das
+/// fragt preflight_fem_direct() ab: nur im regularisierten Fall ist kappa = 0
+/// eine Beanstandung, sonst ist es der Normalfall.
+inline bool   fem_direct_nullspace_handled() {
+    return g_fem_direct_nullspace != FemDirectNullspace::Regularize;
+}
 inline double harmonic_frequency()   { return g_harmonic_hz; }
 inline double harmonic_inner_tol()   { return g_harmonic_inner_tol; }
 inline int    harmonic_outer_cap()   { return g_harmonic_outer_cap; }

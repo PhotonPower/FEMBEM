@@ -76,9 +76,15 @@ struct PreflightReport {
 /// air_component_id ist die component_id des Luftgebiets, per Vorgabe 0 --
 /// so schreibt tools/import_bdf.py es.
 /// `nullspace_handled` sagt, dass der Curl-Curl-Nullraum ANDERS als durch
-/// Regularisierung beseitigt wird -- konkret durch die Baum-Kobaum-Eichung.
-/// Dann ist kappa = 0 in der Luft kein Fehler, sondern der Normalfall, und die
-/// entsprechende Beanstandung entfaellt.
+/// Regularisierung behandelt wird -- durch die Baum-Kobaum-Eichung, oder gar
+/// nicht, weil ihn der vektorielle AMS-Hilfsraum traegt
+/// (--fem-direct-nullspace=gauge beziehungsweise =ams). Dann ist kappa = 0 in
+/// der Luft kein Fehler, sondern der Normalfall, und die entsprechende
+/// Beanstandung entfaellt.
+///
+/// Der Aufrufer bildet das ueber bf::fem_direct_nullspace_handled() ab; hier
+/// steht bewusst ein bool und keine Kopie des Enums, damit dieses Modul ohne
+/// Backend.cuh uebersetzbar bleibt.
 ///
 /// Ohne dieses Kennzeichen beanstandet der Preflight jedes nichtleitende
 /// Element -- richtig fuer den regularisierten Weg, falsch fuer den geeichten.

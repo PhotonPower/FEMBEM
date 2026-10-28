@@ -43,7 +43,8 @@ bool    g_fem_direct     = false;   // --fem-direct
 double  g_fem_direct_eps = 1e-8;    // sigma_Luft = eps * sigma_Leiter
 bool    g_fem_direct_iterative = false;  // --fem-direct-iterative
 bool    g_fem_direct_no_project = false; // --fem-direct-no-project
-bool    g_fem_direct_gauge      = false; // --fem-direct-gauge
+FemDirectNullspace g_fem_direct_nullspace = FemDirectNullspace::Regularize;
+                                         // --fem-direct-nullspace=eps|gauge|ams
 bool    g_harmonic_checks    = false;  // --harmonic-checks
 int     g_harmonic_outer_restart = 64;
 double  g_harmonic_inner_tol = 1e-4;   // Stufe mit der kleinsten Gesamtarbeit
@@ -178,6 +179,17 @@ void print_usage(const char* exe_name) {
         << "                 1e-6 und wird mit feinerem Netz systematisch schlechter,\n"
         << "                 ist es ein Konditionierungsproblem; stagniert es auch auf\n"
         << "                 dem groebsten Netz, sitzt das Problem nicht im Loeser.\n"
+        << "  --fem-direct-nullspace=eps|gauge|ams  wie der Curl-Curl-Nullraum der\n"
+        << "                 nichtleitenden Gebiete behandelt wird (Standard eps).\n"
+        << "                 eps   sigma_Luft = X * sigma_Leiter, siehe --fem-direct-eps.\n"
+        << "                 gauge Baum-Kobaum-Eichung, siehe --fem-direct-gauge.\n"
+        << "                 ams   gar nicht -- das singulaere, aber konsistente System\n"
+        << "                       wird geloest, den Nullraum traegt der vektorielle\n"
+        << "                       AMS-Hilfsraum. Erzwingt den iterativen Loeser: ohne\n"
+        << "                       Regularisierung ist die Matrix echt singulaer, und\n"
+        << "                       cuDSS meldet das NICHT. Kurzform --fem-direct-ams.\n"
+        << "                       Unvertraeglich mit --fem-direct-no-project: das\n"
+        << "                       Verfahren setzt G^T b = 0 voraus.\n"
         << "  --fem-direct-gauge  beseitigt den Curl-Curl-Nullraum durch die\n"
         << "                 Baum-Kobaum-Eichung statt durch sigma_Luft. Die\n"
         << "                 Regularisierung entfaellt dann. Erwartung: bessere\n"
@@ -318,9 +330,38 @@ bool select_backend_from_args(int argc, char** argv) {
         } else if (arg == "--ritz") {
             g_want_ritz = true;
         } else if (arg == "--fem-direct-gauge") {
-            g_fem_direct_gauge = true;
-            g_fem_direct       = true;
-            g_harmonic_solve   = true;
+            // Altname, bleibt als Abkuerzung fuer --fem-direct-nullspace=gauge.
+            g_fem_direct_nullspace = FemDirectNullspace::Gauge;
+            g_fem_direct           = true;
+            g_harmonic_solve       = true;
+        } else if (arg == "--fem-direct-ams" ||
+                   arg == "--fem-direct-nullspace=ams") {
+            g_fem_direct_nullspace = FemDirectNullspace::Ams;
+            g_fem_direct           = true;
+            g_harmonic_solve       = true;
+            // Ohne Regularisierung und ohne Eichung ist die 2n-Blockform echt
+            // singulaer. Der Direktloeser ist damit nicht bloss langsam,
+            // sondern unzulaessig -- also hier erzwungen und nicht bloss
+            // empfohlen. fem.cu prueft es noch einmal, weil die Reihenfolge
+            // der Argumente das hier sonst wieder aufheben koennte.
+            g_fem_direct_iterative = true;
+            // ABSICHTLICH NICHT g_use_ams. Das ist der Schalter des
+            // TRANSIENTEN, gekoppelten Operators; der FEM-direkt-Pfad baut
+            // seinen eigenen und ruft setup_ams() dort selbst. Ihn hier
+            // mitzusetzen haette den AMS zusaetzlich auf dem gekoppelten
+            // Operator aufgebaut -- Minuten Arbeit fuer etwas, das dieser Lauf
+            // nie anwendet.
+        } else if (arg == "--fem-direct-nullspace=gauge") {
+            g_fem_direct_nullspace = FemDirectNullspace::Gauge;
+            g_fem_direct           = true;
+            g_harmonic_solve       = true;
+        } else if (arg == "--fem-direct-nullspace=eps") {
+            g_fem_direct_nullspace = FemDirectNullspace::Regularize;
+            g_fem_direct           = true;
+            g_harmonic_solve       = true;
+        } else if (arg.rfind("--fem-direct-nullspace=", 0) == 0) {
+            std::cerr << "[Backend] " << arg << " kennt nur eps, gauge oder ams.\n";
+            return false;
         } else if (arg == "--fem-direct-no-project") {
             g_fem_direct_no_project = true;
         } else if (arg == "--fem-direct-iterative") {
