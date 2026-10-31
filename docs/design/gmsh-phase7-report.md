@@ -141,6 +141,12 @@ wirken in die Gegenrichtung. Die richtungsweise Messung liegt deshalb höher.
 - **Die Restabweichung von gut 3 % zum Sollwert bleibt offen.** Sie liegt
   über der Unsicherheit der Hochrechnung und des Sollwerts.
 
+  **Nachtrag 31.10.2026:** geklärt in
+  [gmsh-phase8-report.md](gmsh-phase8-report.md). Die Lücke liegt in den
+  Daten, nicht im Löser: Ein unabhängiges Ringmodell ergibt mit den Daten
+  von TEAM 28 bei 11,3 mm F_z = 1,006 N; FEM-direkt liegt 1 % darüber. Die
+  drei Messungen unten sind gemacht.
+
 ## Nächste Messungen
 
 1. Gegenprobe der Addition an einem kombinierten Netz: `--coil-nz 16` mit

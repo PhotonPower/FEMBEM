@@ -6,6 +6,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `tools/team28_axisymmetric.py`: unabhängige Kraftreferenz für TEAM 28,
+  rotationssymmetrisches Ringmodell mit exakter Gegeninduktivität, nur numpy.
+  Ergibt mit den Daten der Spezifikation F_z = 1,006 N bei 11,3 mm und eine
+  Schwebehöhe von 11,05 mm (`--equilibrium`). Test
+  `tools/tests/test_team28_axisymmetric.py` (CTest-Marke `tools`, CI).
 - **Netze mit Gmsh** (`tools/gmsh/`, Anleitung in `docs/meshing.md`):
   - `team28_hex.py`: TEAM-28-Netz aus reinen Hexaedern für den BEM-FEM-Pfad;
     Spulen als konformer 360°-Ring, Platte als Vollscheibe mit Hexaederkern.
@@ -54,6 +59,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Geändert
 
+- Bericht `docs/design/gmsh-phase8-report.md`: Die Einzeleffekte der
+  Netzauflösung addieren sich (0,03 % am kombinierten Netz), Spalt Ordnung 2;
+  FEM-direkt hochgerechnet 1,016–1,017 N. Die Lücke zum Gewicht der Platte
+  (1,0497 N) liegt in den Daten, nicht im Löser: Das Ringmodell ergibt
+  1,006 N, FEM-direkt liegt 1 % darüber.
 - Bericht `docs/design/gmsh-phase7-report.md`: FEM-direkt mit getrennt
   verfeinerten Richtungen. Die axiale Auflösung der Spulen bestimmt den
   Netzfehler (Ordnung 2; die Vorgabe `--coil-nz 6` überschätzt F_z um 2,2 %).
