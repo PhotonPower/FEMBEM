@@ -59,6 +59,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Geändert
 
+- Bericht `docs/design/gmsh-phase9-report.md`: Der Rand des Luftgebiets
+  trägt −0,77 % (unabhängig von der Spulenauflösung); FEM-direkt liegt
+  hochgerechnet +0,8 … +1,0 % (11,3 mm) und +0,5 … +0,6 % (3,8 mm) über dem
+  Ringmodell. Der harmonische BEM-FEM-Lauf konvergierte nicht.
+- `tools/team28_axisymmetric.py` rechnet mit feineren Spulenfäden
+  (28 × 16 × 52): 1,00665 N bei 11,3 mm, Grenzwert 1,00684 N (vorher
+  1,00611 N).
 - Bericht `docs/design/gmsh-phase8-report.md`: Die Einzeleffekte der
   Netzauflösung addieren sich (0,03 % am kombinierten Netz), Spalt Ordnung 2;
   FEM-direkt hochgerechnet 1,016–1,017 N. Die Lücke zum Gewicht der Platte
@@ -100,6 +107,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Behoben
 
+- FEM-direkt: Die Maxwell-Nullprobe galt bis 20 % der Kraft als „klein“ und
+  stellte dann das Volumenintegral infrage (bei radial 10 mit 19,5 %). Jetzt
+  ist die Grenze 5 %, und die Meldung nennt den gemessenen Anteil statt fest
+  „rund 200 N“.
 - GMRES, BiCGStab, der harmonische GMRES und das CG der Kohomologie-Eichung
   brechen bei NaN/Inf sofort ab, statt bis zur Iterationsgrenze zu laufen und
   ein NaN-x zurückzugeben; GMRES meldet dann ein NaN-Residuum. Drei Aufrufer

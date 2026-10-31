@@ -78,7 +78,7 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 | 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0) | **abgeschlossen**, siehe „Ergebnis Phase 3“ unten |
 | 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | **abgeschlossen**, siehe „Ergebnis Phase 4“ unten |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | **abgeschlossen** |
-| 6 | Netz- und Abschneideserien auf dem Server | **begonnen**: FEM-direkt konvergiert am Gleichgewicht gegen den Sollwert, siehe [gmsh-phase6-report.md](gmsh-phase6-report.md); Auflösung je Richtung: [gmsh-phase7-report.md](gmsh-phase7-report.md) — die Spulenschichten bestimmen den Fehler; Absicherung und Kraftreferenz (Ringmodell): [gmsh-phase8-report.md](gmsh-phase8-report.md) |
+| 6 | Netz- und Abschneideserien auf dem Server | **begonnen**: FEM-direkt konvergiert am Gleichgewicht gegen den Sollwert, siehe [gmsh-phase6-report.md](gmsh-phase6-report.md); Auflösung je Richtung: [gmsh-phase7-report.md](gmsh-phase7-report.md) — die Spulenschichten bestimmen den Fehler; Absicherung und Kraftreferenz (Ringmodell): [gmsh-phase8-report.md](gmsh-phase8-report.md); Luftgebiet und zweite Höhe: [gmsh-phase9-report.md](gmsh-phase9-report.md) |
 
 ## Ergebnis Phase 1
 

@@ -146,6 +146,13 @@ Luftgebiets:
   Abgleich nicht mehr nötig.
 - Die Hochrechnung des FEM-direkt-Pfads ist bis auf das Luftgebiet gemessen.
 
+**Nachtrag 31.10.2026:** Die Messungen unten sind gemacht, siehe
+[gmsh-phase9-report.md](gmsh-phase9-report.md). Das Ringmodell rechnet jetzt
+mit feineren Spulenfäden: 1,00684 N bei 11,3 mm statt 1,00611 N (+0,07 %).
+Der Rand trägt −0,77 % und erklärt den Abstand nicht; FEM-direkt liegt
++0,8 … +1,0 % (11,3 mm) und +0,5 … +0,6 % (3,8 mm) über dem Ringmodell. Der
+BEM-FEM-Lauf konvergierte nicht.
+
 ## Nächste Messungen
 
 1. Abschneiden radial 5 → 10 an einem Netz mit 12 Spulenschichten

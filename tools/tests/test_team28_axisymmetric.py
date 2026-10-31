@@ -79,10 +79,11 @@ def main():
     lo = ax.lift_force(11.3e-3, sigma=ax.SIGMA / 100.0, nr=65, nz=3, ncr=(7, 4), ncz=13)
     hi = ax.lift_force(11.3e-3, sigma=ax.SIGMA / 10.0, nr=65, nz=3, ncr=(7, 4), ncz=13)
     expect(f"kleine Leitfaehigkeit: F ~ sigma^2 (Verhaeltnis {hi / lo:.2f})", abs(hi / lo - 100.0) < 1.0)
-    # Mittleres Gitter, damit der Test in Sekunden laeuft. Gitterreihe 65x3 /
-    # 130x6 / 260x12: 1.00349 / 1.00602 / 1.00611 N; das feine Gitter (Vorgabe
-    # des Werkzeugs) liegt 1e-4 hoeher (docs/design/gmsh-phase8-report.md).
-    grid = dict(nr=130, nz=6)
+    # Mittleres Plattengitter und grobe Spulenfaeden (14x8x26), damit der Test
+    # in Sekunden laeuft. Plattengitter 65x3 / 130x6 / 260x12: 1.00349 /
+    # 1.00602 / 1.00611 N; die Vorgabe des Werkzeugs (260x12, 28x16x52) gibt
+    # 1.00665 N (docs/design/gmsh-phase8-report.md, gmsh-phase9-report.md).
+    grid = dict(nr=130, nz=6, ncr=(14, 8), ncz=26)
     F = ax.lift_force(11.3e-3, **grid)
     expect(f"F_z(11.3 mm) = {F:.5f} N, Bezug 1.00602 N", abs(F - 1.00602) < 2e-5)
     F_low = ax.lift_force(11.0e-3, **grid)
