@@ -4693,17 +4693,28 @@ int mainloop(int argc, char** argv) {
                                   << " N im Imaginaerteil, bei einem gesuchten "
                                      "Ergebnis von " << std::fabs(lz) << " N.\n";
 
-                        if (err_r > 0.2 * std::fabs(lz)) {
+                        // Eine Gegenprobe, die den Nullwert um einen Anteil q der
+                        // Kraft verfehlt, kann Abweichungen dieser Groesse nicht
+                        // dem Volumenintegral anlasten. Die Grenze lag bei 20 %;
+                        // auf dem TEAM-28-Netz mit radial 10 verfehlte die
+                        // Nullprobe 0 N um 19,5 % und galt damit als "klein",
+                        // waehrend das Ringmodell (tools/team28_axisymmetric.py)
+                        // das Volumenintegral auf rund 1 % bestaetigt
+                        // (docs/design/gmsh-phase9-report.md).
+                        const double null_frac = (std::fabs(lz) > 0.0)
+                            ? err_r / std::fabs(lz) : 0.0;
+                        if (null_frac > 0.05) {
                             std::cout << "[FEM-direkt]   -> der Oberflaechenpfad traegt "
                                          "hier nicht, und das ist GEMESSEN, nicht "
                                          "vermutet: er verfehlt einen analytisch "
-                                         "bekannten Nullwert um mehr als das gesuchte "
-                                         "Ergebnis. Die Abweichung oben ist damit "
-                                         "erklaert und kein Hinweis auf das "
-                                         "Volumenintegral. Ursache ist die Bildung "
+                                         "bekannten Nullwert um "
+                                      << 100.0 * null_frac
+                                      << " % des gesuchten Ergebnisses. Die "
+                                         "Abweichung oben ist damit kein Hinweis auf "
+                                         "das Volumenintegral. Ursache ist die Bildung "
                                          "einer kleinen Nettokraft als Differenz von "
                                          "Einzelbeitraegen um |B|^2/(2 mu_0) mal "
-                                         "Huellflaeche -- hier rund 200 N.\n";
+                                         "Huellflaeche, die weit groesser sind.\n";
                         } else {
                             std::cout << "[FEM-direkt]   -> die Nullprobe ist klein. "
                                          "Eine Abweichung zwischen beiden Wegen waere "

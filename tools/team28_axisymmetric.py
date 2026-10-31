@@ -120,9 +120,13 @@ def ring_currents(R, Z, dr, dz, rs, zs, Is, sigma, freq):
     return np.linalg.solve(np.diag(res) + 1j * w * L, -1j * w * (M @ Is))
 
 
-def lift_force(z0, I=I_MAX, sigma=SIGMA, freq=FREQ, nr=260, nz=12, ncr=(14, 8), ncz=26):
+def lift_force(z0, I=I_MAX, sigma=SIGMA, freq=FREQ, nr=260, nz=12, ncr=(28, 16), ncz=52):
     """Zeitgemittelte Hubkraft in N; z0 = Unterkante der Platte ueber der
-    Spulenoberkante in m."""
+    Spulenoberkante in m.
+
+    Die Stromfaeden der Spulen (Mittelpunktsregel) konvergieren mit Ordnung 2.
+    Bei 11.3 mm: 14x8x26 Faeden 1.00611 N, 28x16x52 1.00665 N, 56x32x104
+    1.00679 N, Grenzwert 1.00684 N. Die Vorgabe liegt 2e-4 darunter."""
     R, Z, dr, dz = plate_rings(nr, nz, z0)
     rs, zs, Is = coil_filaments(I, ncr, ncz)
     Ip = ring_currents(R, Z, dr, dz, rs, zs, Is, sigma, freq)
