@@ -151,3 +151,11 @@ auch das Luftgebiet, das den Speicher bestimmt; `--scale 1.25` passt nicht
 mehr. Günstiger ist, gezielt die Platte zu verfeinern (`--plate-nz`, `--h`)
 bei grobem Außenraum, um zu sehen, welcher Teil der Auflösung die −1,1 % je
 Stufe trägt.
+
+**Nachtrag 31.10.2026:** Die Messung ist gemacht, richtungsweise statt über
+`--scale`: [gmsh-phase7-report.md](gmsh-phase7-report.md). Die −1,1 % je
+Stufe kommen aus den Spulenschichten (Ordnung 2, −4,75 % bis zum Grenzwert
+gegenüber 4 Schichten), Platte, Spalt und Netzweite wirken entgegen. Die
+Hochrechnung „0,99–1,01 N“ oben ist damit überholt.
+Alle Läufe hier nutzen die damalige Vorgabe `--coil-nz 6`; die Vorgabe ist
+seitdem 12.

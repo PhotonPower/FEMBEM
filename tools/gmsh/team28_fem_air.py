@@ -290,7 +290,10 @@ def main():
     ap.add_argument("-o", "--out", default="team28_fem_air.vtk", help="Ausgabedatei (Legacy-VTK)")
     ap.add_argument("--h", type=float, default=5.0, help="Kantenlaenge in der Ebene an Leitern und Platte, mm")
     ap.add_argument("--h-air", type=float, default=35.0, help="Kantenlaenge am Aussenrand der Luft, mm")
-    ap.add_argument("--coil-nz", type=int, default=6, help="Schichten ueber die Spulenhoehe (52 mm)")
+    # 12 statt 6 nach docs/design/gmsh-phase7-report.md: die Spulenschichten
+    # bestimmen den Netzfehler (Ordnung 2). 6 Schichten ueberschaetzen F_z um
+    # 2,2 %, 12 um 0,55 %; das kostet bei --scale 0.75 rund +45 % nnz(LU).
+    ap.add_argument("--coil-nz", type=int, default=12, help="Schichten ueber die Spulenhoehe (52 mm)")
     ap.add_argument("--gap-nz", type=int, default=3, help="Schichten im Spalt Spule-Platte")
     ap.add_argument("--plate-nz", type=int, default=4, help="Schichten ueber die Plattendicke (3 mm)")
     ap.add_argument("--air-first", type=float, default=3.0, help="erste Luftschicht am Leiter, mm")
