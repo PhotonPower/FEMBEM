@@ -50,6 +50,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Behoben
 
+- Windows mit cuDSS: `cudss64_0.dll` wird nach dem Bauen neben `fembem.exe`
+  und `test_sparse_direct.exe` kopiert. Ohne die DLL im `PATH` startete der
+  Test nicht und lief unter CTest ohne Ausgabe in seine Zeitgrenze (120 s).
 - Bau unter Linux mit CUDA 13: neue Signatur von `cudaMemPrefetchAsync`.
 - `test_block_system` unter Compilern mit FMA (z. B. GCC unter RHEL 10).
 - CMake lehnt cuDSS älter als 0.8 ab, statt mitten in der Übersetzung zu
