@@ -1,7 +1,9 @@
 # Gmsh-Vernetzung: Bericht zu Phase 7 (Auflösung je Richtung, FEM-direkt)
 
 Stand: 31.10.2026. Gerechnet auf einer NVIDIA GeForce RTX 3090 (sm_86, 24 GB),
-Windows 11, CUDA 13.4, cuDSS 0.8.0, Stand `main` 14f69c3. Netze aus
+Windows 11, CUDA 13.4, cuDSS 0.8.0. Programm aus Branch
+`fix/solver-nonfinite-abort` (auf `main` 14f69c3; die Änderung betrifft nur
+die iterativen Löser, nicht den Direktlöser). Netze aus
 `tools/gmsh/team28_fem_air.py`, Lauf `fembem --fem-direct --mesh=…`
 (ε = 1e-8, 50 Hz, Quelle auf der Amplitude), wie in
 [gmsh-phase6-report.md](gmsh-phase6-report.md).
