@@ -132,8 +132,9 @@ wirken in die Gegenrichtung. Die richtungsweise Messung liegt deshalb höher.
   mehr als jeder andere Auflösungsfehler. Mit 12 Schichten sind es 0,55 %, mit
   16 Schichten 0,31 %. Der Preis ist mäßig: bei `--scale 0.75` kosten 4 → 12
   Schichten +45 % nnz(LU), weniger als ein Schritt `--scale` (1,48e9 →
-  3,9e9 geschätzt aus dem Verhältnis bei radial 7). **Vorschlag: Vorgabe auf 12 anheben** (nicht umgesetzt,
-  Entscheidung offen).
+  3,9e9 geschätzt aus dem Verhältnis bei radial 7). **Umgesetzt: die Vorgabe
+  ist jetzt 12.** Alle Läufe in diesem Bericht und in Phase 6 entstanden mit
+  der alten Vorgabe 6; wer sie nachrechnet, gibt `--coil-nz 6` an.
 - **Netzserien über `--scale` verdecken die Physik.** Gegenläufige Beiträge
   heben sich teilweise auf, und eine Ordnung aus zwei `--scale`-Punkten ist
   nicht deutbar. Für Konvergenzaussagen die Richtungen einzeln verfeinern.

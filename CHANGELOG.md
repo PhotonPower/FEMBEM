@@ -43,6 +43,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   verfeinerten Richtungen. Die axiale Auflösung der Spulen bestimmt den
   Netzfehler (Ordnung 2; die Vorgabe `--coil-nz 6` überschätzt F_z um 2,2 %).
   Hochgerechnet F_z ≈ 1,015–1,018 N gegen den Sollwert 1,0497 N.
+- `tools/gmsh/team28_fem_air.py`: Vorgabe `--coil-nz` von 6 auf 12 angehoben
+  (Fehler in F_z 2,2 % → 0,55 %). Die Läufe der Phasen 6 und 7 nachrechnen
+  mit `--coil-nz 6`.
 - `tools/check_map.py` lehnt ein Plattennetz mit Loch ab: **TEAM 28 hat kein
   Loch in der Platte** (ein Loch steht im Paper nur als Ausblick). Gewicht im
   Schwebegleichgewicht 0,107 kg · 9,81 = 1,0497 N.

@@ -157,3 +157,5 @@ Stufe trägt.
 Stufe kommen aus den Spulenschichten (Ordnung 2, −4,75 % bis zum Grenzwert
 gegenüber 4 Schichten), Platte, Spalt und Netzweite wirken entgegen. Die
 Hochrechnung „0,99–1,01 N“ oben ist damit überholt.
+Alle Läufe hier nutzen die damalige Vorgabe `--coil-nz 6`; die Vorgabe ist
+seitdem 12.
