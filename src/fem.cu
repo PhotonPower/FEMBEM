@@ -4129,7 +4129,10 @@ int mainloop(int argc, char** argv) {
                                   << " Iterationen, relatives Residuum "
                                   << it_solver.last_relative_residual()
                                   << ", " << secs << " s\n";
-                        if (it_solver.last_relative_residual() > tol) {
+                        // !(res <= tol) statt res > tol: ein NaN-Residuum
+                        // (Abbruch wegen nicht endlicher Werte) ist nicht
+                        // konvergiert.
+                        if (!(it_solver.last_relative_residual() <= tol)) {
                             std::cout << "[FEM-direkt]   NICHT konvergiert.\n";
 
                             // WO sitzt das uebriggebliebene Residuum? Das
@@ -5342,7 +5345,7 @@ int mainloop(int argc, char** argv) {
             // System weiterrechnen. Die Feldprobe vergleicht B_z gegen eine
             // analytische Loesung -- das ist nur sinnvoll, wenn das System
             // ueberhaupt geloest wurde.
-            if (bf::verify_field() && solver.last_relative_residual() > 1e-5) {
+            if (bf::verify_field() && !(solver.last_relative_residual() <= 1e-5)) {
                 std::cout << "\n========================================================\n"
                           << " FELDPROBE ABGEBROCHEN: GMRES nicht konvergiert         \n"
                           << "========================================================\n"

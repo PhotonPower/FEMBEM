@@ -39,7 +39,7 @@ jedes Tests nennt den Anlass.
 | Vorkonditionierer | `test_amg`, `test_amg_convergence`, `test_amg_anisotropy`, `test_ams_preconditioner`, `test_ams_scalar_masking`, `test_alpha_poisson`, `test_block_triangular_consistency`, `test_block_preconditioner_study`, `test_preconditioner_end_to_end`, `test_ritz_spectrum`, `test_asymmetry_estimator` |
 | Löser und Systeme | `test_dense_direct`, `test_sparse_direct`, `test_block_system`, `test_dirichlet_bc`, `test_fem_direct_preflight`, `test_patch_assembly`, `test_source_projection`, `test_reference_solver` |
 | Harmonischer Pfad | `test_harmonic_phase_average`, `test_harmonic_dirichlet_split` |
-| Numerische Robustheit | `test_dgemv_beta_zero`, `test_norm_nan_propagation` |
+| Numerische Robustheit | `test_dgemv_beta_zero`, `test_norm_nan_propagation`, `test_solver_nonfinite_abort` |
 | Mechanik | `test_free_motion_gate` (kraftgetriebene Objekte müssen `is_moving()` melden) |
 | Backend, Reproduzierbarkeit | `test_cpu_backend`, `test_determinism_fingerprint` |
 | Feld | `test_biot_savart` |

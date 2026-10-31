@@ -177,7 +177,9 @@ struct CtoRPreconditioner {
     /// Ausgabe zeigt nur eine aeussere Iteration, die nicht vorankommt, ohne
     /// den Grund zu nennen. Genau das ist beim ersten Lauf passiert.
     void warn_if_inner_failed(double rel) const {
-        if (m_warned || !(rel > inner_tol * 10.0)) return;
+        // rel <= ... statt !(rel > ...): ein NaN-Residuum ist ein
+        // Fehlschlag und muss die Warnung ausloesen, nicht unterdruecken.
+        if (m_warned || rel <= inner_tol * 10.0) return;
         m_warned = true;
         std::cout << "[Harmonisch] WARNUNG: der innere (W+T)-Loeser erreicht seine Toleranz "
                   << inner_tol << " nicht (rel. Residuum " << rel << ").\n"
@@ -494,6 +496,7 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
     int total = 0;
     double rel = 1.0;
     int    cycle = 0;      // Zaehler fuer die Restart-Zyklen
+    bool   nonfinite = false;  // NaN/Inf im Arnoldi-Schritt, siehe unten
     double g_est = 0.0;    // Residuenschaetzung am Ende des letzten Zyklus
 
     while (total < max_iter) {
@@ -556,6 +559,12 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
             bf::memcpy_d(hv_i.data(), w_i.data(), N * sizeof(double), cudaMemcpyDeviceToHost);
             const double h_next = norm2_pair(hv_r.data(), hv_i.data(), nd);
             Hm[static_cast<size_t>(k + 1) * m + k] = h_next;
+
+            // NaN/Inf aus H.apply() oder P.apply() landen in w und damit in
+            // h_next. Ohne Abbruch hier fiel der Fall erst in "!(den > 0)"
+            // auf, und das fuehrte mit ++k in die Aktualisierung von x --
+            // x wurde NaN. So bleibt x der letzte endliche Stand.
+            if (!std::isfinite(h_next)) { nonfinite = true; break; }
 
             // ---------------------------------------------------------------
             // Arnoldi-Relation pruefen:  H*Z_k  ==  sum_i V_i * Hm(i,k)
@@ -632,6 +641,12 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
             if ((total % 5) == 0 || total < 5)
                 std::cout << "  [Harmonisch] iter " << total << " | Rel. Res: " << rel << "\n";
             if (rel <= tol) { ++k; ++total; break; }
+        }
+
+        if (nonfinite) {
+            std::cout << "[Harmonisch] ABBRUCH: Arnoldi-Vektor nicht endlich (NaN/Inf) bei "
+                         "Iteration " << total << "; x bleibt beim letzten endlichen Stand.\n";
+            break;
         }
 
         // Schaetzung fuer den Vergleich beim naechsten Restart merken.

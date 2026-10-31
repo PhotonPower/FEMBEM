@@ -66,7 +66,8 @@ und schließt Endlichkeit ausdrücklich ein.
   BiCGStab, CohomologyGauge). Für NaN sind sie falsch, der Löser meldet also
   **keine** Konvergenz und läuft in die Iterationsgrenze. Das ist die sichere
   Richtung. Eine ausdrückliche Endlichkeitsprüfung wäre trotzdem besser — sie
-  würde sofort abbrechen statt 1000 Iterationen zu verbrennen. Offen.
+  würde sofort abbrechen statt 1000 Iterationen zu verbrennen.
+  **Erledigt (31.10.2026)**, siehe den Nachtrag unten.
 - **Bounding-Box-Berechnung** (`fem.cu:630`): `fmin`/`fmax` über
   Knotenkoordinaten. NaN-Koordinaten fielen durch. Risiko gering, weil der
   VTK-Leser die Koordinaten liefert; ein Audit direkt nach dem Einlesen wäre
@@ -111,3 +112,32 @@ Namensauflösung, falsche Signaturen — aber nicht alles:
 
 Wer ohne Toolkit arbeitet, sollte deshalb `-pedantic -Wall` mitgeben und damit
 rechnen, dass ein Build auf der Zielmaschine noch Fehler findet.
+
+## Nachtrag 31.10.2026: Endlichkeitsprüfung in den Krylov-Lösern
+
+Die Abbruchkriterien sind geblieben, dazu kommt eine ausdrückliche Prüfung:
+
+- `GMRESSolver` (`src/CoupledSolver.cu`) prüft `||b||`, das Residuum am
+  Zyklusbeginn und das über die Givens-Drehungen mitgeführte Residuum. Ist
+  eines nicht endlich, bricht er sofort ab, **bevor x angefasst wird**, und
+  `last_relative_residual()` ist NaN. Nebenbei setzt er den Wert jetzt auch,
+  wenn er schon am Zyklusbeginn konvergiert; vorher blieb dort der Wert eines
+  früheren Aufrufs stehen.
+- `BiCGStabSolver` prüft `||b||`, das Startresiduum, `||s||` und das
+  Residuum; beim Abbruch gibt er das beste bisher gefundene x zurück.
+- Der harmonische GMRES (`src/HarmonicSolver.cu`) prüft den neuen
+  Arnoldi-Vektor. Vorher fiel ein NaN dort erst in `!(den > 0)` auf, und das
+  führte in die Aktualisierung von x — x wurde NaN.
+- `CohomologyGauge.cpp` (`solve_cg`) bricht bei nicht endlichem Residuum ab.
+
+Bei der Durchsicht fanden sich außerdem **drei Aufrufer mit Form 1 in der
+gefährlichen Richtung**: `fem.cu` prüfte zweimal `last_relative_residual() >
+tol` als „nicht konvergiert“, und `warn_if_inner_failed` in
+`HarmonicSolver.cu` kehrte bei `!(rel > …)` früh zurück. Ein NaN-Residuum
+galt damit als konvergiert bzw. löste keine Warnung aus. Alle drei lauten jetzt
+`!(res <= tol)` bzw. `rel <= …`.
+
+Test: `tests/test_solver_nonfinite_abort.cu` (NaN in b, NaN in der Matrix,
+Überlauf erst im Arnoldi-Schritt; GMRES und BiCGStab). Gegen den alten Löser
+fallen 8 von 17 Prüfungen durch: GMRES läuft bis `max_iter` (200) und gibt ein
+NaN-x zurück, BiCGStab ebenso.

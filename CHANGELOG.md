@@ -50,6 +50,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Behoben
 
+- GMRES, BiCGStab, der harmonische GMRES und das CG der Kohomologie-Eichung
+  brechen bei NaN/Inf sofort ab, statt bis zur Iterationsgrenze zu laufen und
+  ein NaN-x zurückzugeben; GMRES meldet dann ein NaN-Residuum. Drei Aufrufer
+  werteten ein NaN-Residuum als Erfolg (`res > tol` als „nicht konvergiert“)
+  und prüfen jetzt `!(res <= tol)`. Test `test_solver_nonfinite_abort`.
 - Bau unter Linux mit CUDA 13: neue Signatur von `cudaMemPrefetchAsync`.
 - `test_block_system` unter Compilern mit FMA (z. B. GCC unter RHEL 10).
 - CMake lehnt cuDSS älter als 0.8 ab, statt mitten in der Übersetzung zu

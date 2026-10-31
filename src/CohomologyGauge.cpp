@@ -68,6 +68,9 @@ void solve_cg(int n, MatVec apply, const std::vector<double>& b,
     for (int i = 0; i < n; ++i) rr += r[i] * r[i];
     double b_norm = std::sqrt(rr);
     if (b_norm < 1e-300) return; // b ist Null -> Loesung ist Null
+    // NaN/Inf in b: weiterrechnen bringt nichts, siehe
+    // docs/design/nan-and-thresholds.md (Nachtrag 31.10.2026).
+    if (!std::isfinite(b_norm)) return;
     p = r;
     for (int iter = 0; iter < max_iter; ++iter) {
         apply(p, Ap);
@@ -81,6 +84,9 @@ void solve_cg(int n, MatVec apply, const std::vector<double>& b,
             r[i] -= alpha * Ap[i];
             rr_new += r[i] * r[i];
         }
+        // "< tol" ist fuer NaN falsch, ohne diese Pruefung liefe das CG bis
+        // max_iter weiter.
+        if (!std::isfinite(rr_new)) break;
         if (std::sqrt(rr_new) / b_norm < tol) { rr = rr_new; break; }
         const double beta = rr_new / rr;
         for (int i = 0; i < n; ++i) p[i] = r[i] + beta * p[i];
