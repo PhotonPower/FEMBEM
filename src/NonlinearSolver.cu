@@ -1,4 +1,4 @@
-#include "NedelecHexahedron.cuh"
+#include "NedelecDispatch.cuh"   // piola_contravariant; bindet NedelecHexahedron.cuh ein
 #include "Backend.cuh"
 #include "MaterialTypes.cuh"
 #include "NonlinearSolver.cuh"
@@ -153,9 +153,7 @@ BF_HD inline void assemble_nonlinear_jacobian_kernel_body(
             // zu sehen: F_x = 17 Prozent von F_z beim Maxwell-Pfad, beim
             // Volumenintegral sogar 64-mal groesser als F_z, wo beide
             // praktisch null sein muessen.
-            real_curlW[i].x = (J[0][0]*curlW[i].x + J[1][0]*curlW[i].y + J[2][0]*curlW[i].z) / detJ;
-            real_curlW[i].y = (J[0][1]*curlW[i].x + J[1][1]*curlW[i].y + J[2][1]*curlW[i].z) / detJ;
-            real_curlW[i].z = (J[0][2]*curlW[i].x + J[1][2]*curlW[i].y + J[2][2]*curlW[i].z) / detJ;
+            real_curlW[i] = piola_contravariant(J, detJ, curlW[i]);
             
             real_curlW[i].x *= signs[i]; real_curlW[i].y *= signs[i]; real_curlW[i].z *= signs[i];
             

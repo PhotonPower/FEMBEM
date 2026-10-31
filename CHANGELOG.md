@@ -36,9 +36,23 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - Test `test_harmonic_dirichlet_split`: Dirichlet-Rand im n-Raum gegen die
   2n-Blockform, mit Gegenprobe des eingebauten Fehlers; prüft außerdem die
   Knotengradienten je Elementtyp.
+- Test `test_piola_production` (Marke `host`): ruft die produktiven
+  Feldkörper (VtkExporter-Zellmittel, Maxwell-Kraft des transienten Pfades,
+  `harmonic_lorentz_body`, `harmonic_maxwell_body`) auf einem gedrehten und
+  gescherten Hexaeder, Tetraeder und Prisma auf und vergleicht mit einem
+  homogenen B, Kraft und Moment je Fläche (Fehler 2e-16 bis 1,4e-15). Der
+  Kontrollfall mit transponierter Piola-Formel fällt mit 100 % Fehler in B
+  durch.
 
 ### Geändert
 
+- Bericht `docs/design/gmsh-phase7-report.md`: FEM-direkt mit getrennt
+  verfeinerten Richtungen. Die axiale Auflösung der Spulen bestimmt den
+  Netzfehler (Ordnung 2; die Vorgabe `--coil-nz 6` überschätzt F_z um 2,2 %).
+  Hochgerechnet F_z ≈ 1,015–1,018 N gegen den Sollwert 1,0497 N.
+- `tools/gmsh/team28_fem_air.py`: Vorgabe `--coil-nz` von 6 auf 12 angehoben
+  (Fehler in F_z 2,2 % → 0,55 %). Die Läufe der Phasen 6 und 7 nachrechnen
+  mit `--coil-nz 6`.
 - `tools/check_map.py` lehnt ein Plattennetz mit Loch ab: **TEAM 28 hat kein
   Loch in der Platte** (ein Loch steht im Paper nur als Ausblick). Gewicht im
   Schwebegleichgewicht 0,107 kg · 9,81 = 1,0497 N.
@@ -47,6 +61,24 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   (BEM-FEM 2, FEM-direkt mit Luft 0).
 - `test_alpha_poisson` erweitert.
 - Bericht `docs/reports/harmonic-fem.tex` um die Ergebnisse des AMS-Modus ergänzt.
+- Die Piola-Transformationen stehen nur noch in `piola_covariant` und
+  `piola_contravariant` (`NedelecDispatch.cuh`); Assemblierung,
+  `verify_bz_nedelec_body` und `--fem-direct`-Diagnose (`fem.cu`),
+  Maxwell-Kraft (`TransientSolver`), `VtkExporter`, `HarmonicLorentz.cuh`,
+  `HarmonicMaxwell.cuh` und `NonlinearSolver.cu` rufen sie auf, statt die
+  Formel abzuschreiben. Gleiche Rechnung, gleiche Reihenfolge der Operationen.
+- Die Rümpfe von `compute_maxwell_loads_kernel` und
+  `compute_cell_centered_fields_kernel` stehen unverändert in
+  `include/MaxwellLoads.cuh` und `include/CellCenteredFields.cuh`, damit ein
+  Host-Test sie ohne den restlichen Löser aufrufen kann.
+- `test_ams_preconditioner`, `test_preconditioner_end_to_end`,
+  `test_discrete_gradient` und `test_curl_gradient_nullspace` assemblieren
+  mit der produktiven Konvention (vorher: W spaltenweise über invJ, rot W
+  zeilenweise über J, auf gestörten Netzen also ein etwas anderer Operator).
+  Schwellen unverändert; die Messwerte verschieben sich nur leicht: Jacobi-CG
+  298–693 → 296–697 Iterationen, AMS unverändert 23–28; GMRES ohne
+  Vorkonditionierer 161 Iterationen wie bisher, ILU(0) und AMS ebenfalls
+  unverändert. Hilfetext zu `--ams` entsprechend nachgezogen.
 
 ### Behoben
 
@@ -55,6 +87,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   ein NaN-x zurückzugeben; GMRES meldet dann ein NaN-Residuum. Drei Aufrufer
   werteten ein NaN-Residuum als Erfolg (`res > tol` als „nicht konvergiert“)
   und prüfen jetzt `!(res <= tol)`. Test `test_solver_nonfinite_abort`.
+- Windows mit cuDSS: `cudss64_0.dll` wird nach dem Bauen neben `fembem.exe`
+  und `test_sparse_direct.exe` kopiert. Ohne die DLL im `PATH` startete der
+  Test nicht und lief unter CTest ohne Ausgabe in seine Zeitgrenze (120 s).
 - Bau unter Linux mit CUDA 13: neue Signatur von `cudaMemPrefetchAsync`.
 - `test_block_system` unter Compilern mit FMA (z. B. GCC unter RHEL 10).
 - CMake lehnt cuDSS älter als 0.8 ab, statt mitten in der Übersetzung zu
@@ -63,6 +98,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   oder drei Volltori annahmen (richtig: Vollscheibe, zwei Volltori).
 - `test_ams_preconditioner` übergibt die Alpha-Poisson-Koeffizienten und läuft
   als Host-Test mit.
+- `harmonic_maxwell_body` (Gegenprobe Maxwell-Spannungstensor im
+  harmonischen Pfad) gewichtete jede Viereckfläche (Hexaeder, Seitenflächen
+  des Prismas) mit einem Viertel: der Faktor 4 der Flächenabbildung auf
+  [-1, 1]² fehlte. Dreiecksflächen waren richtig; die dokumentierten Zahlen
+  der Gegenprobe stammen von reinen Tetraedernetzen.
+- Kommentare und Dokumentation zur Piola-Transformation: `compute_jacobian`
+  legt J transponiert ab (J[i][j] = ∂x_j/∂ξ_i), richtig ist W = invJ·Ŵ und
+  rot W = Jᵀ·rot Ŵ / det J. Berichtigt in `fem.cu` („invJᵀ·W_ref“),
+  `HarmonicLorentz.cuh` (TransientSolver transformiere zeilenweise – längst
+  korrigiert), `docs/design/bem-block-preconditioning.md` (offener Punkt als
+  geklärt markiert) und `docs/reports/harmonic-fem.tex` (verstümmelte Formel;
+  die Verwechslung ist nicht „auf affinen Elementen folgenlos“, sondern nur
+  bei symmetrischem J).
 
 ## [0.1.0] – 2026-10-27
 

@@ -74,10 +74,16 @@ void buildK(int var,const d3 n[8],double nu,double K[12][12]){
     double xi=p[q][0],et=p[q][1],ze=p[q][2];
     double J[3][3],det; jac(n,xi,et,ze,J,det);
     d3 cw[12],rc[12]; curl(var,xi,et,ze,cw);
+    // Kontravariant SPALTENweise ueber J, wie piola_contravariant in
+    // NedelecDispatch.cuh: jac() legt J wie compute_jacobian() transponiert
+    // ab (J[r][c] = d x_c / d xi_r). Bis 31.10.2026 stand hier die
+    // zeilenweise Form; der Nullraum haengt daran nicht (rot grad = 0 gilt
+    // schon im Referenzelement), der Operator aber schon. Inline statt ueber
+    // den Helfer, weil dieser Test bewusst ohne CUDA-Header auskommt.
     for(int i=0;i<12;++i){
-      rc[i].x=(J[0][0]*cw[i].x+J[0][1]*cw[i].y+J[0][2]*cw[i].z)/det;
-      rc[i].y=(J[1][0]*cw[i].x+J[1][1]*cw[i].y+J[1][2]*cw[i].z)/det;
-      rc[i].z=(J[2][0]*cw[i].x+J[2][1]*cw[i].y+J[2][2]*cw[i].z)/det;
+      rc[i].x=(J[0][0]*cw[i].x+J[1][0]*cw[i].y+J[2][0]*cw[i].z)/det;
+      rc[i].y=(J[0][1]*cw[i].x+J[1][1]*cw[i].y+J[2][1]*cw[i].z)/det;
+      rc[i].z=(J[0][2]*cw[i].x+J[1][2]*cw[i].y+J[2][2]*cw[i].z)/det;
     }
     for(int i=0;i<12;++i)for(int j=0;j<12;++j)
       K[i][j]+=nu*(rc[i].x*rc[j].x+rc[i].y*rc[j].y+rc[i].z*rc[j].z)*det;

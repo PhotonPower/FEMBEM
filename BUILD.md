@@ -417,5 +417,9 @@ statt eines Abbruchs. Gesucht wird `cudss-config.cmake`, üblicherweise unter
 
 ### Zur Laufzeit
 
-Die DLL muss auffindbar sein. Entweder liegt `<cuDSS>/bin` im `PATH`, oder
-`cudss64_0.dll` wird neben die Exe kopiert.
+Die DLL muss auffindbar sein. Der Build kopiert `cudss64_0.dll` unter
+Windows nach dem Bauen neben jedes Programm, das gegen cuDSS linkt
+(`fembem.exe`, `test_sparse_direct.exe`); `<cuDSS>/bin` muss dafür nicht im
+`PATH` stehen. Fehlt die DLL trotzdem, startet das Programm nicht
+(Exit-Code `0xC0000135`, STATUS_DLL_NOT_FOUND), und unter CTest läuft der
+Test ohne jede Ausgabe in seine Zeitgrenze.

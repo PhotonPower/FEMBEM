@@ -150,27 +150,21 @@ BF_HD inline void harmonic_lorentz_body(
             // A ist eine kovariante 1-Form: W_phys = invJ * W_ref, ZEILENweise.
             // B = rot A ist eine kontravariante 2-Form: (1/detJ) * J_std *
             // rot W_ref, und J_std = J^T, also SPALTENweise ueber das hier
-            // vorliegende J.
+            // vorliegende J (compute_jacobian() baut J[i][j] = d x_j / d xi_i).
             //
-            // Die Index-Reihenfolge folgt VtkExporter.cu, das sie mit Bezug
-            // auf die Aufbaukonvention von compute_jacobian() ausdruecklich
-            // begruendet (J[i][j] = d x_j / d xi_i). Der Maxwell-Kernel in
-            // TransientSolver.cu transformiert B dagegen ZEILENweise -- beide
-            // koennen nicht recht haben. Wer diese Datei anfasst, sollte das
-            // im Auge behalten; hier ist bewusst der begruendeten Variante
-            // gefolgt.
-            const double wx = invJ[0][0]*W[i].x + invJ[0][1]*W[i].y + invJ[0][2]*W[i].z;
-            const double wy = invJ[1][0]*W[i].x + invJ[1][1]*W[i].y + invJ[1][2]*W[i].z;
-            const double wz = invJ[2][0]*W[i].x + invJ[2][1]*W[i].y + invJ[2][2]*W[i].z;
+            // Dieselbe Konvention wie in allen anderen Produktivpfaden; der
+            // Maxwell-Kernel in TransientSolver.cu ist laengst auf die
+            // spaltenweise Form korrigiert. Die Formeln stehen nur noch in
+            // piola_covariant/piola_contravariant (NedelecDispatch.cuh);
+            // tests/test_piola_production prueft diesen Koerper auf einem
+            // gedrehten und gescherten Element gegen ein homogenes B.
+            const double3 w = piola_covariant(invJ, W[i]);
+            const double3 c = piola_contravariant(J, detJ, curlW[i]);
 
-            const double cx = (J[0][0]*curlW[i].x + J[1][0]*curlW[i].y + J[2][0]*curlW[i].z) / detJ;
-            const double cy = (J[0][1]*curlW[i].x + J[1][1]*curlW[i].y + J[2][1]*curlW[i].z) / detJ;
-            const double cz = (J[0][2]*curlW[i].x + J[1][2]*curlW[i].y + J[2][2]*curlW[i].z) / detJ;
-
-            Ar.x += ar[i]*wx; Ar.y += ar[i]*wy; Ar.z += ar[i]*wz;
-            Ai.x += ai[i]*wx; Ai.y += ai[i]*wy; Ai.z += ai[i]*wz;
-            Br.x += ar[i]*cx; Br.y += ar[i]*cy; Br.z += ar[i]*cz;
-            Bi.x += ai[i]*cx; Bi.y += ai[i]*cy; Bi.z += ai[i]*cz;
+            Ar.x += ar[i]*w.x; Ar.y += ar[i]*w.y; Ar.z += ar[i]*w.z;
+            Ai.x += ai[i]*w.x; Ai.y += ai[i]*w.y; Ai.z += ai[i]*w.z;
+            Br.x += ar[i]*c.x; Br.y += ar[i]*c.y; Br.z += ar[i]*c.z;
+            Bi.x += ai[i]*c.x; Bi.y += ai[i]*c.y; Bi.z += ai[i]*c.z;
         }
 
         // <J x B> = (sigma*w/2) ( A_i x B_r - A_r x B_i )

@@ -134,6 +134,25 @@ if (FEMBEM_WITH_CUDSS)
     endif()
 endif()
 
+# Unter Windows liegt cudss64_0.dll in <cuDSS>/bin/<CUDA-Version>, und das
+# steht normalerweise nicht im PATH. Ohne die DLL startet ein Programm gar
+# nicht erst (STATUS_DLL_NOT_FOUND) -- und unter CTest gibt es nicht einmal
+# eine Meldung: test_sparse_direct lief ohne jede Ausgabe in seine
+# Zeitgrenze von 120 s, waehrend derselbe Test mit der DLL im PATH in unter
+# einer Sekunde besteht. Deshalb die DLL nach dem Bauen neben jedes Programm
+# kopieren, das gegen cuDSS linkt. Das importierte Ziel kennt den Pfad
+# (IMPORTED_LOCATION aus cudss-targets-release.cmake).
+function(fembem_link_cudss target)
+    target_link_libraries(${target} PRIVATE cudss)
+    target_compile_definitions(${target} PRIVATE FEMBEM_HAVE_CUDSS=1)
+    if (WIN32)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    $<TARGET_FILE:cudss> $<TARGET_FILE_DIR:${target}>
+            VERBATIM)
+    endif()
+endfunction()
+
 # 📐 Standards
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -224,8 +243,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # FEMBEM_HAVE_CUDSS steuert im Quellcode, ob der Loeseraufruf einkompiliert
 # wird. Ohne cuDSS bleibt der Rest unveraendert baubar.
 if (FEMBEM_CUDSS_FOUND)
-    target_link_libraries(${PROJECT_NAME} PRIVATE cudss)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE FEMBEM_HAVE_CUDSS=1)
+    fembem_link_cudss(${PROJECT_NAME})
 endif()
 
 if (FEMBEM_OPENMP_AVAILABLE)
@@ -461,6 +479,19 @@ add_executable(test_element_dispatch
 target_include_directories(test_element_dispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_element_dispatch PRIVATE CUDA::cudart)
 
+# 🧪 Piola-Transformation in den PRODUKTIVEN Feldkoerpern. test_element_dispatch
+# prueft die Helfer piola_covariant/piola_contravariant; dieser Test ruft die
+# Koerper selbst auf (VtkExporter-Zellmittel, Maxwell-Kraft des transienten
+# Pfades, harmonische Lorentz- und Maxwell-Kraft) -- auf einem gedrehten und
+# gescherten Element, weil die Transposition auf einem Quader unsichtbar ist.
+# Mit Kontrollfall (transponierte Formel muss durchfallen).
+add_executable(test_piola_production
+    tests/test_piola_production.cu
+    src/Backend.cu
+)
+target_include_directories(test_piola_production PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_piola_production PRIVATE CUDA::cudart)
+
 # 🧪 Reelle 2n-Blockform (AP5). Loest dasselbe Problem zweimal auf
 # verschiedenen Wegen -- komplex mit std::complex, und ueber die Blockform --
 # und vergleicht. Das prueft alle Vorzeichen gleichzeitig.
@@ -515,8 +546,7 @@ add_executable(test_sparse_direct
 target_include_directories(test_sparse_direct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_sparse_direct PRIVATE CUDA::cudart)
 if (FEMBEM_CUDSS_FOUND)
-    target_link_libraries(test_sparse_direct PRIVATE cudss)
-    target_compile_definitions(test_sparse_direct PRIVATE FEMBEM_HAVE_CUDSS=1)
+    fembem_link_cudss(test_sparse_direct)
 endif()
 
 add_executable(test_dirichlet_bc
@@ -930,6 +960,8 @@ add_test(NAME test_dirichlet_bc COMMAND test_dirichlet_bc)
 set_tests_properties(test_dirichlet_bc PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_element_dispatch COMMAND test_element_dispatch)
 set_tests_properties(test_element_dispatch PROPERTIES LABELS "host" TIMEOUT 120)
+add_test(NAME test_piola_production COMMAND test_piola_production)
+set_tests_properties(test_piola_production PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_system COMMAND test_block_system)
 add_test(NAME test_harmonic_dirichlet_split COMMAND test_harmonic_dirichlet_split)
 set_tests_properties(test_harmonic_dirichlet_split PROPERTIES LABELS "host" TIMEOUT 120)
@@ -1005,6 +1037,7 @@ add_custom_target(host_tests DEPENDS
     test_patch_assembly
     test_dirichlet_bc
     test_element_dispatch
+    test_piola_production
     test_block_system
     test_sparse_direct
     test_fem_direct_preflight

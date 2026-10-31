@@ -64,7 +64,7 @@ dem Schreiben in die Konvention des Lösers gedreht.
 |---|---|---|
 | `--h` | 5 | Kantenlänge in der Ebene an Leitern und Platte, mm |
 | `--h-air` | 35 | Kantenlänge am Außenrand der Luft, mm |
-| `--coil-nz`, `--gap-nz`, `--plate-nz` | 6, 3, 4 | Schichten über Spulenhöhe, Spalt und Plattendicke |
+| `--coil-nz`, `--gap-nz`, `--plate-nz` | 12, 3, 4 | Schichten über Spulenhöhe, Spalt und Plattendicke |
 | `--air-first`, `--air-growth` | 3, 1.4 | erste Luftschicht am Leiter (mm) und Wachstum nach außen |
 | `--truncation-radial`, `--truncation-axial` | 5, 10 | Abschneidefaktor in x/y und in z (beide gleich: `--truncation`) |
 | `--plate-z0` | 3.8 | Unterkante der Platte in mm, muss > 0 sein |
