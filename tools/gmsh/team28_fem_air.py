@@ -52,6 +52,7 @@ import time
 
 TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path.insert(0, TOOLS)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 AIR, OUTER, INNER, PLATE = 0, 1, 2, 3
 NAMES = {AIR: "Luft", OUTER: "Aussenspule", INNER: "Innenspule", PLATE: "Platte"}
@@ -162,6 +163,7 @@ def collect_and_write(path):
     """Elemente je Gruppe holen, Prismen in die Loeser-Konvention drehen, VTK schreiben."""
     import gmsh
     import numpy as np
+    import solver_vtk
     ntags, coords, _ = gmsh.model.mesh.getNodes()
     xyz = np.asarray(coords).reshape(-1, 3)
     pos = {int(t): i for i, t in enumerate(ntags)}
@@ -182,36 +184,16 @@ def collect_and_write(path):
     conn = np.vstack(cells)
     comp = np.concatenate(comps)
 
-    # Orientierung in der Konvention des Loesers: (x1-x0, x2-x0, x3-x0) rechtshaendig
-    P = xyz
-    det = np.linalg.det(np.stack([P[conn[:, 1]] - P[conn[:, 0]],
-                                  P[conn[:, 2]] - P[conn[:, 0]],
-                                  P[conn[:, 3]] - P[conn[:, 0]]], axis=1))
-    if (np.abs(det) < 1e-12 * np.abs(det).max()).any():
-        raise RuntimeError("entartete Prismen (Volumen ~ 0)")
-    flip = det < 0
-    conn[flip] = conn[flip][:, [0, 2, 1, 3, 5, 4]]
-
-    used = np.unique(conn)
-    renum = np.full(len(P), -1, dtype=np.int64)
-    renum[used] = np.arange(len(used))
-    conn = renum[conn]
-    with open(path, "w") as f:
-        f.write("# vtk DataFile Version 3.0\n")
-        f.write("FEMBEM FEM-direkt, erzeugt von tools/gmsh/team28_fem_air.py\n")
-        f.write("ASCII\nDATASET UNSTRUCTURED_GRID\n")
-        f.write(f"POINTS {len(used)} double\n")
-        for p in P[used]:
-            f.write("%.17g %.17g %.17g\n" % tuple(p))
-        f.write(f"\nCELLS {len(conn)} {7 * len(conn)}\n")
-        for c in conn:
-            f.write("6 %d %d %d %d %d %d\n" % tuple(c))
-        f.write(f"\nCELL_TYPES {len(conn)}\n")
-        f.write("13\n" * len(conn))
-        # GENAU EIN SCALARS-Array: VtkReader nimmt das erste
-        f.write(f"\nCELL_DATA {len(conn)}\nSCALARS component_id int 1\nLOOKUP_TABLE default\n")
-        f.writelines(f"{int(c)}\n" for c in comp)
-    return len(used), len(conn), int(flip.sum()), {k: int((comp == k).sum()) for k in NAMES}
+    # Orientierung in der Konvention des Loesers, Zelle fuer Zelle
+    # (gemeinsam mit import_msh.py in solver_vtk.py)
+    try:
+        conn, n_flip = solver_vtk.orient_to_solver(xyz, solver_vtk.VTK_PRISM, conn)
+    except ValueError as e:
+        raise RuntimeError(f"entartete Prismen: {e}") from None
+    points, (conn,) = solver_vtk.compact_nodes(xyz, [conn])
+    solver_vtk.write_legacy_vtk(path, points, [(solver_vtk.VTK_PRISM, conn, comp)],
+                                "FEMBEM FEM-direkt, erzeugt von tools/gmsh/team28_fem_air.py")
+    return len(points), len(conn), n_flip, {k: int((comp == k).sum()) for k in NAMES}
 
 
 def polygon_areas(mesh, radii, z_bot):

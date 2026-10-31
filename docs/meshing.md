@@ -11,6 +11,7 @@ man sie prüft. Plan und Hintergrund der Gmsh-Werkzeuge:
 | Standardnetz | — | `data/team28/team28.vtk`, 4805 Hexaeder; liegt nach dem Konfigurieren im Build-Verzeichnis |
 | Gmsh, parametrisch, BEM-FEM | `tools/gmsh/team28_hex.py` | reines Hexaedernetz der Leiter, beliebig fein, geprüft |
 | Gmsh, parametrisch, FEM-direkt | `tools/gmsh/team28_fem_air.py` | Prismennetz mit Luftgebiet, Abschneidefaktor einstellbar, geprüft |
+| Gmsh, eigenes Modell | `tools/gmsh/import_msh.py` | `.msh` oder `.geo`; Physical Volumes über ihren Namen auf `component_id` abgebildet, geprüft |
 | Nastran-BDF | `tools/import_bdf.py`, `tools/vtk_konverter.py` | Netz aus einem externen Vernetzer |
 | grobe Ersatznetze | `tools/make_coarse_team28.py` | strukturierte Netze für die Netzstudie |
 
@@ -61,7 +62,8 @@ Körper, Konformität, Orientierung (Hexaeder, Prismen, Tetraeder) und Volumen.
 `import_bdf.py` prüft die von ihm geschriebene Datei damit ein zweites Mal. `check_map.py` prüft die
 Zuordnung der Spulen, die Maße und die Vollscheibe. Beide enden mit
 Exit-Code 1, wenn etwas nicht stimmt. `team28_hex.py` ruft beide für jedes
-erzeugte Netz selbst auf.
+erzeugte Netz selbst auf, `import_msh.py` ruft `meshcheck.py` auf (mit
+`--check-map` auch `check_map.py`).
 
 Was nur das Programm prüfen kann: Beim Start meldet es die gefundenen
 Kohomologie-Generatoren. Für TEAM 28 sind es
@@ -91,6 +93,19 @@ Für den FEM-direkt-Pfad mit Luftgebiet (Vorgabe radial 5 / axial 10):
     ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py -o team28_fem_air.vtk
     ~/venv-gmsh/bin/python tools/gmsh/team28_fem_air.py --plate-z0 11.3 --scale 0.75 -o gleichgewicht.vtk
 
+Eigene Gmsh-Modelle (`.msh` oder `.geo`) übernimmt `import_msh.py`. Jedes
+Volumen braucht eine benannte Physical Group; die Namen `outer_coil`,
+`inner_coil`, `plate` und `air` (auch deutsch, siehe
+[tools/gmsh/README.md](../tools/gmsh/README.md)) werden erkannt, andere mit
+`--map`:
+
+    ~/venv-gmsh/bin/python tools/gmsh/import_msh.py modell.geo -o netz.vtk --fem-direct
+    ~/venv-gmsh/bin/python tools/gmsh/import_msh.py netz.msh --map Scheibe=3 --bem --check-map
+
+Zugeordnet wird über den Namen, weil die Spulenströme an der `component_id`
+hängen: Eine vertauschte Nummer rechnet ohne Fehlermeldung falsch, ein
+unbekannter Name bricht ab.
+
 Eine Netzserie für die Frage, ob das Verhalten des Lösers von der
 Netzfeinheit abhängt:
 
@@ -102,7 +117,7 @@ Netzfeinheit abhängt:
 
     cmake -B build -DPython3_EXECUTABLE=~/venv-gmsh/bin/python
     ctest --test-dir build -L tools      # Prüfmodule, braucht numpy
-    ctest --test-dir build -L gmsh       # Generator, braucht gmsh
+    ctest --test-dir build -L gmsh       # Generatoren und Import, braucht gmsh
 
 Ohne gmsh werden die `gmsh`-Tests beim Konfigurieren ausgelassen (mit
 Hinweis); alle anderen Tests bleiben unverändert.
@@ -117,7 +132,12 @@ Hinweis); alle anderen Tests bleiben unverändert.
 - **Prismen aus Gmsh sind umgekehrt orientiert** (in der Konvention des
   Lösers, `include/NedelecPrism.cuh`). Vor der Verwendung die Knotenfolge
   (0, 2, 1, 3, 5, 4) anwenden; `meshcheck.py` meldet die Orientierung.
-  Tetraeder aus Gmsh sind richtig orientiert.
+  Tetraeder aus Gmsh sind richtig orientiert. `team28_fem_air.py` und
+  `import_msh.py` drehen jede Zelle einzeln nach ihrer Determinante.
+- **Volumen ohne Physical Group** fehlen im Netz ohne jede Meldung, wenn Gmsh
+  nur Gruppen schreibt (`Mesh.SaveAll = 0`). `import_msh.py` bricht ab, wenn
+  es Volumenelemente ohne Gruppe findet; ein ganz fehlendes Volumen fällt über
+  `--require` oder `--fem-direct` (Luft umschließt alles) auf.
 - **Kleinster Radius ist kein Lochkriterium:** Das Standardnetz hat keinen
   Knoten unter r = 1,84 mm und ist trotzdem eine Vollscheibe (Mittelzelle über
   der Achse).

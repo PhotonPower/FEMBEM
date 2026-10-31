@@ -15,6 +15,14 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
     Schwebegleichgewicht: dort liefert der Pfad F_z = 1,027 N gegen den
     Sollwert 1,0497 N (`docs/design/gmsh-phase6-report.md`).
   - Beide prüfen jedes erzeugte Netz selbst und enden bei einem Fehler mit 1.
+  - `import_msh.py`: eigene `.msh`/`.geo`-Dateien; Physical Volumes werden über
+    ihren Namen auf `component_id` abgebildet (Vorgabe-Namen, `--map Name=ID`).
+    Bricht mit Exit-Code 1 ab bei unbekannten, fehlenden oder leeren Gruppen,
+    Volumenelementen ohne Gruppe, zweiter Ordnung und nicht unterstützten
+    Zelltypen; dreht Zellen in die Konvention des Lösers, verschmilzt keine
+    Knoten und prüft das Ergebnis mit `meshcheck.py`. Orientierung und
+    VTK-Ausgabe teilt es sich mit `team28_fem_air.py` (`solver_vtk.py`). Tests
+    in `tools/tests/test_import_msh.py` (Marke `gmsh`).
 - **Netzprüfung** `tools/meshcheck.py`: Zelltypen, doppelte und verwaiste
   Knoten, getrennte Körper, Konformität, Orientierung (Hexaeder, Prismen,
   Tetraeder), Prismen-Affinität, Luft umschließt alles, Volumina. Mit Tests an
