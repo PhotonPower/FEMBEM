@@ -74,6 +74,8 @@ jobs:
         run: |
           python3 tools/tests/test_meshcheck.py
           python3 tools/tests/test_check_map.py
+      - name: Ringmodell als Kraftreferenz (tools/team28_axisymmetric.py)
+        run: python3 tools/tests/test_team28_axisymmetric.py
           python3 tools/meshcheck.py data/team28/team28.vtk --require-hex --separate-bodies
 
   gmsh:
