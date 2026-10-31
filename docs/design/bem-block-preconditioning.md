@@ -556,6 +556,26 @@ transformiert ZEILENweise. Beide koennen nicht recht haben. Das koennte
 sowohl die Symmetrieverletzung als auch den Faktor erklaeren und waere
 vor allem anderen zu klaeren.
 
+> **Nachtrag (31.10.2026): geklaert, der zweite Punkt ist erledigt.**
+> `compute_jacobian` (und ebenso `compute_jacobian_tet`/`_prism`) baut
+> J[i][j] = d x_j / d xi_i, also J = J_std^T und invJ = J_std^-T. Richtig
+> ist damit W_phys = invJ * W_ref (ZEILENweise ueber invJ) und
+> rot W_phys = J^T * rot W_ref / detJ (SPALTENweise ueber J), so wie
+> `VtkExporter.cu` es begruendet. Der Maxwell-Kernel in `TransientSolver.cu`
+> war tatsaechlich falsch (zeilenweise) und ist laengst auf die spaltenweise
+> Form korrigiert; der Kommentar dort beschreibt die Wirkung (F_x = 17 % von
+> F_z bei achsensymmetrischer Anordnung). Der obige Absatz beschreibt also
+> einen alten Stand. Alle Produktivstellen (Assemblierung und
+> `verify_bz_nedelec_body` in `fem.cu`, Maxwell-Kernel, `VtkExporter`,
+> `HarmonicLorentz.cuh`, `HarmonicMaxwell.cuh`, `NonlinearSolver.cu`)
+> rufen inzwischen `piola_covariant`/`piola_contravariant` aus
+> `NedelecDispatch.cuh` auf, statt die Formel abzuschreiben, und
+> `tests/test_piola_production.cu` prueft die Kraft- und Ausgabekoerper auf
+> gedrehten und gescherten Elementen gegen ein homogenes B, mit einem
+> Kontrollfall, der die transponierte Formel verwerfen muss. Als Erklaerung
+> fuer den Faktor 5 in C scheidet die Transposition damit aus: sie betraf
+> nur den Kraftpfad, nicht die Assemblierung von K und C.
+
 
 ## Nachtrag: Code-Verfolgung der schwachen Kopplung
 

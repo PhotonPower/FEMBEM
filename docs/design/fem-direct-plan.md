@@ -492,6 +492,16 @@
 > `harmonic_maxwell_body` selbst ist geprüft: `test_patch_assembly` Prüfung 6
 > zeigt, dass es bei homogenem $B$ auf einer geschlossenen Hülle 1,09e-16
 > relativ liefert. Der Kernel ist richtig, die Aufgabe ist ihm zu schwer.
+>
+> **Nachtrag (31.10.2026):** richtig nur auf Dreiecksflächen. Auf
+> Viereckflächen (Hexaeder, Seitenflächen des Prismas) ging jeder Beitrag mit
+> einem Viertel ein — $|t_a \times t_b|$ ist bei $u, v \in [-1, 1]$ ein
+> Viertel der Fläche, die Gewichte summierten aber zu 1. Prüfung 6 sieht das
+> nicht, ihre Hülle besteht aus Dreiecken, und auf einer geschlossenen Hülle
+> hebt sich ein gemeinsamer Faktor ohnehin weg. Die Zahlen oben stammen vom
+> reinen Tetraedernetz und bleiben gültig; auf Prismennetzen war die
+> Gegenprobe bis dahin falsch gewichtet. Behoben, `test_piola_production`
+> prüft jetzt je Fläche gegen $(1/2\mu_0)[\ldots]\cdot$Fläche.
 
 
 > 2 (AP2, hängt am Netzgenerator), und M2 bleibt bei 6,1e-03 — der

@@ -49,7 +49,7 @@
 
 #include "Backend.cuh"
 #include "CoupledSolver.cuh"
-#include "NedelecHexahedron.cuh"
+#include "NedelecDispatch.cuh"   // piola_covariant/_contravariant; bindet NedelecHexahedron.cuh ein
 #include "Mesh.cuh"
 
 #include <cmath>
@@ -204,17 +204,15 @@ void assemble(const Grid& g, std::vector<int>& row, std::vector<int>& col,
             compute_jacobian(nd, pts[q][0], pts[q][1], pts[q][2], J, invJ, detJ);
             if (!(std::fabs(detJ) > 1e-30)) continue;
 
-            // Covariante Abbildung fuer W, contravariante fuer curl W.
+            // Covariante Abbildung fuer W, contravariante fuer curl W --
+            // dieselben Helfer wie die produktive Assemblierung in fem.cu.
+            // Hier stand bis 31.10.2026 die transponierte Form (W spaltenweise
+            // ueber invJ, rot W zeilenweise ueber J); auf dem gestoerten Netz
+            // war das ein etwas anderer Operator als der produktive.
             double3 Wp[12], Cp[12];
             for (int i = 0; i < 12; ++i) {
-                Wp[i] = make_double3(
-                    invJ[0][0]*W[i].x + invJ[1][0]*W[i].y + invJ[2][0]*W[i].z,
-                    invJ[0][1]*W[i].x + invJ[1][1]*W[i].y + invJ[2][1]*W[i].z,
-                    invJ[0][2]*W[i].x + invJ[1][2]*W[i].y + invJ[2][2]*W[i].z);
-                Cp[i] = make_double3(
-                    (J[0][0]*curlW[i].x + J[0][1]*curlW[i].y + J[0][2]*curlW[i].z)/detJ,
-                    (J[1][0]*curlW[i].x + J[1][1]*curlW[i].y + J[1][2]*curlW[i].z)/detJ,
-                    (J[2][0]*curlW[i].x + J[2][1]*curlW[i].y + J[2][2]*curlW[i].z)/detJ);
+                Wp[i] = piola_covariant(invJ, W[i]);
+                Cp[i] = piola_contravariant(J, detJ, curlW[i]);
             }
             const double w = std::fabs(detJ);
             for (int i = 0; i < 12; ++i)

@@ -183,19 +183,33 @@ erst beim Sammeln und Streuen angewandt:
 
 \subsection{Abbildungen und Quadratur}
 
-Für die Basisfunktionen gilt die kovariante Piola-Transformation
-\emph{zeilenweise} über $J^{-1}$, für ihre Rotation die kontravariante
-\emph{spaltenweise} über $J$ und geteilt durch $\det J$:
+Der Code legt die Jacobi-Matrix \emph{transponiert} ab,
+$J_{ij} = \partial x_j/\partial\xi_i$ (\texttt{compute\_jacobian} und die
+Varianten für Tetraeder und Prisma), also $J = J_{\text{std}}^{\top}$ und
+$J^{-1} = J_{\text{std}}^{-\top}$. Mit diesem $J$ gilt für die
+Basisfunktionen die kovariante Piola-Transformation \emph{zeilenweise} über
+$J^{-1}$, für ihre Rotation die kontravariante \emph{spaltenweise} über $J$
+und geteilt durch $\det J$:
 \begin{equation}
-  \mathbf{W}^{\text{phys}} = J^{-1}\,\mathbf{W}^{\text{ref}},
+  \mathbf{W}^{\text{phys}} = J^{-1}\,\mathbf{W}^{\text{ref}}
+  = J_{\text{std}}^{-\top}\,\mathbf{W}^{\text{ref}},
   \qquad
   \nabla\times\mathbf{W}^{\text{phys}}
-  = \frac{1}{\det J}\,J^{\!\top\!}\,{}^{-\top}\!\!\left(\nabla\times\mathbf{W}^{\text{ref}}\right)
-  \;\;\text{(spaltenweise über } J).
+  = \frac{1}{\det J}\,J^{\top}\left(\nabla\times\mathbf{W}^{\text{ref}}\right)
+  = \frac{1}{\det J}\,J_{\text{std}}\left(\nabla\times\mathbf{W}^{\text{ref}}\right).
 \end{equation}
-Die Verwechslung der beiden Formen ist folgenlos auf affinen Elementen und
-falsch auf verzerrten -- der Patchtest wird deshalb auf einem zufällig
-gestörten Netz gefahren.
+Beide Formeln stehen nur einmal, in \texttt{piola\_covariant} und
+\texttt{piola\_contravariant} (\texttt{NedelecDispatch.cuh}). Die Verwechslung
+mit der transponierten Form ist \emph{nicht} schon auf affinen Elementen
+folgenlos, sondern nur bei symmetrischem $J$, etwa auf einem achsenparallelen
+Quader. Auf einem gedrehten und gescherten, aber affinen Element liefert die
+transponierte Rotation aus den exakten Kantengraden eines homogenen Feldes
+ein $\mathbf{B}$ mit $1{,}0$ relativem Fehler, die transponierte kovariante
+Form ein $\mathbf{A}$ mit $0{,}66$ bis $0{,}68$ -- auf Hexaeder, Tetraeder
+und Prisma gleichermaßen (\texttt{tests/test\_piola\_production},
+Kontrollfall; $\|J - J^{\top}\|/\|J\| = 0{,}67$). Der Patchtest läuft deshalb
+auf einem zufällig gestörten Netz, die Prüfung der Kraft- und Ausgabekörper
+auf einem gedrehten und gescherten Element.
 
 Quadratur: 4 Punkte auf dem Tetraeder, $2\times2\times2$-Gauss auf dem
 Hexaeder. Der Tetraeder wird stets affin abgebildet, $\det J$ ist dort
@@ -746,7 +760,12 @@ Grenzflächen & Nullprobe [N] & relativ zu $F_z$ & Ordnung \\
 \end{center}
 
 Der Kernel selbst ist in Ordnung -- bei homogenem $\mathbf{B}$ liefert er auf
-einer geschlossenen Hülle $1{,}09\cdot10^{-16}$ relativ. Die Aufgabe ist ihm
+einer geschlossenen Hülle $1{,}09\cdot10^{-16}$ relativ. (Nachtrag
+31.10.2026: auf \emph{Viereck}flächen -- Hexaeder, Seitenflächen des
+Prismas -- fehlte bis dahin der Faktor 4 der Flächenabbildung; die Hülle der
+Prüfung besteht nur aus Dreiecken, und die Zahlen dieses Abschnitts stammen
+von reinen Tetraedernetzen, sind also nicht betroffen.
+\texttt{tests/test\_piola\_production} prüft seither je Fläche.) Die Aufgabe ist ihm
 zu schwer, aus zwei Gründen: die Nettokraft entsteht als Differenz von
 Einzelbeiträgen um $|B|^2/(2\mu_0)$ mal Hüllfläche, hier rund 200\,N;
 und das diskrete $\mathbf{B}$ ist über Elementflächen \emph{nicht} stetig, weil

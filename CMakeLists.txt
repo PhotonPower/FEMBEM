@@ -461,6 +461,19 @@ add_executable(test_element_dispatch
 target_include_directories(test_element_dispatch PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_element_dispatch PRIVATE CUDA::cudart)
 
+# 🧪 Piola-Transformation in den PRODUKTIVEN Feldkoerpern. test_element_dispatch
+# prueft die Helfer piola_covariant/piola_contravariant; dieser Test ruft die
+# Koerper selbst auf (VtkExporter-Zellmittel, Maxwell-Kraft des transienten
+# Pfades, harmonische Lorentz- und Maxwell-Kraft) -- auf einem gedrehten und
+# gescherten Element, weil die Transposition auf einem Quader unsichtbar ist.
+# Mit Kontrollfall (transponierte Formel muss durchfallen).
+add_executable(test_piola_production
+    tests/test_piola_production.cu
+    src/Backend.cu
+)
+target_include_directories(test_piola_production PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_piola_production PRIVATE CUDA::cudart)
+
 # 🧪 Reelle 2n-Blockform (AP5). Loest dasselbe Problem zweimal auf
 # verschiedenen Wegen -- komplex mit std::complex, und ueber die Blockform --
 # und vergleicht. Das prueft alle Vorzeichen gleichzeitig.
@@ -911,6 +924,8 @@ add_test(NAME test_dirichlet_bc COMMAND test_dirichlet_bc)
 set_tests_properties(test_dirichlet_bc PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_element_dispatch COMMAND test_element_dispatch)
 set_tests_properties(test_element_dispatch PROPERTIES LABELS "host" TIMEOUT 120)
+add_test(NAME test_piola_production COMMAND test_piola_production)
+set_tests_properties(test_piola_production PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_system COMMAND test_block_system)
 add_test(NAME test_harmonic_dirichlet_split COMMAND test_harmonic_dirichlet_split)
 set_tests_properties(test_harmonic_dirichlet_split PROPERTIES LABELS "host" TIMEOUT 120)
@@ -985,6 +1000,7 @@ add_custom_target(host_tests DEPENDS
     test_patch_assembly
     test_dirichlet_bc
     test_element_dispatch
+    test_piola_production
     test_block_system
     test_sparse_direct
     test_fem_direct_preflight
