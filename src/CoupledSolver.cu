@@ -2301,6 +2301,22 @@ void CoupledMVOperator::apply_preconditioner(const double* d_in, double* d_out) 
 }
 
 // =================================================================================
+// Abbruch bei nicht endlichen Werten (BiCGStab, GMRES)
+// =================================================================================
+//
+// Die Abbruchkriterien haben die Form "res/b_norm <= tol". Fuer NaN ist das
+// falsch, der Loeser meldet also keine Konvergenz -- das ist die sichere
+// Richtung, aber er lief bis max_iter weiter (bis zu 1000 Iterationen samt
+// Vorkonditionierer) und lieferte am Ende ein NaN-x. Siehe
+// docs/design/nan-and-thresholds.md. Jetzt bricht er sofort ab.
+static void report_nonfinite_abort(const char* solver, const char* what, int iter) {
+    std::cout << "[" << solver << "] ABBRUCH: " << what
+              << " nicht endlich (NaN/Inf) bei Iteration " << iter
+              << ". Matrix, rechte Seite oder Vorkonditionierer enthalten"
+                 " nicht endliche Werte; weiterrechnen bringt nichts.\n";
+}
+
+// =================================================================================
 // Implementierung: BiCGStabSolver (Aufgabe 6.2)
 // =================================================================================
 
@@ -2325,6 +2341,10 @@ void BiCGStabSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x
 
     double b_norm = 0.0;
     bf::dnrm2(cublas, N, d_b, &b_norm);
+    if (!std::isfinite(b_norm)) {
+        report_nonfinite_abort("BiCGStab", "||b||", 0);
+        return;
+    }
     if (b_norm == 0.0) b_norm = 1.0;
 
     // 1. Initiales Residuum: r = b - A*x
@@ -2352,6 +2372,10 @@ void BiCGStabSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x
     double r_norm = 0.0;
 
     bf::dnrm2(cublas, N, r.data(), &r_norm);
+    if (!std::isfinite(r_norm)) {
+        report_nonfinite_abort("BiCGStab", "Startresiduum", 0);
+        return;
+    }
     if ((r_norm / b_norm) <= tol) {
         std::cout << "[BiCGStab] Converged at iteration 0\n";
         return;
@@ -2480,6 +2504,13 @@ void BiCGStabSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x
         // Early convergence check
         double s_norm = 0.0;
         bf::dnrm2(cublas, N, s.data(), &s_norm);
+        if (!std::isfinite(s_norm)) {
+            // x selbst kann seit dem letzten besten Stand schon verdorben
+            // sein; zurueck auf den letzten endlichen besten Stand.
+            report_nonfinite_abort("BiCGStab", "||s||", iter);
+            bf::dcopy(cublas, N, x_best.data(), d_x);
+            return;
+        }
         if ((s_norm / b_norm) <= tol) {
             // x = x + alpha * p_hat  (mit dem vorkonditionierten Vektor updaten,
             // da rechts-vorkonditioniert mit x = M^-1 * u gerechnet wird)
@@ -2547,6 +2578,11 @@ void BiCGStabSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x
 
         // Normal convergence check
         bf::dnrm2(cublas, N, r.data(), &r_norm);
+        if (!std::isfinite(r_norm)) {
+            report_nonfinite_abort("BiCGStab", "Residuum", iter);
+            bf::dcopy(cublas, N, x_best.data(), d_x);
+            return;
+        }
 
         // bestes x bisher merken (Sicherheitsnetz gegen voruebergehende
         // Verschlechterungen durch Near-Breakdowns, siehe oben).
@@ -2641,6 +2677,12 @@ void GMRESSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x, d
 
     double b_norm = 0.0;
     bf::dnrm2(cublas, N, d_b, &b_norm);
+    if (!std::isfinite(b_norm)) {
+        report_nonfinite_abort("GMRES", "||b||", 0);
+        m_last_rel_res = std::numeric_limits<double>::quiet_NaN();
+        m_last_iterations = 0;
+        return;
+    }
     if (b_norm == 0.0) b_norm = 1.0;
 
     int total_iters = 0;
@@ -2660,6 +2702,14 @@ void GMRESSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x, d
         double r_norm = 0.0;
         bf::dnrm2(cublas, N, r.data(), &r_norm);
 
+        // Auch hier setzen: wer schon am Zyklusbeginn konvergiert (oder
+        // abbricht), las bisher den Wert eines frueheren solve()-Aufrufs.
+        m_last_rel_res = r_norm / b_norm;
+        m_last_iterations = total_iters;
+        if (!std::isfinite(r_norm)) {
+            report_nonfinite_abort("GMRES", "Residuum am Zyklusbeginn", total_iters);
+            return;
+        }
         if ((r_norm / b_norm) <= tol) {
             std::cout << "[GMRES] Converged at iteration " << total_iters << "\n";
             return;
@@ -2737,6 +2787,19 @@ void GMRESSolver::solve(CoupledMVOperator& op, const double* d_b, double* d_x, d
             apply_givens_rotation(g[j], g[j + 1], cosines[j], sines[j]);
 
             double current_res = std::abs(g[j + 1]) / b_norm;
+
+            // NaN oder Inf aus apply() oder dem Vorkonditionierer laufen
+            // ueber H und die Givens-Drehungen in g. Ohne diese Pruefung ist
+            // "current_res <= tol" nur falsch, der Zyklus laeuft bis m
+            // weiter, und die Rueckwaertssubstitution macht x zu NaN.
+            // Abbrechen, BEVOR x angefasst wird: x bleibt der letzte
+            // endliche Stand, das NaN-Residuum meldet den Fehlschlag.
+            if (!std::isfinite(current_res)) {
+                report_nonfinite_abort("GMRES", "Hessenberg-Residuum", total_iters + 1);
+                m_last_rel_res = std::numeric_limits<double>::quiet_NaN();
+                m_last_iterations = total_iters + 1;
+                return;
+            }
 
             if (total_iters == 1 || total_iters % 10 == 0) {
                 std::cout << "  [GMRES] iter " << total_iters << " | Rel. Res: " << current_res << "\n";

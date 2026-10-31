@@ -90,6 +90,11 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Behoben
 
+- GMRES, BiCGStab, der harmonische GMRES und das CG der Kohomologie-Eichung
+  brechen bei NaN/Inf sofort ab, statt bis zur Iterationsgrenze zu laufen und
+  ein NaN-x zurückzugeben; GMRES meldet dann ein NaN-Residuum. Drei Aufrufer
+  werteten ein NaN-Residuum als Erfolg (`res > tol` als „nicht konvergiert“)
+  und prüfen jetzt `!(res <= tol)`. Test `test_solver_nonfinite_abort`.
 - Windows mit cuDSS: `cudss64_0.dll` wird nach dem Bauen neben `fembem.exe`
   und `test_sparse_direct.exe` kopiert. Ohne die DLL im `PATH` startete der
   Test nicht und lief unter CTest ohne Ausgabe in seine Zeitgrenze (120 s).
