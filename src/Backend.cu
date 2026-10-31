@@ -85,7 +85,7 @@ void print_usage(const char* exe_name) {
         << "  --ams          Auxiliary-Space Maxwell Solver (Hiptmair und Xu) statt\n"
         << "                 ILU(0) fuer den FEM-Block. Die beiden Hilfsprobleme\n"
         << "                 werden mit Aggregations-AMG geloest. Am Modellproblem\n"
-        << "                 gemessen: 23 bis 26 CG-Iterationen gegen 298 bis 694 mit\n"
+        << "                 gemessen: 23 bis 28 CG-Iterationen gegen 296 bis 697 mit\n"
         << "                 Jacobi, und praktisch unabhaengig von sigma.\n"
         << "  --nocohomology Kohomologie-Projektoren NICHT anwenden. Gemessen liegt\n"
         << "                 ||A c||/||c|| fuer die Generatoren bei 4.9e-02 bzw.\n"

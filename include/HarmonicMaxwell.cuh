@@ -209,7 +209,20 @@ BF_HD inline void harmonic_maxwell_body(
         nv.x /= dS; nv.y /= dS; nv.z /= dS;
         // Auf dem Dreieck ist |ta x tb| bereits die doppelte Flaeche, und die
         // Gewichte summieren zu 1 -- der Faktor 1/2 gehoert also dazu.
-        const double area = (nfn == 3) ? 0.5 * dS : dS;
+        //
+        // Auf dem Viereck laufen u, v ueber [-1, 1]; |ta x tb| ist dort die
+        // Flaechendichte je du dv und ergibt auf einem Parallelogramm ein
+        // VIERTEL der Flaeche. Mit Gewichten, die zu 1 summieren, gehoert also
+        // der Faktor 4 dazu (gleichbedeutend: 2x2-Gauss mit Gewicht 1 je
+        // Punkt). Bis 31.10.2026 fehlte er: jede Viereckflaeche (Hexaeder,
+        // Seitenflaechen des Prismas) ging mit einem Viertel ihres Beitrags
+        // ein. Auf einer geschlossenen Huelle aus lauter Vierecken bei
+        // homogenem B gibt das trotzdem 0 -- deshalb sah test_patch_assembly
+        // Pruefung 6 es nicht; tests/test_piola_production prueft je Flaeche
+        // gegen (1/(2 mu0))[...] * Flaeche. Die dokumentierten Zahlen der
+        // Gegenprobe (fem-direct-plan.md, harmonic-fem.tex) stammen von reinen
+        // Tetraedernetzen und sind davon nicht betroffen.
+        const double area = (nfn == 3) ? 0.5 * dS : 4.0 * dS;
 
         // Nach AUSSEN orientieren, weg von der Mitte des Elternelements.
         const double outward = nv.x * (pos.x - e_center.x)
@@ -227,11 +240,9 @@ BF_HD inline void harmonic_maxwell_body(
 
         double3 Br = make_double3(0, 0, 0), Bi = make_double3(0, 0, 0);
         for (int i = 0; i < n_edges; ++i) {
-            const double cx = (Jm[0][0]*curlW[i].x + Jm[1][0]*curlW[i].y + Jm[2][0]*curlW[i].z) / detJ;
-            const double cy = (Jm[0][1]*curlW[i].x + Jm[1][1]*curlW[i].y + Jm[2][1]*curlW[i].z) / detJ;
-            const double cz = (Jm[0][2]*curlW[i].x + Jm[1][2]*curlW[i].y + Jm[2][2]*curlW[i].z) / detJ;
-            Br.x += ar[i]*cx; Br.y += ar[i]*cy; Br.z += ar[i]*cz;
-            Bi.x += ai[i]*cx; Bi.y += ai[i]*cy; Bi.z += ai[i]*cz;
+            const double3 c = piola_contravariant(Jm, detJ, curlW[i]);
+            Br.x += ar[i]*c.x; Br.y += ar[i]*c.y; Br.z += ar[i]*c.z;
+            Bi.x += ai[i]*c.x; Bi.y += ai[i]*c.y; Bi.z += ai[i]*c.z;
         }
 
         const double bn_r = Br.x*nv.x + Br.y*nv.y + Br.z*nv.z;

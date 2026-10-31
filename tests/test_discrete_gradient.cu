@@ -23,7 +23,7 @@
 // =============================================================================
 
 #include "DiscreteGradient.cuh"
-#include "NedelecHexahedron.cuh"
+#include "NedelecDispatch.cuh"   // piola_contravariant; bindet NedelecHexahedron.cuh ein
 
 #include <cmath>
 #include <cstdio>
@@ -131,14 +131,15 @@ HostCsr assemble_curl_curl(const SmallMesh& sm) {
             compute_jacobian(nd, xi, et, ze, J, invJ, detJ);
             double3 cw[12];
             evaluate_nedelec_curl(xi, et, ze, cw);
-            // kontravariant: rot W_phys = J * rot W_ref / detJ
+            // kontravariant: rot W_phys = J_std * rot W_ref / detJ. Weil
+            // compute_jacobian() J transponiert ablegt (J = J_std^T), ist das
+            // die SPALTENweise Form ueber J -- piola_contravariant, wie in der
+            // produktiven Assemblierung. Hier stand bis 31.10.2026 die
+            // zeilenweise Form; fuer die Nullraumpruefung ist das gleichgueltig
+            // (rot grad = 0 gilt schon im Referenzelement), fuer jede
+            // Aussage ueber den Operator selbst nicht.
             double3 rc[12];
-            for (int i = 0; i < 12; ++i) {
-                rc[i] = make_double3(
-                    (J[0][0]*cw[i].x + J[0][1]*cw[i].y + J[0][2]*cw[i].z) / detJ,
-                    (J[1][0]*cw[i].x + J[1][1]*cw[i].y + J[1][2]*cw[i].z) / detJ,
-                    (J[2][0]*cw[i].x + J[2][1]*cw[i].y + J[2][2]*cw[i].z) / detJ);
-            }
+            for (int i = 0; i < 12; ++i) rc[i] = piola_contravariant(J, detJ, cw[i]);
             for (int i = 0; i < 12; ++i) for (int j = 0; j < 12; ++j) {
                 Ke[i][j] += detJ * (rc[i].x*rc[j].x + rc[i].y*rc[j].y + rc[i].z*rc[j].z);
             }

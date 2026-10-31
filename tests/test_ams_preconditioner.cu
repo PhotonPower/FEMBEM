@@ -19,7 +19,7 @@
 
 #include "AmsPreconditioner.cuh"
 #include "HostLinalg.cuh"
-#include "NedelecHexahedron.cuh"
+#include "NedelecDispatch.cuh"   // piola_covariant/_contravariant; bindet NedelecHexahedron.cuh ein
 
 #include <array>
 #include <cmath>
@@ -105,14 +105,15 @@ HostCsr assemble(const SmallMesh& sm, double sigma_over_dt) {
             double3 cw[12], w[12];
             evaluate_nedelec_curl(xi, et, ze, cw);
             evaluate_nedelec_basis(xi, et, ze, w);
+            // Dieselben Piola-Transformationen wie die produktive
+            // Assemblierung in fem.cu. Hier stand bis 31.10.2026 die
+            // transponierte Form (W spaltenweise ueber invJ, rot W zeilenweise
+            // ueber J) -- auf dem gestoerten Netz ist das ein etwas anderer
+            // Operator als der, den der Loeser vorkonditionieren muss.
             double3 rc[12], wp[12];
             for (int i = 0; i < 12; ++i) {
-                rc[i] = make_double3((J[0][0]*cw[i].x+J[0][1]*cw[i].y+J[0][2]*cw[i].z)/detJ,
-                                     (J[1][0]*cw[i].x+J[1][1]*cw[i].y+J[1][2]*cw[i].z)/detJ,
-                                     (J[2][0]*cw[i].x+J[2][1]*cw[i].y+J[2][2]*cw[i].z)/detJ);
-                wp[i] = make_double3(invJ[0][0]*w[i].x+invJ[1][0]*w[i].y+invJ[2][0]*w[i].z,
-                                     invJ[0][1]*w[i].x+invJ[1][1]*w[i].y+invJ[2][1]*w[i].z,
-                                     invJ[0][2]*w[i].x+invJ[1][2]*w[i].y+invJ[2][2]*w[i].z);
+                rc[i] = piola_contravariant(J, detJ, cw[i]);
+                wp[i] = piola_covariant(invJ, w[i]);
             }
             for (int i = 0; i < 12; ++i) for (int j = 0; j < 12; ++j) {
                 Ke[i][j] += detJ * (inv_mu*(rc[i].x*rc[j].x+rc[i].y*rc[j].y+rc[i].z*rc[j].z)

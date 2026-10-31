@@ -107,7 +107,8 @@ BF_HD inline void assemble_local_matrices_kernel_body(
         // Piola-Transformation: Die Vektoren müssen vom Referenz- ins reale Element transformiert werden!
         double3 real_W[12], real_curlW[12];
         for (int i = 0; i < n_edges; ++i) {
-            // W_real = (invJ)^T * W_ref  (Kovariante Transformation für Kantenelemente)
+            // W_real = invJ * W_ref (kovariante Transformation fuer
+            // Kantenelemente, ZEILENweise ueber invJ).
             // KORREKTUR der Piola-Transformation.
             //
             // compute_jacobian() baut J TRANSPONIERT auf; der Kommentar dort
@@ -129,9 +130,11 @@ BF_HD inline void assemble_local_matrices_kernel_body(
             // invJ * W_ref das Erwartete (-118.7 / +4.1 / +118.7 / +4.1) --
             // und die spaltenweise Form reproduziert den Loeserwert auf
             // 0.0000 relativ. Damit ist die Ursache eindeutig belegt.
-            real_W[i].x = invJ[0][0] * W[i].x + invJ[0][1] * W[i].y + invJ[0][2] * W[i].z;
-            real_W[i].y = invJ[1][0] * W[i].x + invJ[1][1] * W[i].y + invJ[1][2] * W[i].z;
-            real_W[i].z = invJ[2][0] * W[i].x + invJ[2][1] * W[i].y + invJ[2][2] * W[i].z;
+            //
+            // Die Formel steht nur noch in piola_covariant (NedelecDispatch.cuh);
+            // dort ist sie fuer alle Produktivpfade gemeinsam getestet
+            // (tests/test_element_dispatch, tests/test_piola_production).
+            real_W[i] = piola_covariant(invJ, W[i]);
 
             // curlW_real = (1/detJ) * J * curlW_ref (Kontravariante Transformation für Flächenflüsse)
             // Dieselbe Ursache, dieselbe Korrektur. Die kontravariante
@@ -139,9 +142,7 @@ BF_HD inline void assemble_local_matrices_kernel_body(
             //     rot W_phys = (1/detJ) * J_std * rot W_ref
             // und mit J_std = J^T ist das die SPALTENweise Form ueber das hier
             // vorliegende J. Bisher stand die zeilenweise da.
-            real_curlW[i].x = (J[0][0] * curlW[i].x + J[1][0] * curlW[i].y + J[2][0] * curlW[i].z) / detJ;
-            real_curlW[i].y = (J[0][1] * curlW[i].x + J[1][1] * curlW[i].y + J[2][1] * curlW[i].z) / detJ;
-            real_curlW[i].z = (J[0][2] * curlW[i].x + J[1][2] * curlW[i].y + J[2][2] * curlW[i].z) / detJ;
+            real_curlW[i] = piola_contravariant(J, detJ, curlW[i]);
             // Vorzeichen-Korrektur bewusst NICHT hier: die lokalen Element-
             // matrizen bleiben unorientiert. Die Orientierung wird ausschliesslich
             // beim Gather/Scatter angewendet (scatter_to_csr_kernel: sign_r*sign_c,
@@ -541,8 +542,12 @@ __global__ void compute_dense_block_kernel_H(
 // =============================================================================
 // B = rot A mit A = sum_e a_e W_e. Die Basisfunktionen sind im Referenzelement
 // definiert, also braucht es die Piola-Transformation:
-//     W_physikalisch    = invJ^T * W_ref            (kovariante 1-Form)
-//     rot W_physikalisch = (J * rot W_ref) / detJ   (kontravariante 2-Form)
+//     W_physikalisch     = J_std^-T * W_ref          (kovariante 1-Form)
+//     rot W_physikalisch = (J_std * rot W_ref) / detJ (kontravariante 2-Form)
+// mit der Standard-Jacobimatrix J_std = d x / d xi. compute_jacobian() legt
+// sie transponiert ab (J = J_std^T, invJ = J_std^-T); im Code heisst das
+// W = invJ * W_ref (zeilenweise) und rot W = J^T * rot W_ref / detJ
+// (spaltenweise), also piola_covariant/piola_contravariant.
 // Nur die zweite wird hier gebraucht. Identisch zu
 // compute_cell_centered_fields_kernel in VtkExporter.cu -- bewusst dieselbe
 // Rechnung, damit die Probe nicht versehentlich eine andere Auswertung prueft
@@ -584,9 +589,7 @@ BF_HD inline void verify_bz_nedelec_body(
                        * static_cast<double>(hex_edge_signs[hex_id * 12 + i]);
         // Spaltenweise, weil J transponiert aufgebaut ist -- siehe die
         // ausfuehrliche Begruendung an der Assemblierung.
-        const double real_curlWz =
-            (J[0][2] * curlW[i].x + J[1][2] * curlW[i].y + J[2][2] * curlW[i].z) / detJ;
-        bz += a * real_curlWz;
+        bz += a * piola_contravariant(J, detJ, curlW[i]).z;
     }
     out_bz[hex_id] = bz;
 }
@@ -4470,14 +4473,10 @@ int mainloop(int argc, char** argv) {
                                 double3 br = make_double3(0, 0, 0);
                                 double3 bi = make_double3(0, 0, 0);
                                 for (int i = 0; i < n_edges; ++i) {
-                                    const double cx =
-                                        (J[0][0]*C[i].x + J[1][0]*C[i].y + J[2][0]*C[i].z) / detJ;
-                                    const double cy =
-                                        (J[0][1]*C[i].x + J[1][1]*C[i].y + J[2][1]*C[i].z) / detJ;
-                                    const double cz =
-                                        (J[0][2]*C[i].x + J[1][2]*C[i].y + J[2][2]*C[i].z) / detJ;
-                                    br.x += cr[i]*cx; br.y += cr[i]*cy; br.z += cr[i]*cz;
-                                    bi.x += ci[i]*cx; bi.y += ci[i]*cy; bi.z += ci[i]*cz;
+                                    const double3 c =
+                                        piola_contravariant(J, detJ, C[i]);
+                                    br.x += cr[i]*c.x; br.y += cr[i]*c.y; br.z += cr[i]*c.z;
+                                    bi.x += ci[i]*c.x; bi.y += ci[i]*c.y; bi.z += ci[i]*c.z;
                                 }
                                 bmax_r = std::fmax(bmax_r, std::sqrt(
                                     br.x*br.x + br.y*br.y + br.z*br.z));

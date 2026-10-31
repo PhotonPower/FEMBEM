@@ -36,6 +36,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 - Test `test_harmonic_dirichlet_split`: Dirichlet-Rand im n-Raum gegen die
   2n-Blockform, mit Gegenprobe des eingebauten Fehlers; prüft außerdem die
   Knotengradienten je Elementtyp.
+- Test `test_piola_production` (Marke `host`): ruft die produktiven
+  Feldkörper (VtkExporter-Zellmittel, Maxwell-Kraft des transienten Pfades,
+  `harmonic_lorentz_body`, `harmonic_maxwell_body`) auf einem gedrehten und
+  gescherten Hexaeder, Tetraeder und Prisma auf und vergleicht mit einem
+  homogenen B, Kraft und Moment je Fläche (Fehler 2e-16 bis 1,4e-15). Der
+  Kontrollfall mit transponierter Piola-Formel fällt mit 100 % Fehler in B
+  durch.
 
 ### Geändert
 
@@ -47,6 +54,24 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   (BEM-FEM 2, FEM-direkt mit Luft 0).
 - `test_alpha_poisson` erweitert.
 - Bericht `docs/reports/harmonic-fem.tex` um die Ergebnisse des AMS-Modus ergänzt.
+- Die Piola-Transformationen stehen nur noch in `piola_covariant` und
+  `piola_contravariant` (`NedelecDispatch.cuh`); Assemblierung,
+  `verify_bz_nedelec_body` und `--fem-direct`-Diagnose (`fem.cu`),
+  Maxwell-Kraft (`TransientSolver`), `VtkExporter`, `HarmonicLorentz.cuh`,
+  `HarmonicMaxwell.cuh` und `NonlinearSolver.cu` rufen sie auf, statt die
+  Formel abzuschreiben. Gleiche Rechnung, gleiche Reihenfolge der Operationen.
+- Die Rümpfe von `compute_maxwell_loads_kernel` und
+  `compute_cell_centered_fields_kernel` stehen unverändert in
+  `include/MaxwellLoads.cuh` und `include/CellCenteredFields.cuh`, damit ein
+  Host-Test sie ohne den restlichen Löser aufrufen kann.
+- `test_ams_preconditioner`, `test_preconditioner_end_to_end`,
+  `test_discrete_gradient` und `test_curl_gradient_nullspace` assemblieren
+  mit der produktiven Konvention (vorher: W spaltenweise über invJ, rot W
+  zeilenweise über J, auf gestörten Netzen also ein etwas anderer Operator).
+  Schwellen unverändert; die Messwerte verschieben sich nur leicht: Jacobi-CG
+  298–693 → 296–697 Iterationen, AMS unverändert 23–28; GMRES ohne
+  Vorkonditionierer 161 Iterationen wie bisher, ILU(0) und AMS ebenfalls
+  unverändert. Hilfetext zu `--ams` entsprechend nachgezogen.
 
 ### Behoben
 
@@ -61,6 +86,19 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   oder drei Volltori annahmen (richtig: Vollscheibe, zwei Volltori).
 - `test_ams_preconditioner` übergibt die Alpha-Poisson-Koeffizienten und läuft
   als Host-Test mit.
+- `harmonic_maxwell_body` (Gegenprobe Maxwell-Spannungstensor im
+  harmonischen Pfad) gewichtete jede Viereckfläche (Hexaeder, Seitenflächen
+  des Prismas) mit einem Viertel: der Faktor 4 der Flächenabbildung auf
+  [-1, 1]² fehlte. Dreiecksflächen waren richtig; die dokumentierten Zahlen
+  der Gegenprobe stammen von reinen Tetraedernetzen.
+- Kommentare und Dokumentation zur Piola-Transformation: `compute_jacobian`
+  legt J transponiert ab (J[i][j] = ∂x_j/∂ξ_i), richtig ist W = invJ·Ŵ und
+  rot W = Jᵀ·rot Ŵ / det J. Berichtigt in `fem.cu` („invJᵀ·W_ref“),
+  `HarmonicLorentz.cuh` (TransientSolver transformiere zeilenweise – längst
+  korrigiert), `docs/design/bem-block-preconditioning.md` (offener Punkt als
+  geklärt markiert) und `docs/reports/harmonic-fem.tex` (verstümmelte Formel;
+  die Verwechslung ist nicht „auf affinen Elementen folgenlos“, sondern nur
+  bei symmetrischem J).
 
 ## [0.1.0] – 2026-10-27
 
