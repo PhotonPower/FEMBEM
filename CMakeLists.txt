@@ -1029,7 +1029,7 @@ add_custom_target(host_tests DEPENDS
 # vorhanden sind. Ohne sie bleiben die C++-Tests unveraendert.
 #
 #   ctest --test-dir build -L tools     # Pruefmodule (braucht numpy)
-#   ctest --test-dir build -L gmsh      # Netzgenerator (braucht gmsh)
+#   ctest --test-dir build -L gmsh      # Netzgeneratoren und Import (braucht gmsh)
 #
 # Ein anderes Python (z. B. eine virtuelle Umgebung mit gmsh) waehlt
 #   -DPython3_EXECUTABLE=~/venv-gmsh/bin/python
@@ -1078,8 +1078,13 @@ if (_fembem_py_numpy EQUAL 0 AND _fembem_py_gmsh EQUAL 0)
     add_test(NAME gmsh_team28_fem_air_truncation2
              COMMAND ${Python3_EXECUTABLE} ${_tools}/gmsh/team28_fem_air.py --scale 0.5
                      --truncation 2 --plate-z0 11.3 -o gmsh_team28_fem_air_t2.vtk)
+    # Import eigener .msh/.geo (tools/gmsh/import_msh.py): Rundreise, Fehlerfaelle,
+    # Prismen-Orientierung mit Kontrollfall ohne Drehung.
+    add_test(NAME gmsh_import_msh_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_import_msh.py)
     set_tests_properties(gmsh_team28_hex gmsh_team28_hex_coarse gmsh_team28_hex_variant
                          gmsh_team28_fem_air_coarse gmsh_team28_fem_air_truncation2
+                         gmsh_import_msh_tests
                          PROPERTIES LABELS "gmsh" TIMEOUT 300)
     message(STATUS "FEMBEM: Tests gmsh   aktiv")
 else()

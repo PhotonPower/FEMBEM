@@ -99,6 +99,8 @@ jobs:
           python3 tools/gmsh/team28_hex.py --n-quarter 9 --plate-grading 0.85 --plate-z0 9.8 -o team28_gmsh_variante.vtk
           python3 tools/gmsh/team28_fem_air.py --scale 0.5 -o team28_fem_air_grob.vtk
           python3 tools/gmsh/team28_fem_air.py --scale 0.5 --truncation 2 --plate-z0 11.3 -o team28_fem_air_t2.vtk
+      - name: Import eigener Gmsh-Netze (tools/gmsh/import_msh.py)
+        run: python3 tools/tests/test_import_msh.py
       - uses: actions/upload-artifact@v4
         with:
           name: gmsh-netze

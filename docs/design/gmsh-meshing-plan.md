@@ -76,7 +76,7 @@ wird, liefert Prismen in der Mitte und scheidet nach E2 aus.
 | 1 | `tools/meshcheck.py`: gemeinsame Prüfung für alle Importeure; Tests mit absichtlich kaputten Netzen | **abgeschlossen**, siehe „Ergebnis Phase 1“ unten |
 | 2 | `tools/gmsh/team28_hex.py`: Generator mit Parametern (Teilungen in r, z, φ; Kerngröße; Plattenlage), aus dem Prototyp | **abgeschlossen**, siehe [tools/gmsh/README.md](../../tools/gmsh/README.md) |
 | 3 | `tools/gmsh/team28_fem_air.py`: Netz mit Luft für den FEM-direkt-Pfad (`component_id` 0) | **abgeschlossen**, siehe „Ergebnis Phase 3“ unten |
-| 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | offen |
+| 4 | `tools/gmsh/import_msh.py`: eigene `.msh`/`.geo`-Dateien, Abbildung Gruppenname → `component_id` | **abgeschlossen**, siehe „Ergebnis Phase 4“ unten |
 | 5 | Dokumentation (`docs/meshing.md`), CI-Job (pip + GL-Bibliothek), CTest-Marke `gmsh`, CHANGELOG | **abgeschlossen** |
 | 6 | Netz- und Abschneideserien auf dem Server | **begonnen**: FEM-direkt konvergiert am Gleichgewicht gegen den Sollwert, siehe [gmsh-phase6-report.md](gmsh-phase6-report.md); Auflösung je Richtung: [gmsh-phase7-report.md](gmsh-phase7-report.md) — die Spulenschichten bestimmen den Fehler |
 
@@ -132,6 +132,46 @@ Geprüft:
 Gmsh liefert die Prismen dieser Extrusion übrigens bereits richtig orientiert
 (0 von 140 616 gedreht); die Drehung im Generator bleibt als Absicherung, sie
 richtet jedes Prisma einzeln aus.
+
+## Ergebnis Phase 4
+
+`tools/gmsh/import_msh.py` liest eine `.msh` oder vernetzt eine `.geo` und
+bildet Physical Volumes über ihren **Namen** auf `component_id` ab (Vorgabe:
+`outer_coil`/`aussenspule` 1, `inner_coil`/`innenspule` 2, `plate`/`platte` 3,
+`air`/`luft` 0; `--map Name=ID` ergänzt oder überschreibt). Eine Zuordnung über
+die Gruppennummer allein wäre bequemer, aber eine falsche Nummer vertauscht die
+Spulen ohne Fehlermeldung; ein unbekannter Name bricht dagegen ab.
+
+Abgelehnt werden fehlende, leere und unbekannte Gruppen, widersprüchlich
+doppelt zugeordnete Volumen, Volumenelemente ohne Gruppe (das Risiko „Volumina
+ohne Physical Group“ unten), zweite Ordnung und andere Zelltypen als
+Tetraeder, Hexaeder, Prismen. Die Orientierung wird je Zelle nach der
+Determinante an Ecke 0 korrigiert. Dieser Teil und das Schreiben des VTK liegen
+jetzt gemeinsam mit `team28_fem_air.py` in `tools/gmsh/solver_vtk.py`
+(Ausgabe von `team28_fem_air.py --scale 0.5` vorher und nachher
+zeichengleich). Knoten werden nicht verschmolzen, Knoten ohne Volumenzelle
+entfallen.
+
+Geprüft (`tools/tests/test_import_msh.py`, Marke `gmsh`):
+
+- Rundreise: `team28_hex.py --scale 0.5` als `.msh` importiert gegen dasselbe
+  Netz direkt als VTK: gleiche Zellen (Mittelpunkte), component_ids und
+  Volumina (1e-12); `--bem --check-map` bestehen; kein Hexaeder gedreht.
+- Eigene Modelle: Tetraeder mit Luft (`--fem-direct`, Volumina exakt), Prismen
+  aus einer `.geo` mit `Extrude … Layers … Recombine`.
+- Prismen-Orientierung an einem von Hand geschriebenen, umgekehrt orientierten
+  Prisma; der **Kontrollfall** ohne Drehung scheitert an `meshcheck.py`.
+  Gemischt orientierte Tetraeder und Hexaeder werden einzeln gedreht.
+- Fehlerfälle: zweite Ordnung (`.geo` und `.msh`), keine, unbekannte und in
+  `--map` genannte, aber fehlende Gruppe, verlangte component_id fehlt, Gruppe
+  ohne Namen (über ihre Nummer zuordenbar), Volumen ohne Gruppe, Volumen in
+  zwei Gruppen, Pyramide, doppelte Knoten (bleiben erhalten, `meshcheck.py`
+  meldet sie).
+
+Beobachtet: Prismen aus Extrusion und Rotation im Geo-Kern (auch nach unten
+extrudiert) liefert Gmsh 4.15.2 bereits richtig orientiert. Auf welchem Weg
+die umgekehrten Prismen aus Phase 1 entstanden, ist nicht erneut nachgestellt;
+der Test benutzt deshalb ein von Hand geschriebenes Prisma.
 
 ## Abnahme je Netz (ab Phase 2 automatisch)
 

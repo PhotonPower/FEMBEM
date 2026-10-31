@@ -99,3 +99,45 @@ mit Luft erwartet; die Vorprüfung des FEM-direkt-Pfads meldet keine
 Beanstandung und den eingestellten Abschneidefaktor. Am Schwebegleichgewicht
 (`--plate-z0 11.3`) liefert der Lauf F_z = 1,037 N bei ausgeschöpftem
 Luftgebiet und `--scale 0.75`, Sollwert 1,0497 N.
+
+## `import_msh.py`: eigene `.msh`- und `.geo`-Dateien
+
+    ~/venv-gmsh/bin/python tools/gmsh/import_msh.py netz.msh -o netz.vtk
+    ~/venv-gmsh/bin/python tools/gmsh/import_msh.py modell.geo -o netz.vtk     # wird 3D vernetzt
+    ~/venv-gmsh/bin/python tools/gmsh/import_msh.py netz.msh --map Ring_A=1 --map Ring_B=2 --map Scheibe=3
+
+Für Netze, die nicht aus den beiden Generatoren stammen. Jedes Volumen braucht
+eine **benannte** Physical Group (Physical Volume); maßgeblich ist der Name,
+nicht die Nummer der Gruppe. Vorgabe (Groß-/Kleinschreibung, `-`, `_` und
+Leerzeichen egal):
+
+| component_id | Körper | Namen |
+|---|---|---|
+| 1 | Außenspule | `outer_coil`, `coil_outer`, `aussenspule`, `outer` |
+| 2 | Innenspule | `inner_coil`, `coil_inner`, `innenspule`, `inner` |
+| 3 | Platte | `plate`, `platte` |
+| 0 | Luft | `air`, `luft` |
+
+| Option | Vorgabe | Bedeutung |
+|---|---|---|
+| `--map NAME=ID` | — | Gruppe `NAME` auf `ID` abbilden (wiederholbar, überschreibt die Vorgabe); Gruppe ohne Namen über ihre Nummer, z. B. `--map 7=3` |
+| `--no-default-names` | aus | nur Zuordnungen aus `--map` |
+| `--require` | `1,2,3` | component_ids, die vorkommen müssen (leer: keine) |
+| `--bem` | aus | Prüfung für BEM-FEM: nur Hexaeder, Körper getrennt |
+| `--fem-direct` | aus | Prüfung für FEM-direkt: Luft umschließt alles, Prismen affin |
+| `--check-map` | aus | zusätzlich `tools/check_map.py` (nur TEAM-28-Geometrie) |
+
+Abgelehnt mit Meldung und Exit-Code 1: keine Volumengruppe, unbekannter Name,
+Name aus `--map` nicht in der Datei, leere Gruppe, fehlende verlangte
+component_id, ein Volumen in zwei Gruppen mit verschiedener component_id,
+Volumenelemente ohne Gruppe (sie fehlten sonst ohne Meldung), Elemente zweiter
+Ordnung, andere Zelltypen als Tetraeder, Hexaeder und Prismen. Eine `.geo` wird
+mit ihren eigenen Einstellungen vernetzt; setzt sie `Mesh.ElementOrder = 2`,
+ist das ein Fehler und wird nicht still überschrieben.
+
+Das Werkzeug dreht jede negativ orientierte Zelle in die Konvention des Lösers
+(gemeinsamer Code mit `team28_fem_air.py` in `solver_vtk.py`), entfernt Knoten
+ohne Volumenzelle und nummeriert neu. Knoten werden **nicht** verschmolzen;
+doppelte Knoten meldet die Prüfung. Danach läuft `tools/meshcheck.py` auf der
+geschriebenen Datei; bei einem Befund endet das Werkzeug mit 1. Einheiten
+werden nicht umgerechnet (Millimeter).
