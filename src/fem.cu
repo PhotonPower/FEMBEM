@@ -607,6 +607,154 @@ __global__ void verify_bz_nedelec(
 }
 
 
+// A und B = rot A im Referenzmittelpunkt jedes Elements, fuer
+// --harmonic-field-dump. Dieselbe Piola-Rechnung wie verify_bz_nedelec,
+// nur alle Komponenten: out[6h..6h+2] = A, out[6h+3..6h+5] = B.
+BF_HD inline void element_center_fields_body(
+    int hex_id, int num_hexes,
+    const Hexahedron* hex_nodes, const double3* nodes,
+    const int* hex_edges, const int* hex_edge_signs,
+    const int* elem_types, const double* A, double* out)
+{
+    (void)num_hexes;
+    const int etype   = element_type_or_hex(elem_types, hex_id);
+    const int n_nodes = element_num_nodes(etype);
+    const int n_edges = element_num_edges(etype);
+
+    const Hexahedron hex = hex_nodes[hex_id];
+    double3 nd[8];
+    for (int i = 0; i < n_nodes; ++i) nd[i] = nodes[hex.v[i]];
+    for (int i = n_nodes; i < 8; ++i) nd[i] = make_double3(0.0, 0.0, 0.0);
+
+    double r0, s0, t0;
+    element_reference_center(etype, r0, s0, t0);
+    double J[3][3], invJ[3][3], detJ;
+    compute_element_jacobian(etype, nd, r0, s0, t0, J, invJ, detJ);
+    double* o = out + 6 * static_cast<size_t>(hex_id);
+    for (int c = 0; c < 6; ++c) o[c] = 0.0;
+    if (detJ <= 0.0) return;
+
+    double3 W[12], curlW[12];
+    evaluate_element_basis(etype, r0, s0, t0, W);
+    evaluate_element_curl(etype, r0, s0, t0, curlW);
+    for (int i = 0; i < n_edges; ++i) {
+        const int ge = hex_edges[hex_id * 12 + i];
+        if (ge < 0) continue;
+        const double a = A[ge] * static_cast<double>(hex_edge_signs[hex_id * 12 + i]);
+        const double3 w = piola_covariant(invJ, W[i]);
+        const double3 c = piola_contravariant(J, detJ, curlW[i]);
+        o[0] += a * w.x; o[1] += a * w.y; o[2] += a * w.z;
+        o[3] += a * c.x; o[4] += a * c.y; o[5] += a * c.z;
+    }
+}
+
+__global__ void element_center_fields(
+    int num_hexes, const Hexahedron* hex_nodes, const double3* nodes,
+    const int* hex_edges, const int* hex_edge_signs,
+    const int* elem_types, const double* A, double* out)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;
+    if (h >= num_hexes) return;
+    element_center_fields_body(h, num_hexes, hex_nodes, nodes, hex_edges, hex_edge_signs,
+                               elem_types, A, out);
+}
+
+// --harmonic-field-dump: je Element Koerper-Kennung, Schwerpunkt, A_r, A_i,
+// B_r, B_i als CSV (SI-Einheiten). Kennung 0 sonst, 1 Platte, 2 Innen-,
+// 3 Aussenspule.
+static void write_harmonic_field_dump(const std::string& path, Mesh& mesh,
+                                      const std::vector<int>& body,
+                                      const double* d_ar, const double* d_ai) {
+    const size_t nh = mesh.num_hexes;
+    DeviceArray<double> fr(6 * nh), fi(6 * nh);
+    BF_LAUNCH_1D_PAR(element_center_fields, nh, static_cast<int>(nh),
+        mesh.hex_nodes.data(), mesh.nodes_current.data(), mesh.hex_edges.data(),
+        mesh.hex_edge_signs.data(), mesh.elem_types.data(), d_ar, fr.data());
+    BF_LAUNCH_1D_PAR(element_center_fields, nh, static_cast<int>(nh),
+        mesh.hex_nodes.data(), mesh.nodes_current.data(), mesh.hex_edges.data(),
+        mesh.hex_edge_signs.data(), mesh.elem_types.data(), d_ai, fi.data());
+    bf::sync();
+    fr.prefetch_to_host(); fi.prefetch_to_host();
+    mesh.nodes_current.prefetch_to_host(); mesh.hex_nodes.prefetch_to_host();
+    bf::sync();
+
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (f == nullptr) {
+        std::cout << "[Harmonisch] WARNUNG: " << path << " laesst sich nicht schreiben.\n";
+        return;
+    }
+    std::fprintf(f, "elem,body,x,y,z,Arx,Ary,Arz,Aix,Aiy,Aiz,Brx,Bry,Brz,Bix,Biy,Biz\n");
+    for (size_t h = 0; h < nh; ++h) {
+        const Hexahedron H = mesh.hex_nodes[h];
+        const int nn = element_num_nodes(mesh.elem_type(static_cast<int>(h)));
+        double3 c = make_double3(0.0, 0.0, 0.0);
+        for (int n = 0; n < nn; ++n) {
+            const double3 p = mesh.nodes_current[H.v[n]];
+            c.x += p.x; c.y += p.y; c.z += p.z;
+        }
+        c.x /= nn; c.y /= nn; c.z /= nn;
+        const double* r = fr.data() + 6 * h;
+        const double* i = fi.data() + 6 * h;
+        std::fprintf(f, "%zu,%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,"
+                        "%.9e,%.9e,%.9e,%.9e,%.9e,%.9e\n",
+                     h, body[h], c.x, c.y, c.z, r[0], r[1], r[2], i[0], i[1], i[2],
+                     r[3], r[4], r[5], i[3], i[4], i[5]);
+    }
+    std::fclose(f);
+    std::cout << "[Harmonisch] Feld je Element nach " << path << " geschrieben ("
+              << nh << " Elemente).\n";
+}
+
+// B_z in den achsennaechsten Plattenelementen (innerster Elementring) fuer
+// den Vergleich gegen Biot-Savart (report_field_verification). Gebraucht vom
+// transienten --verify-field und vom harmonischen Pfad; eine Fassung, damit
+// beide dieselben Auswertepunkte benutzen.
+static std::vector<FieldSample> axis_bz_samples(Mesh& mesh, const PhysicalObject& plate,
+                                                const double* d_A, double& r_ring) {
+    DeviceArray<double> d_bz(mesh.num_hexes);
+    BF_LAUNCH_1D_PAR(verify_bz_nedelec, mesh.num_hexes,
+        static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
+        mesh.nodes_current.data(), mesh.hex_edges.data(),
+        mesh.hex_edge_signs.data(), mesh.elem_types.data(),
+        d_A, d_bz.data());
+    bf::sync();
+
+    d_bz.prefetch_to_host();
+    mesh.nodes_current.prefetch_to_host();
+    mesh.hex_nodes.prefetch_to_host();
+    bf::sync();
+
+    // Schwerpunkt ueber die BELEGTEN Knoten: der frueher feste Faktor 0.125
+    // gilt nur fuer acht; bei einem Tetraeder waere der Schwerpunkt sonst um
+    // die Haelfte zu klein -- und die Radiusauswahl damit stillschweigend falsch.
+    auto centroid = [&](int h) {
+        const Hexahedron H = mesh.hex_nodes[h];
+        const int nn = element_num_nodes(mesh.elem_type(h));
+        double3 c = make_double3(0.0, 0.0, 0.0);
+        for (int n = 0; n < nn; ++n) {
+            const double3 p = mesh.nodes_current[H.v[n]];
+            c.x += p.x; c.y += p.y; c.z += p.z;
+        }
+        c.x /= nn; c.y /= nn; c.z /= nn;
+        return c;
+    };
+
+    double r_min = 1e30;
+    for (int h : plate.get_hex_indices()) {
+        const double3 c = centroid(h);
+        r_min = std::fmin(r_min, std::sqrt(c.x * c.x + c.y * c.y));
+    }
+    std::vector<FieldSample> samples;
+    for (int h : plate.get_hex_indices()) {
+        const double3 c = centroid(h);
+        const double rr = std::sqrt(c.x * c.x + c.y * c.y);
+        if (rr > r_min * 1.05) continue;
+        samples.push_back({rr, c.z, d_bz[h]});
+    }
+    r_ring = r_min;
+    return samples;
+}
+
 int mainloop(int argc, char** argv) {
     try {
         std::cout << "========================================================\n";
@@ -5084,7 +5232,13 @@ int mainloop(int argc, char** argv) {
                 // geforderten 1,0497 N bei 11,3 mm.
                 //
                 // Der Phasor braucht I_max, nicht i(dt). Skaliert wird
-                // deshalb mit 1/sin(w*dt) zurueck.
+                // deshalb mit 1/sin(w0*dt) zurueck -- mit der Frequenz der
+                // SPULEN (TEAM28_F0), nicht der harmonischen. Mit omega
+                // stand hier bei --harmonic=2 ein 25-fach zu grosser
+                // Quellterm: die Spulen schwingen in update_state() weiter
+                // mit 50 Hz, i(dt) ist also derselbe, aber 1/sin(omega*dt)
+                // war 796 statt 31,8. Die Amplitude I_max haengt von der
+                // Frequenz nicht ab, die Skalierung darf es also auch nicht.
                 //
                 // Sauberer waere ein eigener Quellterm-Aufbau mit der
                 // Amplitude direkt. Das Zurueckskalieren ist exakt, solange
@@ -5093,9 +5247,9 @@ int mainloop(int argc, char** argv) {
                 // null waere es allerdings numerisch unsinnig, deshalb die
                 // Pruefung unten.
                 {
-                    const double s = std::sin(omega * dt);
+                    const double s = std::sin(2.0 * M_PI * TEAM28_F0 * dt);
                     if (!(std::fabs(s) > 1e-3)) {
-                        std::cout << "[Harmonisch] ABBRUCH: sin(omega*dt) = " << s
+                        std::cout << "[Harmonisch] ABBRUCH: sin(omega_0*dt) = " << s
                                   << " ist zu klein, um die Amplitude aus dem\n"
                                   << "[Harmonisch] Zeitschritt-Quellterm zurueckzurechnen. "
                                      "Waehlen Sie --dt so, dass\n"
@@ -5109,7 +5263,7 @@ int mainloop(int argc, char** argv) {
                                  cudaMemcpyDeviceToDevice);
                     bf::dscal(op.get_cublas_handle(), nd_h, amp_scale, d_br.data());
                     std::cout << "[Harmonisch] Quellterm auf die volle Amplitude skaliert: "
-                                 "sin(omega*dt) = " << s
+                                 "sin(omega_0*dt) = " << s
                               << ", Faktor " << amp_scale << "\n";
                 }
                 bf::memset_d(d_bi.data(), 0, static_cast<size_t>(nd_h) * sizeof(double));
@@ -5242,6 +5396,86 @@ int mainloop(int argc, char** argv) {
                                          "unabhaengige Haelften, und ohne\n"
                                          "[Harmonisch]      Phasenverzoegerung ist das "
                                          "Lorentz-Zeitmittel zwangslaeufig null.\n";
+                    }
+
+                    // B_z auf der Achse gegen Biot-Savart (20 A Scheitelwert).
+                    // Fuer f -> 0 ist A_r das reine Spulenfeld und muss
+                    // stimmen; bei 50 Hz schirmen die Wirbelstroeme ab, und
+                    // die Abweichung ist dann Physik. Mit kleiner Frequenz
+                    // (--harmonic=2) trennt das Quellfeld und Aussenraum-
+                    // kopplung von Wirbelstrom- und Kraftteil.
+                    {
+                        double r_ring = 0.0;
+                        const std::vector<FieldSample> samples =
+                            axis_bz_samples(mesh, plate, d_xr.data(), r_ring);
+                        char label[96];
+                        std::snprintf(label, sizeof label,
+                                      "harmonisch, Realteil A_r bei %.3g Hz", omega / (2.0 * M_PI));
+                        report_field_verification(label, samples, 20.0, r_ring);
+                    }
+                    if (!bf::harmonic_field_dump().empty()) {
+                        std::vector<int> body(mesh.num_hexes, 0);
+                        for (int h : plate.get_hex_indices())      body[h] = 1;
+                        for (int h : coil_inner.get_hex_indices()) body[h] = 2;
+                        for (int h : coil_outer.get_hex_indices()) body[h] = 3;
+                        write_harmonic_field_dump(bf::harmonic_field_dump(), mesh, body,
+                                                  d_xr.data(), d_xi.data());
+
+                        // Dazu das FEM-Gleichungssystem, physikalisch: Kanten
+                        // mit Endpunkten, Rand- und Eichkennung, rechte Seite
+                        // b_r; W = K + omega*C als Tripel. Damit laesst sich
+                        // die exakte Biot-Savart-Loesung in die Zeilen der
+                        // Spuleninnenkanten einsetzen -- dort wirkt die BEM
+                        // nicht, ein Residuum laege also im Quellterm oder in K.
+                        std::vector<double> b_phys(static_cast<size_t>(nd_h));
+                        {
+                            DeviceArray<double> tmp(static_cast<size_t>(nd_h));
+                            bf::memcpy_d(tmp.data(), d_br.data(),
+                                         static_cast<size_t>(nd_h) * sizeof(double),
+                                         cudaMemcpyDeviceToDevice);
+                            op.scale_by_D_inverse(tmp.data());
+                            bf::sync();
+                            bf::memcpy_d(b_phys.data(), tmp.data(),
+                                         static_cast<size_t>(nd_h) * sizeof(double),
+                                         cudaMemcpyDeviceToHost);
+                        }
+                        std::vector<char> on_bem(static_cast<size_t>(total_dofs), 0);
+                        d_bem_to_fem.prefetch_to_host();
+                        d_is_gauged.prefetch_to_host();
+                        mesh.edges.prefetch_to_host();
+                        mesh.nodes_current.prefetch_to_host();
+                        csr_matrix.row_offsets.prefetch_to_host();
+                        csr_matrix.col_indices.prefetch_to_host();
+                        csr_matrix.values.prefetch_to_host();
+                        bf::sync();
+                        for (int i = 0; i < bem_map.num_bem_dofs; ++i) {
+                            const int e = d_bem_to_fem[i];
+                            if (e >= 0 && e < total_dofs) on_bem[e] = 1;
+                        }
+                        const std::string base = bf::harmonic_field_dump();
+                        if (std::FILE* f = std::fopen((base + ".edges.csv").c_str(), "w")) {
+                            std::fprintf(f, "edge,x0,y0,z0,x1,y1,z1,on_bem,gauged,b_r\n");
+                            for (int e = 0; e < total_dofs; ++e) {
+                                const int2 ed = mesh.edges[e];
+                                const double3 p = mesh.nodes_current[ed.x];
+                                const double3 q = mesh.nodes_current[ed.y];
+                                std::fprintf(f, "%d,%.9e,%.9e,%.9e,%.9e,%.9e,%.9e,%d,%d,%.9e\n",
+                                             e, p.x, p.y, p.z, q.x, q.y, q.z, on_bem[e],
+                                             d_is_gauged[e] ? 1 : 0, b_phys[e]);
+                            }
+                            std::fclose(f);
+                        }
+                        if (std::FILE* f = std::fopen((base + ".W.csv").c_str(), "w")) {
+                            std::fprintf(f, "row,col,val\n");
+                            for (int r = 0; r < total_dofs; ++r)
+                                for (int k = csr_matrix.row_offsets[r];
+                                     k < csr_matrix.row_offsets[r + 1]; ++k)
+                                    std::fprintf(f, "%d,%d,%.12e\n", r,
+                                                 csr_matrix.col_indices[k], csr_matrix.values[k]);
+                            std::fclose(f);
+                        }
+                        std::cout << "[Harmonisch] Gleichungssystem nach " << base
+                                  << ".edges.csv / .W.csv geschrieben.\n";
                     }
 
                     DeviceArray<double> d_a_phase(static_cast<size_t>(total_dofs));
@@ -5408,53 +5642,11 @@ int mainloop(int argc, char** argv) {
             }
 
             if (bf::verify_field() && step == max_steps) {
-                DeviceArray<double> d_bz(mesh.num_hexes);
-                BF_LAUNCH_1D_PAR(verify_bz_nedelec, mesh.num_hexes,
-                    static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
-                    mesh.nodes_current.data(), mesh.hex_edges.data(),
-                    mesh.hex_edge_signs.data(), mesh.elem_types.data(),
-                    d_A_current.data(), d_bz.data());
-                bf::sync();
-
-                d_bz.prefetch_to_host();
-                mesh.nodes_current.prefetch_to_host();
-                mesh.hex_nodes.prefetch_to_host();
-                bf::sync();
-
                 // Dieselben Auswertepunkte wie im Referenzpfad: innerster
-                // Plattenelementring. Die Auswahl liegt hier und nicht in
-                // FieldVerification, weil sie die Plattenelemente kennen muss.
-                std::vector<FieldSample> samples;
-                double r_min = 1e30;
-                for (int h : plate.get_hex_indices()) {
-                    const Hexahedron H = mesh.hex_nodes[h];
-                    double cx = 0.0, cy = 0.0;
-                    // Mittelung ueber die BELEGTEN Knoten. Der frueher feste
-                    // Faktor 0.125 gilt nur fuer acht; bei einem Tetraeder
-                    // waere der Schwerpunkt sonst um die Haelfte zu klein --
-                    // und die Radiusauswahl unten damit stillschweigend falsch.
-                    const int nn = element_num_nodes(mesh.elem_type(h));
-                    for (int n = 0; n < nn; ++n) {
-                        cx += mesh.nodes_current[H.v[n]].x;
-                        cy += mesh.nodes_current[H.v[n]].y;
-                    }
-                    cx /= nn; cy /= nn;
-                    r_min = std::fmin(r_min, std::sqrt(cx * cx + cy * cy));
-                }
-                for (int h : plate.get_hex_indices()) {
-                    const Hexahedron H = mesh.hex_nodes[h];
-                    double cx = 0.0, cy = 0.0, cz = 0.0;
-                    const int nn = element_num_nodes(mesh.elem_type(h));
-                    for (int n = 0; n < nn; ++n) {
-                        const double3 p = mesh.nodes_current[H.v[n]];
-                        cx += p.x; cy += p.y; cz += p.z;
-                    }
-                    cx /= nn; cy /= nn; cz /= nn;
-                    const double rr = std::sqrt(cx * cx + cy * cy);
-                    if (rr > r_min * 1.05) continue;
-                    samples.push_back({rr, cz, d_bz[h]});
-                }
-
+                // Plattenelementring.
+                double r_min = 0.0;
+                const std::vector<FieldSample> samples =
+                    axis_bz_samples(mesh, plate, d_A_current.data(), r_min);
                 report_field_verification("Nedelec-Kantenelemente + ACA-BEM",
                                           samples, 20.0, r_min);
                 return 0;

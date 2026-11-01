@@ -356,6 +356,7 @@ extern int    g_harmonic_outer_restart;
 extern double g_harmonic_inner_tol;
 /// --harmonic-inner-direct: (W+T) dicht zerlegen statt innerem GMRES.
 extern bool   g_harmonic_inner_direct;
+extern std::string g_harmonic_field_dump;
 extern int    g_harmonic_outer_cap;
 
 extern bool   g_harmonic_study;
@@ -501,6 +502,7 @@ inline bool   fem_direct_nullspace_handled() {
 inline double harmonic_frequency()   { return g_harmonic_hz; }
 inline double harmonic_inner_tol()   { return g_harmonic_inner_tol; }
 inline bool   harmonic_inner_direct() { return g_harmonic_inner_direct; }
+inline const std::string& harmonic_field_dump() { return g_harmonic_field_dump; }
 inline int    harmonic_outer_cap()   { return g_harmonic_outer_cap; }
 inline bool   want_harmonic_checks() { return g_harmonic_checks; }
 inline int    harmonic_outer_restart() { return g_harmonic_outer_restart; }
