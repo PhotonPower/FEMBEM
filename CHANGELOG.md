@@ -6,6 +6,15 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `--harmonic-inner-direct`: exakter innerer Löser für die C-to-R-
+  Vorkonditionierung des harmonischen BEM-FEM-Pfads. (W+T) = K + ωC wird
+  einmal spaltenweise auf der GPU abgetastet und mit cuSOLVER dicht zerlegt;
+  jede innere Gleichung ist danach eine Vorwärts-/Rückwärtssubstitution. Auf
+  dem Hexaedernetz erreicht das innere GMRES seine Toleranz nicht
+  (Residuum 1e-2 nach 4000 Schritten). Speicher nd²·8 Byte, also nur für
+  kleine Netze (nd = 33 435 → 8,3 GiB); das Abtasten kostet eine
+  Operatoranwendung je Unbekannter. Host-Test `test_harmonic_inner_direct`
+  mit Gegenproben (vertauschte Ablage, begrenztes inneres GMRES).
 - `tools/team28_axisymmetric.py`: unabhängige Kraftreferenz für TEAM 28,
   rotationssymmetrisches Ringmodell mit exakter Gegeninduktivität, nur numpy.
   Ergibt mit den Daten der Spezifikation F_z = 1,006 N bei 11,3 mm und eine

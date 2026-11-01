@@ -394,6 +394,31 @@ Genauigkeitsanforderung steigt von 1e-4 auf **1e-6**, und damit die Kosten:
 **Unvorkonditioniert ist 2100-mal billiger.** Für den inneren Löser ist die
 einfachste Variante die richtige — hier ist keine Blockstruktur zu holen.
 
+### Auf dem Hexaedernetz trägt das innere GMRES nicht mehr
+
+Die Zahlen oben stammen von team28_coarse_12 (4511 Unbekannte). Auf dem
+Gmsh-Hexaedernetz `team28_hex.py --scale 1` (4944 Hexaeder, 18 651 FEM- und
+14 784 BEM-Freiheitsgrade, nd = 33 435) erreicht das innere GMRES mit ILU die
+Toleranz 1e-4 nicht: Residuum 9,7e-3 nach 4000 Schritten, 0,02 nach einer
+Stunde (`docs/design/gmsh-phase9-report.md`). Mit so ungenauen inneren
+Lösungen trägt C-to-R nach der Genauigkeitsreihe oben nicht.
+
+`--harmonic-inner-direct` umgeht das für kleine Netze: (W+T) wird einmal
+spaltenweise abgetastet (`sample_operator_dense`, A e_j im Tilde-Raum
+einschließlich des Nullraum-Terms, also regulär) und mit cuSOLVER zerlegt.
+Jede innere Lösung ist dann exakt, und für C-to-R gilt wieder der Fall
+„Fehler in (W+T)⁻¹ → 0“.
+
+Kosten auf hex_s1: 8,3 GiB für die Matrix; das Abtasten braucht nd
+Operatoranwendungen zu je etwa 0,3 s, also rund 3 Stunden. Die Zerlegung
+selbst dauert Minuten. Damit ist der Weg auf nd ≲ 35 000 begrenzt (Speicher)
+und schon dort durch das Abtasten teuer.
+
+Für feinere Netze ist der nächste Schritt eine Schur-Zerlegung: den dünn
+besetzten FEM-Block mit cuDSS zerlegen und nur das BEM-Schur-Komplement
+(n_BEM² statt nd², auf hex_s1 1,6 statt 8,3 GiB) dicht aufbauen. Eichung und
+Kohomologie-Projektion müssen dabei im FEM-Block mitgeführt werden.
+
 ---
 
 ## 4. Wie es weitergeht — je nach Ergebnis

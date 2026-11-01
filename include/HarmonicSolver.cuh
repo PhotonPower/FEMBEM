@@ -75,6 +75,8 @@
 
 namespace bf {
 
+class DenseLU;
+
 struct HarmonicSolveResult {
     int    iterations   = 0;
     double relative_res = -1.0;
@@ -102,6 +104,11 @@ struct HarmonicSolveResult {
 /// Laenge nd; C wird nur auf die ersten total_dofs Eintraege angewandt, der
 /// BEM-Anteil bleibt unberuehrt (der BEM-Block ist frequenzunabhaengig).
 ///
+/// inner_direct: wenn gesetzt, eine Zerlegung von (W+T) im Tilde-Raum (aus
+///       sample_operator_dense() und DenseLU::factorize()). C-to-R loest dann
+///       jede innere Gleichung exakt statt mit GMRES; inner_tol und
+///       inner_max_iter sind ohne Wirkung.
+///
 /// Rechts-Vorkonditionierung und nicht links: nur so minimiert GMRES das
 /// ECHTE Residuum ||b - Hx||, und nur so ist die Iterationszahl mit der des
 /// transienten Loesers vergleichbar, der ebenfalls rechts vorkonditioniert.
@@ -111,7 +118,18 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
                                    const double* d_b_r, const double* d_b_i,
                                    double* d_x_r, double* d_x_i,
                                    double tol, int max_iter, int restart,
-                                   double inner_tol, int inner_max_iter);
+                                   double inner_tol, int inner_max_iter,
+                                   const DenseLU* inner_direct = nullptr);
+
+/// Tastet op (den Operator im Tilde-Raum, wie ihn GMRES sieht) spaltenweise
+/// in die dichte nd x nd Matrix d_A ab (column-major, Geraete- bzw.
+/// Managed-Speicher). Fuer --harmonic-inner-direct: die Zerlegung davon ersetzt
+/// das innere GMRES in C-to-R.
+///
+/// op.apply() addiert auf dem Eichnullraum (I - P) x, die abgetastete Matrix
+/// ist dort also die Identitaet und damit regulaer, obwohl (W+T) auf den
+/// geeichten Kanten und den Kohomologie-Richtungen singulaer ist.
+void sample_operator_dense(CoupledMVOperator& op, int nd, double* d_A);
 
 } // namespace bf
 

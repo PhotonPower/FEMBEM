@@ -592,6 +592,26 @@ add_executable(test_solver_nonfinite_abort
 target_include_directories(test_solver_nonfinite_abort PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_solver_nonfinite_abort PRIVATE CUDA::cudart CUDA::cublas CUDA::cusparse)
 
+# 🧪 --harmonic-inner-direct: C-to-R mit dichter Zerlegung von (W+T) gegen die
+# dichte Loesung des komplexen Systems; Abtastung column-major.
+# Bauen mit:
+#   cmake --build build --config Release --target test_harmonic_inner_direct
+add_executable(test_harmonic_inner_direct
+    tests/test_harmonic_inner_direct.cu
+    src/HarmonicSolver.cu
+    src/DenseLinalg.cu
+    src/CoupledSolver.cu
+    src/Backend.cu
+    src/HostLinalg.cu
+    src/AmsPreconditioner.cpp
+    src/AlgebraicMultigrid.cpp
+    src/DiscreteGradient.cpp
+    src/RitzSpectrum.cpp
+)
+target_include_directories(test_harmonic_inner_direct PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_harmonic_inner_direct PRIVATE
+    CUDA::cudart CUDA::cublas CUDA::cusparse CUDA::cusolver)
+
 # 🧪 Vektor-Poisson-Operator als AMG-Grundlage des vektoriellen AMS-Hilfsraums
 # Prueft ausserdem die Knotengradienten je Elementtyp (Tetraeder, Prisma,
 # Hexaeder) auf zufaellig verzerrten Einzelelementen -- ohne die ist der
@@ -933,6 +953,8 @@ add_test(NAME test_preconditioner_end_to_end COMMAND test_preconditioner_end_to_
 set_tests_properties(test_preconditioner_end_to_end PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_solver_nonfinite_abort COMMAND test_solver_nonfinite_abort)
 set_tests_properties(test_solver_nonfinite_abort PROPERTIES LABELS "host" TIMEOUT 120)
+add_test(NAME test_harmonic_inner_direct COMMAND test_harmonic_inner_direct)
+set_tests_properties(test_harmonic_inner_direct PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_dense_direct COMMAND test_dense_direct)
 set_tests_properties(test_dense_direct PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_harmonic_phase_average COMMAND test_harmonic_phase_average)
@@ -1026,6 +1048,7 @@ add_custom_target(host_tests DEPENDS
     test_amg_anisotropy
     test_preconditioner_end_to_end
     test_solver_nonfinite_abort
+    test_harmonic_inner_direct
     test_dense_direct
     test_harmonic_phase_average
     test_block_preconditioner_study
