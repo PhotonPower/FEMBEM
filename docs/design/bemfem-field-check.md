@@ -80,6 +80,14 @@ Das ist hier zweimal verletzt:
   Facette nicht konstant; ∇(A·n) ist dort von der Größe A_φ/R, und
   ∂A/∂n ~ A/h hat bei R = 27…95 mm und h ≈ 5 mm dieselbe Größenordnung.
 
+Gegenprobe ohne Baum-Eichung (`--nogauge --nocohomology`, 2 Hz, exakter
+innerer Löser): der äußere Löser stagniert bei 0,017 (900 Iterationen in
+einer Stunde). (W+T) ist ohne Eichung also fast singulär -- die BEM-Zeilen
+legen die Gradientenrichtungen nicht kräftig fest. Das widerlegt die
+Vermutung nicht (die Eichabhängigkeit kann klein und trotzdem
+feldverfälschend sein), stützt sie aber auch nicht; ein Feld ergab der Lauf
+nicht.
+
 Der Referenzpfad (`--reference`, Knotenelemente, Strafterm-Eichung, volle
 BEM) ist für genau diese Darstellung gebaut. Läuft seine Feldprüfung gegen
 Biot-Savart sauber, ist die Kopplung der Kanten-Elemente an die
