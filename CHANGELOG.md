@@ -6,6 +6,12 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Felddiagnose im harmonischen Pfad: B_z auf der Achse gegen Biot-Savart,
+  `--harmonic-field-dump=DATEI` (A und B je Element, dazu das FEM-System)
+  und `tools/team28_field_check.py` (Vergleich je Körper gegen Biot-Savart).
+  Befund: Das Feld des BEM-FEM-Pfads ist schon in den Spulen falsch, während
+  Quellterm und FEM-Matrix auf 2–3 % stimmen
+  (`docs/design/bemfem-field-check.md`).
 - `--harmonic-inner-direct`: exakter innerer Löser für die C-to-R-
   Vorkonditionierung des harmonischen BEM-FEM-Pfads. (W+T) = K + ωC wird
   einmal spaltenweise auf der GPU abgetastet und mit cuSOLVER dicht zerlegt;
@@ -123,6 +129,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Behoben
 
+- Harmonischer BEM-FEM-Pfad mit `--harmonic=f`: Der Quellterm wurde mit
+  1/sin(2πf·dt) auf die Amplitude zurückgerechnet, obwohl die Spulen mit
+  50 Hz schwingen; bei 2 Hz war er 25-fach zu groß. Skaliert wird jetzt mit
+  der Spulenfrequenz.
 - FEM-direkt: Die Maxwell-Nullprobe galt bis 20 % der Kraft als „klein“ und
   stellte dann das Volumenintegral infrage (bei radial 10 mit 19,5 %). Jetzt
   ist die Grenze 5 %, und die Meldung nennt den gemessenen Anteil statt fest
