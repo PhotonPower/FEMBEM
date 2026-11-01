@@ -88,10 +88,21 @@ Vermutung nicht (die Eichabhängigkeit kann klein und trotzdem
 feldverfälschend sein), stützt sie aber auch nicht; ein Feld ergab der Lauf
 nicht.
 
-Der Referenzpfad (`--reference`, Knotenelemente, Strafterm-Eichung, volle
-BEM) ist für genau diese Darstellung gebaut. Läuft seine Feldprüfung gegen
-Biot-Savart sauber, ist die Kopplung der Kanten-Elemente an die
-komponentenweise BEM die Ursache.
+**5. Der Referenzpfad trifft das Spulenfeld.** `--reference --verify-field
+--fixed-plate` (Knotenelemente, Strafterm-Eichung, volle BEM, Gleichstrom
+20 A, 1000 Schritte, team28.vtk bei 3,8 mm):
+
+| z [mm] | B_z Löser [T] | Biot-Savart [T] | Abweichung |
+|---|---|---|---|
+| 4,3 | 0,093779 | 0,093839 | −0,06 % |
+| 5,3 | 0,089722 | 0,089846 | −0,14 % |
+| 6,3 | 0,085707 | 0,085891 | −0,21 % |
+
+Dieselbe komponentenweise BEM-Darstellung liefert mit Knotenelementen also
+das richtige Feld. Der Fehler liegt in der Kopplung der Kanten-Elemente
+des Hauptpfads an diese BEM: entweder grundsätzlich (Baum-Eichung und
+fehlendes A·n, siehe oben) oder in deren Umsetzung (T, Vorzeichen, Normalen,
+Abbildung der Randkanten).
 
 ## Was daraus folgt
 
@@ -100,7 +111,7 @@ aber unwahrscheinlich: das Feld ist nicht skaliert falsch, sondern in der
 Form (Projektionen 0,04 bis 0,3, große B_φ-Anteile). Gegenproben in dieser
 Reihenfolge:
 
-1. Feldprüfung des Referenzpfads gegen Biot-Savart.
+1. ~~Feldprüfung des Referenzpfads gegen Biot-Savart~~ -- erledigt, sauber.
 2. Das exakte Paar (A, K) in die BEM-Zeilen einsetzen, einmal mit
    μ₀K = ∂A/∂n und einmal mit K = −n × H: welches erfüllt sie?
 3. Ist die Formulierung die Ursache: Kopplung über n × A und n × H mit einer
