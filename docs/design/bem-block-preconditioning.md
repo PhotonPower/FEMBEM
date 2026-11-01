@@ -409,10 +409,30 @@ einschließlich des Nullraum-Terms, also regulär) und mit cuSOLVER zerlegt.
 Jede innere Lösung ist dann exakt, und für C-to-R gilt wieder der Fall
 „Fehler in (W+T)⁻¹ → 0“.
 
-Kosten auf hex_s1: 8,3 GiB für die Matrix; das Abtasten braucht nd
-Operatoranwendungen zu je etwa 0,3 s, also rund 3 Stunden. Die Zerlegung
-selbst dauert Minuten. Damit ist der Weg auf nd ≲ 35 000 begrenzt (Speicher)
-und schon dort durch das Abtasten teuer.
+Spaltenweise abgetastet kostete das rund 3 Stunden: jede Anwendung des
+Operators ruft für die 4516 BEM-Blockpaare einzeln Matrix-Vektor-Produkte
+auf, etwa 14 000 cuBLAS-Aufrufe und 0,3 s, fast nur Startkosten.
+`CoupledMVOperator::apply_many` rechnet die Blöcke für 256 Spalten auf
+einmal als Matrix-Matrix-Produkt, der Rest bleibt spaltenweise.
+
+Gemessen auf hex_s1 (11,3 mm):
+
+| | |
+|---|---|
+| Matrix | 33 435², 8,3 GiB |
+| Abtasten (apply_many, 256 Spalten je Block) | 159 s |
+| Zerlegung (cuSOLVER getrf) | 47 s |
+| C-to-R, äußere Iterationen | 24, rel. Residuum 7,6e-07 |
+| innere Lösungen | 48, je eine Substitution |
+
+Damit konvergiert der harmonische BEM-FEM-Pfad auf diesem Netz zum ersten
+Mal. Begrenzt ist der Weg jetzt nur noch durch den Speicher (nd ≲ 35 000).
+
+Die Kraft passt dagegen nicht: LORENTZ (Volumen) gibt F_z = 0,014 N bei
+Querkomponenten von 0,03 N, das Ringmodell 1,007 N. Der Maxwell-Wert
+(−34 N) ist ohnehin unbrauchbar. Da das Gleichungssystem nachweislich gelöst
+ist, liegt der Fehler in der Diskretisierung oder der Kraftauswertung des
+BEM-FEM-Pfads, nicht im Löser. Das ist die nächste offene Frage.
 
 Für feinere Netze ist der nächste Schritt eine Schur-Zerlegung: den dünn
 besetzten FEM-Block mit cuDSS zerlegen und nur das BEM-Schur-Komplement

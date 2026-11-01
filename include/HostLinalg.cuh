@@ -61,6 +61,15 @@ void dgemv(cublasHandle_t h, bool transpose, int m, int n,
            const double* x, double beta, double* y);
 
 // -----------------------------------------------------------------------------
+// BLAS Level 3: C = alpha * op(A) * B + beta * C, alle column-major. op(A) ist
+// (m x k), B (k x n), C (m x n). Gebraucht von apply_many(): je BEM-Block ein
+// Matrix-Matrix-Produkt statt eines Matrix-Vektor-Produkts pro Spalte.
+// -----------------------------------------------------------------------------
+void dgemm(cublasHandle_t h, bool transpose_a, int m, int n, int k,
+           double alpha, const double* A, int lda,
+           const double* B, int ldb, double beta, double* C, int ldc);
+
+// -----------------------------------------------------------------------------
 // Duennbesetzte Operationen (CSR, nullbasiert, Spaltenindizes je Zeile
 // aufsteigend sortiert -- build_csr_structure() erzeugt sie aus einem
 // std::set, das ist also gegeben und wird von csr_ilu0() vorausgesetzt).

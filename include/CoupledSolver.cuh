@@ -308,6 +308,16 @@ private:
     // Ersatz-Term.
     bool m_skip_nullspace_penalty = false;
 
+    // apply_many(): apply_physical() laesst die G-/H-Bloecke aus und legt
+    // stattdessen seine Blockeingaben (x_bem und x_K, physikalisch) in Spalte
+    // m_many_col der Sammelpuffer ab. apply_many() rechnet die Bloecke danach
+    // fuer alle Spalten gemeinsam.
+    bool m_skip_bem_blocks = false;
+    int m_many_col = 0;
+    DeviceArray<double> m_many_xbem, m_many_xk, m_many_yk, m_many_z;
+    void apply_bem_blocks(const double* d_xbem, const double* d_xk, double* d_y_K);
+    void apply_bem_blocks_many(int nrhs);
+
     // die bisherige apply()-Implementierung, jetzt nur noch intern
     // aufgerufen -- arbeitet unveraendert im physikalischen (unskalierten) Raum.
     void apply_physical(const double* d_x, double* d_y);
@@ -679,6 +689,18 @@ public:
     // Ergebnis zurueck (D*y). Ohne aktive Aequilibrierung (setup_equilibration()
     // nicht aufgerufen) faellt apply() auf apply_physical() zurueck (No-Op-D).
     void apply(const double* d_x, double* d_y);
+
+    // Wie apply(), aber fuer nrhs Vektoren auf einmal: Spalte j von d_X liegt
+    // bei d_X + j*ld (column-major), Ergebnis entsprechend in d_Y. Ergebnis
+    // gleich nrhs Aufrufen von apply() bis auf Rundung.
+    //
+    // Warum: apply() ruft fuer jeden der einige tausend BEM-Bloecke ein bis
+    // zwei Matrix-Vektor-Produkte auf; auf hex_s1 sind das rund 14000
+    // cuBLAS-Aufrufe und 0,3 s je Anwendung, fast nur Startkosten. Hier
+    // laufen die BEM-Bloecke einmal je Block als Matrix-Matrix-Produkt ueber
+    // alle Spalten. Der Rest (duenne FEM-Matrix, T-Kopplung, Eichung) bleibt
+    // spaltenweise, er ist billig.
+    void apply_many(const double* d_X, double* d_Y, int ld, int nrhs);
 
     // Liefert jetzt die GEKOPPELTE Systemgroesse (FEM-DOFs +
     // BEM-DOFs), sobald setup_bem_coupling() aufgerufen wurde -- das ist die

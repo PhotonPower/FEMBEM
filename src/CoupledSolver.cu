@@ -891,6 +891,101 @@ void CoupledMVOperator::apply(const double* d_x_tilde, double* d_y_tilde) {
     }
 }
 
+BF_HD inline void k_vec_mult_add_body(int i, int n, const double* a, const double* b, double* out) {
+    (void)n; out[i] += a[i] * b[i];
+}
+__global__ void k_vec_mult_add(int n, const double* __restrict__ a, const double* __restrict__ b, double* __restrict__ out) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < n) k_vec_mult_add_body(i, n, a, b, out);
+}
+
+void CoupledMVOperator::apply_many(const double* d_X, double* d_Y, int ld, int nrhs) {
+    if (nrhs <= 0) return;
+    if (num_bem_dofs <= 0 || nrhs == 1) {
+        for (int j = 0; j < nrhs; ++j)
+            apply(d_X + static_cast<size_t>(j) * ld, d_Y + static_cast<size_t>(j) * ld);
+        return;
+    }
+
+    const size_t nb = static_cast<size_t>(num_bem_dofs);
+    const size_t block = nb * static_cast<size_t>(nrhs);
+    if (m_many_xbem.size() < block) {
+        m_many_xbem.allocate(block);
+        m_many_xk.allocate(block);
+        m_many_yk.allocate(block);
+    }
+    int kmax = 1;
+    for (const auto& a : aca_blocks)   kmax = std::max(kmax, a.k);
+    for (const auto& a : aca_blocks_H) kmax = std::max(kmax, a.k);
+    if (m_many_z.size() < static_cast<size_t>(kmax) * nrhs)
+        m_many_z.allocate(static_cast<size_t>(kmax) * nrhs);
+
+    // 1. Spaltenweise alles ausser den G-/H-Bloecken. apply_physical() legt
+    //    x_bem und x_K (physikalisch) in den Sammelpuffern ab.
+    m_skip_bem_blocks = true;
+    try {
+        for (int j = 0; j < nrhs; ++j) {
+            m_many_col = j;
+            apply(d_X + static_cast<size_t>(j) * ld, d_Y + static_cast<size_t>(j) * ld);
+        }
+    } catch (...) {
+        m_skip_bem_blocks = false;
+        throw;
+    }
+    m_skip_bem_blocks = false;
+
+    // 2. Die Bloecke einmal fuer alle Spalten, physikalisch.
+    bf::memset_d(m_many_yk.data(), 0, block * sizeof(double));
+    apply_bem_blocks_many(nrhs);
+
+    // 3. Zurueck in den Tilde-Raum und auf den K-Teil addieren. Alles davor
+    //    ist linear und additiv: apply() skaliert y_phys mit D und addiert
+    //    den Nullraum-Term, dessen K-Teil null ist.
+    for (int j = 0; j < nrhs; ++j) {
+        double* d_yK = d_Y + static_cast<size_t>(j) * ld + total_dofs;
+        const double* d_bk = m_many_yk.data() + static_cast<size_t>(j) * nb;
+        if (is_equilibrated) {
+            BF_LAUNCH_1D_PAR(k_vec_mult_add, nb,
+                num_bem_dofs, d_bk, d_D_scale.data() + total_dofs, d_yK);
+        } else {
+            bf::daxpy(cublas, num_bem_dofs, 1.0, d_bk, d_yK);
+        }
+    }
+}
+
+// Gegenstueck zu apply_bem_blocks() fuer nrhs Spalten: dieselben Bloecke,
+// dieselben Vorzeichen, aber dgemm statt dgemv.
+void CoupledMVOperator::apply_bem_blocks_many(int nrhs) {
+    const int nb = num_bem_dofs;
+    const double* X = m_many_xbem.data();
+    const double* XK = m_many_xk.data();
+    double* Y = m_many_yk.data();
+    double* Z = m_many_z.data();
+    const double plus_mu0 = m_mu_0;
+
+    for (const auto& b : dense_blocks_H) {
+        bf::dgemm(cublas, false, b.m, nrhs, b.n, -1.0, b.d_matrix, b.m,
+                  X + b.col_offset, nb, 1.0, Y + b.row_offset, nb);
+    }
+    for (const auto& a : aca_blocks_H) {
+        bf::dgemm(cublas, true, a.k, nrhs, a.n, 1.0, a.d_V, a.n,
+                  X + a.col_offset, nb, 0.0, Z, a.k);
+        bf::dgemm(cublas, false, a.m, nrhs, a.k, -1.0, a.d_U, a.m,
+                  Z, a.k, 1.0, Y + a.row_offset, nb);
+    }
+    for (const auto& b : dense_blocks) {
+        // transposed: gespeichert (n x m), Leading Dimension n (siehe DenseBlock)
+        bf::dgemm(cublas, b.transposed, b.m, nrhs, b.n, plus_mu0, b.d_matrix,
+                  b.transposed ? b.n : b.m, XK + b.col_offset, nb, 1.0, Y + b.row_offset, nb);
+    }
+    for (const auto& a : aca_blocks) {
+        bf::dgemm(cublas, true, a.k, nrhs, a.n, 1.0, a.d_V, a.n,
+                  XK + a.col_offset, nb, 0.0, Z, a.k);
+        bf::dgemm(cublas, false, a.m, nrhs, a.k, plus_mu0, a.d_U, a.m,
+                  Z, a.k, 1.0, Y + a.row_offset, nb);
+    }
+}
+
 // Endlichkeits-Audit der BEM-Blockdaten selbst.
 //
 // Anlass: die Audit-Kette in apply_physical zeigt, dass x_bem noch endlich in
@@ -1135,69 +1230,17 @@ void CoupledMVOperator::apply_physical(const double* d_x, double* d_y) {
     // Negation der gesamten K-Gleichung (siehe apply_T_matrix_kernel oben und
     // G_BEM-Block unten fuer dieselbe Herleitung).
     // -------------------------------------------------------------------------
-    const double alpha_minus_one = -1.0;
-    for (const auto& block : dense_blocks_H) {
-        const double* d_x_sub = d_x_bem.data() + block.col_offset;
-        double* d_y_sub = d_y_K + block.row_offset;
-        bf::dgemv(cublas, /*transpose=*/false, block.m, block.n,
-              alpha_minus_one, block.d_matrix, block.m,
-              d_x_sub, beta_one, d_y_sub);
+    if (m_skip_bem_blocks) {
+        // apply_many(): nur die Blockeingaben dieser Spalte ablegen, die
+        // Bloecke selbst laufen danach fuer alle Spalten gemeinsam.
+        const size_t off = static_cast<size_t>(m_many_col) * static_cast<size_t>(num_bem_dofs);
+        const size_t bytes = static_cast<size_t>(num_bem_dofs) * sizeof(double);
+        bf::memcpy_d(m_many_xbem.data() + off, d_x_bem.data(), bytes, cudaMemcpyDeviceToDevice);
+        bf::memcpy_d(m_many_xk.data() + off, d_K_in, bytes, cudaMemcpyDeviceToDevice);
+    } else {
+        apply_bem_blocks(d_x_bem.data(), d_K_in, d_y_K);
+        if (audit_this_call) audit_finite("apply: nach G/H-Bloecken (y_K)", d_y_K, num_bem_dofs);
     }
-    for (const auto& aca : aca_blocks_H) {
-        const double* d_x_sub = d_x_bem.data() + aca.col_offset;
-        double* d_y_sub = d_y_K + aca.row_offset;
-        double* d_z = d_temp_z.data();
-
-        bf::dgemv(cublas, /*transpose=*/true, aca.n, aca.k,
-              alpha, aca.d_V, aca.n,
-              d_x_sub, beta_zero, d_z);
-        bf::dgemv(cublas, /*transpose=*/false, aca.m, aca.k,
-              alpha_minus_one, aca.d_U, aca.m,
-              d_z, beta_one, d_y_sub);
-    }
-
-    if (audit_this_call) audit_finite("apply: nach D_BEM/H-Bloecken (y_K)", d_y_K, num_bem_dofs);
-
-    // -------------------------------------------------------------------------
-    // +mu_0 * G_BEM (Single-Layer, dichte + ACA-Bloecke) * K_in -> y_K,
-    // additiv. G/K sind beide bereits BEM-lokal (K ist ja direkt die
-    // BEM-Unbekannte) -- kein Gather/Scatter noetig, anders als frueher (als
-    // dieselben Bloecke noch auf die von A abgeleitete Groesse wirkten).
-    // Vorzeichen von -mu_0 auf +mu_0 gedreht,
-    // konsistent mit der Negation der gesamten K-Gleichung (siehe
-    // apply_T_matrix_kernel und H_BEM-Block oben). \tilde{M}_KK ist damit
-    // im Tilde-Raum exakt +1.0 statt -1.0 -- apply_preconditioner() braucht
-    // dafuer keine Negation mehr, siehe dort.
-    // -------------------------------------------------------------------------
-    const double plus_mu0 = m_mu_0;
-    for (const auto& block : dense_blocks) {
-        const double* d_x_sub = d_K_in + block.col_offset;
-        double* d_y_sub = d_y_K + block.row_offset;
-        // block.transposed: der Block teilt sich den Speicher mit seinem
-        // Spiegelpartner (I,J) <-> (J,I) und wird als dessen Transponierte
-        // angewandt. Damit ist G_BEM per Konstruktion exakt symmetrisch.
-        // Gespeichert liegt dann eine (n x m)-Matrix, Leading Dimension n.
-        bf::dgemv(cublas, /*transpose=*/block.transposed,
-              block.transposed ? block.n : block.m,
-              block.transposed ? block.m : block.n,
-              plus_mu0, block.d_matrix,
-              block.transposed ? block.n : block.m,
-              d_x_sub, beta_one, d_y_sub);
-    }
-    for (const auto& aca : aca_blocks) {
-        const double* d_x_sub = d_K_in + aca.col_offset;
-        double* d_y_sub = d_y_K + aca.row_offset;
-        double* d_z = d_temp_z.data();
-
-        bf::dgemv(cublas, /*transpose=*/true, aca.n, aca.k,
-              alpha, aca.d_V, aca.n,
-              d_x_sub, beta_zero, d_z);
-        bf::dgemv(cublas, /*transpose=*/false, aca.m, aca.k,
-              plus_mu0, aca.d_U, aca.m,
-              d_z, beta_one, d_y_sub);
-    }
-
-    if (audit_this_call) audit_finite("apply: nach G_BEM-Bloecken (y_K)", d_y_K, num_bem_dofs);
 
     // Diagnose -- Norm des reinen BEM(K)-Anteils von y, unmittelbar nach
     // G/H/T, vor der Eichung. War bisher an d_y_bem gemessen (Zwischenpuffer
@@ -1224,6 +1267,74 @@ void CoupledMVOperator::apply_physical(const double* d_x, double* d_y) {
     if (d_is_gauged != nullptr && !m_skip_nullspace_penalty) {
         BF_LAUNCH_1D_PAR(k_add_null_space_residual, total_dofs,
                          d_A_in, d_x_proj.data(), d_y_A, total_dofs);
+    }
+}
+
+// y_K += -D_BEM x_bem + mu0 G x_K, je Block ein bis zwei Matrix-Vektor-Produkte
+// (aus apply_physical() herausgezogen, damit apply_many() die Bloecke
+// gesammelt rechnen kann, siehe apply_bem_blocks_many()).
+void CoupledMVOperator::apply_bem_blocks(const double* d_xbem, const double* d_xk, double* d_y_K) {
+    const double alpha = 1.0;
+    const double beta_zero = 0.0;
+    const double beta_one = 1.0;
+    const double alpha_minus_one = -1.0;
+    for (const auto& block : dense_blocks_H) {
+        const double* d_x_sub = d_xbem + block.col_offset;
+        double* d_y_sub = d_y_K + block.row_offset;
+        bf::dgemv(cublas, /*transpose=*/false, block.m, block.n,
+              alpha_minus_one, block.d_matrix, block.m,
+              d_x_sub, beta_one, d_y_sub);
+    }
+    for (const auto& aca : aca_blocks_H) {
+        const double* d_x_sub = d_xbem + aca.col_offset;
+        double* d_y_sub = d_y_K + aca.row_offset;
+        double* d_z = d_temp_z.data();
+
+        bf::dgemv(cublas, /*transpose=*/true, aca.n, aca.k,
+              alpha, aca.d_V, aca.n,
+              d_x_sub, beta_zero, d_z);
+        bf::dgemv(cublas, /*transpose=*/false, aca.m, aca.k,
+              alpha_minus_one, aca.d_U, aca.m,
+              d_z, beta_one, d_y_sub);
+    }
+
+    // -------------------------------------------------------------------------
+    // +mu_0 * G_BEM (Single-Layer, dichte + ACA-Bloecke) * K_in -> y_K,
+    // additiv. G/K sind beide bereits BEM-lokal (K ist ja direkt die
+    // BEM-Unbekannte) -- kein Gather/Scatter noetig, anders als frueher (als
+    // dieselben Bloecke noch auf die von A abgeleitete Groesse wirkten).
+    // Vorzeichen von -mu_0 auf +mu_0 gedreht,
+    // konsistent mit der Negation der gesamten K-Gleichung (siehe
+    // apply_T_matrix_kernel und H_BEM-Block oben). \tilde{M}_KK ist damit
+    // im Tilde-Raum exakt +1.0 statt -1.0 -- apply_preconditioner() braucht
+    // dafuer keine Negation mehr, siehe dort.
+    // -------------------------------------------------------------------------
+    const double plus_mu0 = m_mu_0;
+    for (const auto& block : dense_blocks) {
+        const double* d_x_sub = d_xk + block.col_offset;
+        double* d_y_sub = d_y_K + block.row_offset;
+        // block.transposed: der Block teilt sich den Speicher mit seinem
+        // Spiegelpartner (I,J) <-> (J,I) und wird als dessen Transponierte
+        // angewandt. Damit ist G_BEM per Konstruktion exakt symmetrisch.
+        // Gespeichert liegt dann eine (n x m)-Matrix, Leading Dimension n.
+        bf::dgemv(cublas, /*transpose=*/block.transposed,
+              block.transposed ? block.n : block.m,
+              block.transposed ? block.m : block.n,
+              plus_mu0, block.d_matrix,
+              block.transposed ? block.n : block.m,
+              d_x_sub, beta_one, d_y_sub);
+    }
+    for (const auto& aca : aca_blocks) {
+        const double* d_x_sub = d_xk + aca.col_offset;
+        double* d_y_sub = d_y_K + aca.row_offset;
+        double* d_z = d_temp_z.data();
+
+        bf::dgemv(cublas, /*transpose=*/true, aca.n, aca.k,
+              alpha, aca.d_V, aca.n,
+              d_x_sub, beta_zero, d_z);
+        bf::dgemv(cublas, /*transpose=*/false, aca.m, aca.k,
+              plus_mu0, aca.d_U, aca.m,
+              d_z, beta_one, d_y_sub);
     }
 }
 

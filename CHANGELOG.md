@@ -12,9 +12,16 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   jede innere Gleichung ist danach eine Vorwärts-/Rückwärtssubstitution. Auf
   dem Hexaedernetz erreicht das innere GMRES seine Toleranz nicht
   (Residuum 1e-2 nach 4000 Schritten). Speicher nd²·8 Byte, also nur für
-  kleine Netze (nd = 33 435 → 8,3 GiB); das Abtasten kostet eine
-  Operatoranwendung je Unbekannter. Host-Test `test_harmonic_inner_direct`
-  mit Gegenproben (vertauschte Ablage, begrenztes inneres GMRES).
+  kleine Netze (nd = 33 435 → 8,3 GiB). Auf hex_s1: Abtasten 159 s,
+  Zerlegung 47 s, 24 äußere Iterationen bis 7,6e-07. Host-Test
+  `test_harmonic_inner_direct` mit Gegenproben (vertauschte Ablage,
+  begrenztes inneres GMRES).
+- `CoupledMVOperator::apply_many`: Operator auf viele Vektoren zugleich, die
+  BEM-Blöcke als ein Matrix-Matrix-Produkt je Block (`bf::dgemm`) statt
+  eines Matrix-Vektor-Produkts je Spalte. Das Abtasten von (W+T) auf hex_s1
+  fällt damit von rund 3 Stunden auf 159 s. Host-Test `test_apply_many`
+  gegen `apply()` mit nicht quadratischen, transponierten und ACA-Blöcken,
+  Eichung und Kohomologie.
 - `tools/team28_axisymmetric.py`: unabhängige Kraftreferenz für TEAM 28,
   rotationssymmetrisches Ringmodell mit exakter Gegeninduktivität, nur numpy.
   Ergibt mit den Daten der Spezifikation F_z = 1,006 N bei 11,3 mm und eine

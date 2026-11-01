@@ -728,20 +728,32 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
 }
 
 void sample_operator_dense(CoupledMVOperator& op, int nd, double* d_A) {
-    // Spalte j = op(e_j), direkt in den Zielspeicher geschrieben. Kein Umweg
-    // ueber den Host wie in --direct: bei nd = 33435 waeren das 8,9 GB je
-    // Richtung.
-    DeviceArray<double> d_e(static_cast<size_t>(nd));
-    bf::memset_d(d_e.data(), 0, static_cast<size_t>(nd) * sizeof(double));
+    // Spalten j0..j0+nb-1 = op(e_j), in Bloecken ueber apply_many() und direkt
+    // in den Zielspeicher geschrieben. Kein Umweg ueber den Host wie in
+    // --direct: bei nd = 33435 waeren das 8,9 GB je Richtung. Spaltenweise
+    // mit apply() kostete das auf hex_s1 rund 3 Stunden (0,3 s je Spalte,
+    // fast nur Startkosten der BEM-Blockprodukte).
+    const int batch = std::min(nd, 256);
+    const size_t col = static_cast<size_t>(nd);
+    DeviceArray<double> d_E(col * static_cast<size_t>(batch));
+    bf::memset_d(d_E.data(), 0, col * static_cast<size_t>(batch) * sizeof(double));
     const double one = 1.0, zero = 0.0;
     const int report_every = std::max(1, nd / 10);
-    for (int j = 0; j < nd; ++j) {
-        bf::memcpy_d(d_e.data() + j, &one, sizeof(double), cudaMemcpyHostToDevice);
-        op.apply(d_e.data(), d_A + static_cast<size_t>(j) * static_cast<size_t>(nd));
-        bf::memcpy_d(d_e.data() + j, &zero, sizeof(double), cudaMemcpyHostToDevice);
-        if (nd >= 2000 && (j + 1) % report_every == 0)
-            std::cout << "[Harmonisch]   abgetastet: Spalte " << (j + 1) << " von " << nd
+    int next_report = report_every;
+    for (int j0 = 0; j0 < nd; j0 += batch) {
+        const int nb = std::min(batch, nd - j0);
+        for (int c = 0; c < nb; ++c)
+            bf::memcpy_d(d_E.data() + static_cast<size_t>(c) * col + j0 + c, &one,
+                         sizeof(double), cudaMemcpyHostToDevice);
+        op.apply_many(d_E.data(), d_A + static_cast<size_t>(j0) * col, nd, nb);
+        for (int c = 0; c < nb; ++c)
+            bf::memcpy_d(d_E.data() + static_cast<size_t>(c) * col + j0 + c, &zero,
+                         sizeof(double), cudaMemcpyHostToDevice);
+        if (nd >= 2000 && j0 + nb >= next_report) {
+            std::cout << "[Harmonisch]   abgetastet: Spalte " << (j0 + nb) << " von " << nd
                       << "\n" << std::flush;
+            next_report += report_every;
+        }
     }
     bf::sync();
 }
