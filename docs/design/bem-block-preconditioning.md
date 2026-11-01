@@ -394,6 +394,51 @@ Genauigkeitsanforderung steigt von 1e-4 auf **1e-6**, und damit die Kosten:
 **Unvorkonditioniert ist 2100-mal billiger.** Für den inneren Löser ist die
 einfachste Variante die richtige — hier ist keine Blockstruktur zu holen.
 
+### Auf dem Hexaedernetz trägt das innere GMRES nicht mehr
+
+Die Zahlen oben stammen von team28_coarse_12 (4511 Unbekannte). Auf dem
+Gmsh-Hexaedernetz `team28_hex.py --scale 1` (4944 Hexaeder, 18 651 FEM- und
+14 784 BEM-Freiheitsgrade, nd = 33 435) erreicht das innere GMRES mit ILU die
+Toleranz 1e-4 nicht: Residuum 9,7e-3 nach 4000 Schritten, 0,02 nach einer
+Stunde (`docs/design/gmsh-phase9-report.md`). Mit so ungenauen inneren
+Lösungen trägt C-to-R nach der Genauigkeitsreihe oben nicht.
+
+`--harmonic-inner-direct` umgeht das für kleine Netze: (W+T) wird einmal
+spaltenweise abgetastet (`sample_operator_dense`, A e_j im Tilde-Raum
+einschließlich des Nullraum-Terms, also regulär) und mit cuSOLVER zerlegt.
+Jede innere Lösung ist dann exakt, und für C-to-R gilt wieder der Fall
+„Fehler in (W+T)⁻¹ → 0“.
+
+Spaltenweise abgetastet kostete das rund 3 Stunden: jede Anwendung des
+Operators ruft für die 4516 BEM-Blockpaare einzeln Matrix-Vektor-Produkte
+auf, etwa 14 000 cuBLAS-Aufrufe und 0,3 s, fast nur Startkosten.
+`CoupledMVOperator::apply_many` rechnet die Blöcke für 256 Spalten auf
+einmal als Matrix-Matrix-Produkt, der Rest bleibt spaltenweise.
+
+Gemessen auf hex_s1 (11,3 mm):
+
+| | |
+|---|---|
+| Matrix | 33 435², 8,3 GiB |
+| Abtasten (apply_many, 256 Spalten je Block) | 159 s |
+| Zerlegung (cuSOLVER getrf) | 47 s |
+| C-to-R, äußere Iterationen | 24, rel. Residuum 7,6e-07 |
+| innere Lösungen | 48, je eine Substitution |
+
+Damit konvergiert der harmonische BEM-FEM-Pfad auf diesem Netz zum ersten
+Mal. Begrenzt ist der Weg jetzt nur noch durch den Speicher (nd ≲ 35 000).
+
+Die Kraft passt dagegen nicht: LORENTZ (Volumen) gibt F_z = 0,014 N bei
+Querkomponenten von 0,03 N, das Ringmodell 1,007 N. Der Maxwell-Wert
+(−34 N) ist ohnehin unbrauchbar. Da das Gleichungssystem nachweislich gelöst
+ist, liegt der Fehler in der Diskretisierung oder der Kraftauswertung des
+BEM-FEM-Pfads, nicht im Löser. Das ist die nächste offene Frage.
+
+Für feinere Netze ist der nächste Schritt eine Schur-Zerlegung: den dünn
+besetzten FEM-Block mit cuDSS zerlegen und nur das BEM-Schur-Komplement
+(n_BEM² statt nd², auf hex_s1 1,6 statt 8,3 GiB) dicht aufbauen. Eichung und
+Kohomologie-Projektion müssen dabei im FEM-Block mitgeführt werden.
+
 ---
 
 ## 4. Wie es weitergeht — je nach Ergebnis

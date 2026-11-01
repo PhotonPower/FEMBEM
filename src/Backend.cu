@@ -47,6 +47,7 @@ FemDirectNullspace g_fem_direct_nullspace = FemDirectNullspace::Regularize;
                                          // --fem-direct-nullspace=eps|gauge|ams
 bool    g_harmonic_checks    = false;  // --harmonic-checks
 int     g_harmonic_outer_restart = 64;
+bool    g_harmonic_inner_direct = false;
 double  g_harmonic_inner_tol = 1e-4;   // Stufe mit der kleinsten Gesamtarbeit
 int     g_harmonic_outer_cap = 0;      // 0 = bf::max_iter()
 double  g_harmonic_hz    = 50.0;   // TEAM 28: Netzfrequenz
@@ -150,6 +151,11 @@ void print_usage(const char* exe_name) {
         << "                 (W+T) mit und ohne ILU, Eichungs-Gegenprobe, Linearitaet des\n"
         << "                 Vorkonditionierers. Kostet rund 40000 innere Schritte VOR der\n"
         << "                 ersten aeusseren Iteration -- deshalb nicht mehr Standard.\n"
+        << "  --harmonic-inner-direct  (W+T) einmal dicht zerlegen (cuSOLVER) und jede\n"
+        << "                 innere Gleichung von C-to-R exakt loesen statt mit GMRES.\n"
+        << "                 Fuer BEM-FEM-Netze, auf denen das innere GMRES seine\n"
+        << "                 Toleranz nicht erreicht. Speicher nd^2 * 8 B (nd = 33435:\n"
+        << "                 8,3 GiB), dazu nd Operatoranwendungen zum Abtasten.\n"
         << "  --harmonic-inner-tol=X  Toleranz des inneren (W+T)-Loesers (Standard 1e-4).\n"
         << "                 Fuer den Linearitaetstest: mit 1e-10 ist der Vorkonditionierer\n"
         << "                 praktisch exakt und damit praktisch linear.\n"
@@ -409,6 +415,8 @@ bool select_backend_from_args(int argc, char** argv) {
                               "bleibe bei " << g_harmonic_outer_restart << ".\n";
         } else if (arg == "--harmonic-checks") {
             g_harmonic_checks = true;
+        } else if (arg == "--harmonic-inner-direct") {
+            g_harmonic_inner_direct = true;
         } else if (arg.rfind("--harmonic-inner-tol=", 0) == 0) {
             const double t = std::atof(arg.c_str() + 21);
             if (std::isfinite(t) && t > 0.0) g_harmonic_inner_tol = t;

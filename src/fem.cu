@@ -5117,6 +5117,33 @@ int mainloop(int argc, char** argv) {
                 bf::memset_d(d_xi.data(), 0, static_cast<size_t>(nd_h) * sizeof(double));
                 bf::sync();
 
+                // --harmonic-inner-direct: (W+T) einmal dicht zerlegen, damit
+                // C-to-R exakt wirkt. Das innere GMRES erreicht auf dem
+                // Hexaedernetz mit 4944 Zellen seine Toleranz nicht
+                // (docs/design/gmsh-phase9-report.md); die Kondition kommt aus
+                // der FEM-BEM-Kopplung, die ILU nicht sieht. Speicher nd^2 * 8 B.
+                DeviceArray<double> d_wt_dense;
+                bf::DenseLU wt_lu;
+                const bf::DenseLU* wt_direct = nullptr;
+                if (bf::harmonic_inner_direct()) {
+                    const double gib = static_cast<double>(nd_h) * nd_h * 8.0
+                                     / (1024.0 * 1024.0 * 1024.0);
+                    std::cout << "\n[Harmonisch] innerer Loeser: dichte Zerlegung von (W+T), "
+                              << nd_h << " x " << nd_h << " (" << gib << " GiB)\n";
+                    const auto t0 = std::chrono::steady_clock::now();
+                    d_wt_dense.allocate(static_cast<size_t>(nd_h) * static_cast<size_t>(nd_h));
+                    bf::sample_operator_dense(op, nd_h, d_wt_dense.data());
+                    const auto t1 = std::chrono::steady_clock::now();
+                    wt_lu.factorize(d_wt_dense.data(), nd_h);
+                    bf::sync();
+                    const auto t2 = std::chrono::steady_clock::now();
+                    std::cout << "[Harmonisch]   abgetastet in "
+                              << std::chrono::duration<double>(t1 - t0).count()
+                              << " s, zerlegt in "
+                              << std::chrono::duration<double>(t2 - t1).count() << " s\n";
+                    wt_direct = &wt_lu;
+                }
+
                 // inner_tol = 1e-4: die Genauigkeitsreihe aus --harmonic-study
                 // hat gezeigt, dass 1e-1 und 1e-2 nicht tragen, 1e-3 mit 81 und
                 // 1e-4 mit 41 aeusseren Iterationen -- und dass die
@@ -5141,7 +5168,8 @@ int mainloop(int argc, char** argv) {
                                        // Schalter zu haengen war falsch.
                                        bf::harmonic_outer_restart(),
                                        bf::harmonic_inner_tol(),
-                                       std::max(4000, bf::gmres_restart()));
+                                       std::max(4000, bf::gmres_restart()),
+                                       wt_direct);
 
                 // Zurueck in den physikalischen Raum.
                 op.scale_by_D(d_xr.data());

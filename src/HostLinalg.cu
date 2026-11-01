@@ -209,6 +209,42 @@ void dgemv(cublasHandle_t h, bool transpose, int m, int n,
 }
 
 // =============================================================================
+// BLAS Level 3
+// =============================================================================
+
+void dgemm(cublasHandle_t h, bool transpose_a, int m, int n, int k,
+           double alpha, const double* A, int lda,
+           const double* B, int ldb, double beta, double* C, int ldc)
+{
+    require_handle(h, "dgemm");
+    if (m <= 0 || n <= 0) return;
+
+    if (on_cpu()) {
+        // beta == 0: C wird nicht gelesen (wie bei dgemv, siehe dort).
+        const bool overwrite = (beta == 0.0);
+        BF_OMP_PARALLEL_FOR
+        for (int j = 0; j < n; ++j) {
+            const double* b = B + static_cast<size_t>(j) * ldb;
+            double* c = C + static_cast<size_t>(j) * ldc;
+            for (int i = 0; i < m; ++i) {
+                double acc = 0.0;
+                if (!transpose_a) {
+                    for (int l = 0; l < k; ++l) acc += A[static_cast<size_t>(l) * lda + i] * b[l];
+                } else {
+                    const double* a = A + static_cast<size_t>(i) * lda;
+                    for (int l = 0; l < k; ++l) acc += a[l] * b[l];
+                }
+                c[i] = overwrite ? (alpha * acc) : (alpha * acc + beta * c[i]);
+            }
+        }
+        return;
+    }
+
+    BF_CUBLAS_CHECK(cublasDgemm(h, transpose_a ? CUBLAS_OP_T : CUBLAS_OP_N, CUBLAS_OP_N,
+                                m, n, k, &alpha, A, lda, B, ldb, &beta, C, ldc));
+}
+
+// =============================================================================
 // Duennbesetzt
 // =============================================================================
 

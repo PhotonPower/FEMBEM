@@ -1,5 +1,6 @@
 #include "HarmonicSolver.cuh"
 #include "Backend.cuh"
+#include "DenseLinalg.cuh"
 #include "HostLinalg.cuh"
 
 #include <algorithm>
@@ -152,6 +153,17 @@ struct CtoRPreconditioner {
     mutable long solves = 0;
     mutable long iters  = 0;
 
+    // --harmonic-inner-direct: Zerlegung von (W+T), sonst nullptr.
+    //
+    // Auf dem Hexaedernetz mit 4944 Zellen (nd = 33435) erreichte das innere
+    // GMRES seine Toleranz nicht: nach 4000 Schritten 9,7e-3 statt 1e-4, und
+    // ein Lauf stand nach einer Stunde bei 0,02 (docs/design/gmsh-phase9-
+    // report.md). ILU auf dem FEM-Block spart dort kaum etwas (2502 gegen 2590
+    // Schritte auf team28_coarse_12), weil die Kondition aus der Kopplung
+    // kommt. Die dichte Zerlegung umgeht das fuer Netze, deren nd^2 in den
+    // Speicher passt, und macht P zu einem exakten linearen Operator.
+    const DenseLU* direct = nullptr;
+
     // Der Restart des INNEREN Loesers ist bewusst NICHT der des aeusseren.
     //
     // Die Deckenmessung auf (W+T) hat 2914 Schritte bis 1e-4 gebraucht -- mit
@@ -227,10 +239,7 @@ struct CtoRPreconditioner {
         // Arnoldi-Rekursion des aeusseren GMRES ihre Grundlage: die
         // Iterationszahlen saehen weiterhin plausibel aus, waeren aber
         // bedeutungslos.
-        bf::memset_d(s1.data(), 0, static_cast<size_t>(nd) * sizeof(double));
-        inner.solve(op_W, d_v_r, s1.data(), inner_tol, inner_max_iter);
-        ++solves; iters += inner.last_iterations();
-        warn_if_inner_failed(inner.last_relative_residual());
+        solve_inner(d_v_r);
 
         // v_i <- v_i - (T-W) z_r,  und (T-W) z = 2*omega*C z - (W+T) z.
         //
@@ -261,11 +270,22 @@ struct CtoRPreconditioner {
         // seinen Ausgang selbst. Es ist allein der omega*C-Term.
         op_W.project_gauge_tilde_orthogonal(d_v_i);
 
+        solve_inner(d_v_i);
+        bf::dcopy(cublas, nd, s1.data(), d_v_i);
+    }
+
+    /// s1 = (W+T)^-1 v, exakt (Zerlegung) oder mit GMRES.
+    void solve_inner(const double* d_v) const {
+        if (direct != nullptr) {
+            bf::dcopy(cublas, nd, d_v, s1.data());
+            direct->solve(s1.data(), 1);
+            ++solves; ++iters;
+            return;
+        }
         bf::memset_d(s1.data(), 0, static_cast<size_t>(nd) * sizeof(double));
-        inner.solve(op_W, d_v_i, s1.data(), inner_tol, inner_max_iter);
+        inner.solve(op_W, d_v, s1.data(), inner_tol, inner_max_iter);
         ++solves; iters += inner.last_iterations();
         warn_if_inner_failed(inner.last_relative_residual());
-        bf::dcopy(cublas, nd, s1.data(), d_v_i);
     }
 };
 
@@ -304,7 +324,8 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
                                    const double* d_b_r, const double* d_b_i,
                                    double* d_x_r, double* d_x_i,
                                    double tol, int max_iter, int restart,
-                                   double inner_tol, int inner_max_iter) {
+                                   double inner_tol, int inner_max_iter,
+                                   const DenseLU* inner_direct) {
     HarmonicSolveResult res;
     const int m = std::max(1, restart);
     const size_t N = static_cast<size_t>(nd);
@@ -336,10 +357,19 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
     // also praktisch volles GMRES. Bei nd = 4511 und 4000 Basisvektoren sind
     // das rund 145 MB je Basis.
     const int inner_restart = std::max(1, inner_max_iter);
-    CtoRPreconditioner P(op_W, H, nd, inner_tol, inner_max_iter, inner_restart);
-    std::cout << "[Harmonisch] aeusserer Restart " << m
-              << ", innerer Restart " << inner_restart
-              << ", innere Toleranz " << inner_tol << "\n";
+    // Mit Zerlegung braucht das innere GMRES keine Basis: Restart 1 statt
+    // inner_max_iter Vektoren der Laenge nd (bei nd = 33435 und 4000 Vektoren
+    // waeren das 1 GB neben der Zerlegung).
+    CtoRPreconditioner P(op_W, H, nd, inner_tol, inner_max_iter,
+                         inner_direct ? 1 : inner_restart);
+    P.direct = inner_direct;
+    if (inner_direct)
+        std::cout << "[Harmonisch] aeusserer Restart " << m
+                  << ", innerer Loeser: dichte Zerlegung von (W+T), exakt\n";
+    else
+        std::cout << "[Harmonisch] aeusserer Restart " << m
+                  << ", innerer Restart " << inner_restart
+                  << ", innere Toleranz " << inner_tol << "\n";
 
     // Die RECHTE SEITE muss in den Bildraum, nicht nur der Startwert.
     //
@@ -695,6 +725,37 @@ HarmonicSolveResult solve_harmonic(CoupledMVOperator& op_W,
                       : std::string())
               << "\n";
     return res;
+}
+
+void sample_operator_dense(CoupledMVOperator& op, int nd, double* d_A) {
+    // Spalten j0..j0+nb-1 = op(e_j), in Bloecken ueber apply_many() und direkt
+    // in den Zielspeicher geschrieben. Kein Umweg ueber den Host wie in
+    // --direct: bei nd = 33435 waeren das 8,9 GB je Richtung. Spaltenweise
+    // mit apply() kostete das auf hex_s1 rund 3 Stunden (0,3 s je Spalte,
+    // fast nur Startkosten der BEM-Blockprodukte).
+    const int batch = std::min(nd, 256);
+    const size_t col = static_cast<size_t>(nd);
+    DeviceArray<double> d_E(col * static_cast<size_t>(batch));
+    bf::memset_d(d_E.data(), 0, col * static_cast<size_t>(batch) * sizeof(double));
+    const double one = 1.0, zero = 0.0;
+    const int report_every = std::max(1, nd / 10);
+    int next_report = report_every;
+    for (int j0 = 0; j0 < nd; j0 += batch) {
+        const int nb = std::min(batch, nd - j0);
+        for (int c = 0; c < nb; ++c)
+            bf::memcpy_d(d_E.data() + static_cast<size_t>(c) * col + j0 + c, &one,
+                         sizeof(double), cudaMemcpyHostToDevice);
+        op.apply_many(d_E.data(), d_A + static_cast<size_t>(j0) * col, nd, nb);
+        for (int c = 0; c < nb; ++c)
+            bf::memcpy_d(d_E.data() + static_cast<size_t>(c) * col + j0 + c, &zero,
+                         sizeof(double), cudaMemcpyHostToDevice);
+        if (nd >= 2000 && j0 + nb >= next_report) {
+            std::cout << "[Harmonisch]   abgetastet: Spalte " << (j0 + nb) << " von " << nd
+                      << "\n" << std::flush;
+            next_report += report_every;
+        }
+    }
+    bf::sync();
 }
 
 } // namespace bf
