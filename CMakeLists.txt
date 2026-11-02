@@ -188,6 +188,7 @@ set(SOURCES
     src/HostLinalg.cu           # CPU-Ersatz fuer cuBLAS/cuSPARSE
     src/DenseLinalg.cu          # dichte LU (cuSOLVER / eigene)
     src/ReferenceSolver.cu      # Baseline Knoten-FEM + vollbesetzte BEM
+    src/ReferenceHarmonic.cu    # Referenzloeser im Frequenzbereich (FGMRES)
     src/MeshRefinement.cu       # uniforme Verfeinerung (--refine=N)
     src/BiotSavart.cpp          # analytische Referenz (--verify-field)
     src/FieldVerification.cpp   # gemeinsamer Vergleich beider Loeserpfade
@@ -817,6 +818,22 @@ if (FEMBEM_OPENMP_AVAILABLE)
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${FEMBEM_OMP_NVCC_FLAGS}>)
 endif()
 
+# Harmonischer Referenzpfad: Kraftkernel, Blockoperator, FGMRES (host)
+add_executable(test_reference_harmonic
+    tests/test_reference_harmonic.cu
+    src/Backend.cu
+    src/HostLinalg.cu
+    src/ReferenceHarmonic.cu
+)
+target_include_directories(test_reference_harmonic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_reference_harmonic PRIVATE
+    CUDA::cudart CUDA::cublas CUDA::cusparse)
+if (FEMBEM_OPENMP_AVAILABLE)
+    target_link_libraries(test_reference_harmonic PRIVATE OpenMP::OpenMP_CXX)
+    target_compile_options(test_reference_harmonic PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${FEMBEM_OMP_NVCC_FLAGS}>)
+endif()
+
 # Unsymmetrie-Schaetzer
 add_executable(test_asymmetry_estimator tests/test_asymmetry_estimator.cu)
 target_include_directories(test_asymmetry_estimator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -980,6 +997,8 @@ set_tests_properties(test_apply_many PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_dense_direct COMMAND test_dense_direct)
 set_tests_properties(test_dense_direct PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_harmonic_phase_average COMMAND test_harmonic_phase_average)
+add_test(NAME test_reference_harmonic COMMAND test_reference_harmonic)
+set_tests_properties(test_reference_harmonic PROPERTIES LABELS "host" TIMEOUT 120)
 set_tests_properties(test_harmonic_phase_average PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_preconditioner_study COMMAND test_block_preconditioner_study)
 set_tests_properties(test_block_preconditioner_study PROPERTIES LABELS "host" TIMEOUT 600)
@@ -1074,6 +1093,7 @@ add_custom_target(host_tests DEPENDS
     test_apply_many
     test_dense_direct
     test_harmonic_phase_average
+    test_reference_harmonic
     test_block_preconditioner_study
     test_nedelec_prism
     test_nedelec_tet

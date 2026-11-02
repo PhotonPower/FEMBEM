@@ -27,7 +27,8 @@ int main(int argc, char* argv[]) {
     // unangetastet und werden wie bisher in mainloop() gelesen (Schrittzahl,
     // "nobem", "noilu").
     if (!bf::select_backend_from_args(argc, argv)) {
-        return EXIT_SUCCESS;   // --help wurde angefordert
+        // --help wurde angefordert, oder eine Kombination wurde abgewiesen
+        return bf::args_rejected() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     // Optionales Argument: Anzahl Zeitschritte (Kurztest), z. B. "fembem 3"

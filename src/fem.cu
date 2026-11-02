@@ -1484,6 +1484,14 @@ int mainloop(int argc, char** argv) {
         // produktive Pfad bleibt unberuehrt.
         if (bf::use_reference_solver()) {
             const std::vector<PhysicalObject*> sources = { &coil_inner, &coil_outer };
+            if (bf::want_harmonic_solve()) {
+                // Frequenzbereich. Die Quelle steht bei T/4 der Spulenfrequenz
+                // auf ihrem Scheitelwert, unabhaengig von --harmonic=HZ -- wie
+                // im harmonischen BEM-FEM-Pfad.
+                const double omega = 2.0 * 3.14159265358979323846 * bf::harmonic_frequency();
+                return run_reference_harmonic(mesh, d_materials, plate, sources,
+                                              omega, 0.25 / TEAM28_F0);
+            }
             return run_reference_solver(mesh, d_materials, plate, sources, max_steps, dt);
         }
 

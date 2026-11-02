@@ -18,6 +18,7 @@
 #include "FieldVerification.cuh"
 #include "NodalMaxwell.cuh"
 #include "PhysicalObject.h"
+#include "ReferenceHarmonic.cuh"
 #include "TransientSolver.cuh"
 
 #include <algorithm>
@@ -621,7 +622,14 @@ int reference_gmres(const ReferenceOperator& op,
                     const std::vector<double>& ilu_values,
                     const std::vector<int>&    ilu_diag,
                     const int* row_offsets, const int* col_indices,
-                    bool use_ilu, int step)
+                    bool use_ilu, int step,
+                    // Fuer den harmonischen Pfad, der reference_gmres als
+                    // inneren Loeser des Vorkonditionierers benutzt. Die
+                    // Vorgaben sind die bisherigen Werte; der transiente Pfad
+                    // ruft ohne sie auf und laeuft unveraendert.
+                    double tol = REFERENCE_GMRES_TOL,
+                    int max_iter = REFERENCE_GMRES_MAX_ITER,
+                    bool verbose = true)
 {
     const int n = op.num_rows;
     const int m = REFERENCE_GMRES_RESTART;
@@ -664,7 +672,7 @@ int reference_gmres(const ReferenceOperator& op,
     double rel_first = -1.0;
 
     int total = 0;
-    for (int outer = 0; outer * m < REFERENCE_GMRES_MAX_ITER; ++outer) {
+    for (int outer = 0; outer * m < max_iter; ++outer) {
         // r = b - A x, per BLAS: eine Host-Schleife ueber Managed Memory
         // wuerde die Seiten in jeder Iteration hin und her wandern lassen.
         op.apply(x, tmp.data());
@@ -715,7 +723,7 @@ int reference_gmres(const ReferenceOperator& op,
             g[k]        =  cs[k] * g[k];
 
             k_used = k + 1;
-            if (std::fabs(g[k + 1]) / beta_norm < REFERENCE_GMRES_TOL) break;
+            if (std::fabs(g[k + 1]) / beta_norm < tol) break;
         }
 
         // Dreieckssystem loesen und aktualisieren
@@ -736,12 +744,12 @@ int reference_gmres(const ReferenceOperator& op,
         bf::dnrm2(cublas, n, r.data(), &rn);
         const double rel = rn / bnorm;
 
-        if (step <= 3 || outer == 0) {
+        if (verbose && (step <= 3 || outer == 0)) {
             std::cout << "  [Ref-GMRES] " << total << " Iterationen, rel. Residuum "
                       << std::scientific << std::setprecision(3) << rel
                       << std::defaultfloat << "\n";
         }
-        if (rel < REFERENCE_GMRES_TOL * 1e3) break;
+        if (rel < tol * 1e3) break;
 
         // Divergenzschutz. GMRES minimiert das Residuum ueber den Krylov-Raum;
         // bei korrektem, linearem Operator und festem Vorkonditionierer KANN es
@@ -1535,4 +1543,580 @@ int run_reference_solver(Mesh& mesh,
 
     std::cout << "\n[Referenz] Lauf beendet.\n";
     return 0;
+}
+
+// =============================================================================
+// 7. Frequenzbereich (--reference --harmonic)
+// =============================================================================
+// Gleichung, Loeser und Vorkonditionierer: include/ReferenceHarmonic.cuh.
+// Netz, Randtopologie, BEM, LU von V und ILU(0) sind dieselben Bausteine wie
+// in der Zeitschleife oben; sie werden hier genau einmal gebaut, weil die
+// Platte fest steht (--fixed-plate ist Pflicht).
+int run_reference_harmonic(Mesh& mesh,
+                           DeviceArray<MaterialProperties>& d_materials,
+                           PhysicalObject& plate,
+                           const std::vector<PhysicalObject*>& sources,
+                           double omega,
+                           double t_peak)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto t_start = Clock::now();
+    auto phase_t0 = Clock::now();
+    auto lap = [&]() {
+        const auto now = Clock::now();
+        const double s = std::chrono::duration<double>(now - phase_t0).count();
+        phase_t0 = now;
+        return s;
+    };
+
+    std::cout << "\n========================================================\n"
+              << " REFERENZLOESER HARMONISCH: Q1-Knoten-FEM + dichte BEM   \n"
+              << "========================================================\n";
+
+    if (!bf::fixed_plate()) {
+        throw std::runtime_error(
+            "Referenzloeser harmonisch: --fixed-plate fehlt. Der eingeschwungene "
+            "Zustand setzt eine ruhende Platte voraus.");
+    }
+    if (!(omega > 0.0) || !std::isfinite(omega)) {
+        throw std::runtime_error("Referenzloeser harmonisch: omega muss positiv sein.");
+    }
+    const bool sigma_zero = bf::verify_field();
+    std::cout << std::fixed << std::setprecision(4)
+              << "[Ref-Harm] f = " << omega / (2.0 * M_PI) << " Hz, omega = "
+              << omega << " 1/s\n" << std::defaultfloat;
+
+    // --- Voraussetzung pruefen: mu_r == 1 ueberall (wie in der Zeitschleife)
+    d_materials.prefetch_to_host();
+    bf::sync();
+    for (size_t h = 0; h < mesh.num_hexes; ++h) {
+        if (std::fabs(d_materials[h].mu_relative - 1.0) > 1e-12) {
+            throw std::runtime_error(
+                "Referenzloeser: mu_relative != 1 in Hexaeder " + std::to_string(h) +
+                ". Die komponentenweise Laplace-Formulierung setzt mu = const voraus.");
+        }
+    }
+    if (bf::no_conductor_penalty()) {
+        std::cout << "[Ref-Harm] --no-conductor-penalty: div-div-Strafterm in "
+                     "leitenden Elementen ABGESCHALTET (Diagnose).\n";
+    }
+
+    // --- Lage der Platte (wie in der Zeitschleife)
+    double plate_z0 = 0.0;
+    {
+        mesh.nodes_initial.prefetch_to_host();
+        mesh.hex_nodes.prefetch_to_host();
+        bf::sync();
+        bool first = true;
+        for (int h : plate.get_hex_indices()) {
+            const Hexahedron H = mesh.hex_nodes[h];
+            for (int n = 0; n < 8; ++n) {
+                const double z = mesh.nodes_initial[H.v[n]].z;
+                if (first || z < plate_z0) { plate_z0 = z; first = false; }
+            }
+        }
+    }
+    double height_mm = plate_z0 * 1000.0;
+    if (bf::plate_z_mm() > 0.0) {
+        const double target = bf::plate_z_mm() * 1e-3;
+        plate.set_translation_z(target - plate_z0);
+        apply_kinematics(mesh, plate);
+        bf::sync();
+        height_mm = bf::plate_z_mm();
+    }
+    std::cout << std::fixed << std::setprecision(3)
+              << "[Ref-Harm] Schwebehoehe (Plattenunterkante ueber Spulenoberkante) = "
+              << height_mm << " mm\n" << std::defaultfloat;
+
+    // --- Quelle im Scheitelwert. Reelle rechte Seite, b_i = 0: das legt nur
+    // die globale Phase fest (i(t) = I cos(wt) statt I sin(wt)); das
+    // Zyklusmittel der Kraft haengt davon nicht ab.
+    d_materials.prefetch_to_host();
+    bf::sync();
+    for (PhysicalObject* src : sources) {
+        src->update_state(t_peak, 0.0);
+        for (int hex_id : src->get_hex_indices()) d_materials[hex_id] = src->get_properties();
+    }
+    std::cout << "[Ref-Harm] Quelle im Scheitelwert (Spulen bei t = " << t_peak * 1000.0
+              << " ms), Amplitude unabhaengig von der harmonischen Frequenz.\n";
+    if (sigma_zero) {
+        for (size_t h = 0; h < mesh.num_hexes; ++h) d_materials[h].kappa = 0.0;
+        std::cout << "[Ref-Harm] --verify-field: sigma = 0 in ALLEN Elementen. Erwartet: "
+                     "A_i = 0 exakt, A_r = Magnetostatik (vergleichbar mit "
+                     "--reference --verify-field).\n";
+    }
+
+    // --- Plattenmaske fuer die Kraft und Kontrolle der Leiter
+    DeviceArray<unsigned char> d_plate_mask(mesh.num_hexes);
+    d_plate_mask.prefetch_to_host();
+    bf::sync();
+    for (size_t h = 0; h < mesh.num_hexes; ++h) d_plate_mask[h] = 0;
+    for (int h : plate.get_hex_indices()) d_plate_mask[h] = 1;
+    {
+        int cond_plate = 0, cond_other = 0;
+        for (size_t h = 0; h < mesh.num_hexes; ++h) {
+            if (!(d_materials[h].kappa > 0.0)) continue;
+            if (d_plate_mask[h]) ++cond_plate; else ++cond_other;
+        }
+        std::cout << "[Ref-Harm] Leitende Elemente: " << cond_plate << " in der Platte, "
+                  << cond_other << " ausserhalb"
+                  << (cond_other > 0 ? " (tragen zu C bei, aber nicht zur Kraft)\n" : "\n");
+    }
+    d_plate_mask.prefetch_to_device();
+    d_materials.prefetch_to_device();
+
+    const int nn   = static_cast<int>(mesh.num_nodes);
+    const int ndof = 3 * nn;
+
+    ReferenceBoundary rb = build_reference_boundary(mesh);
+    const int nb = static_cast<int>(rb.num_bnodes());
+
+    NodalCsr csr;
+    build_nodal_csr(mesh, csr);
+
+    DeviceArray<int> d_bnode_ids(static_cast<size_t>(nb));
+    DeviceArray<int> d_node_to_bnode(static_cast<size_t>(nn));
+    DeviceArray<double> d_face_orient(mesh.num_boundary_faces);
+    d_bnode_ids.prefetch_to_host();
+    d_node_to_bnode.prefetch_to_host();
+    d_face_orient.prefetch_to_host();
+    bf::sync();
+    for (int i = 0; i < nb; ++i) d_bnode_ids[i] = rb.bnode_ids[i];
+    for (int i = 0; i < nn; ++i) d_node_to_bnode[i] = rb.node_to_bnode[i];
+    for (size_t f = 0; f < mesh.num_boundary_faces; ++f) d_face_orient[f] = rb.face_orientation[f];
+    d_bnode_ids.prefetch_to_device();
+    d_node_to_bnode.prefetch_to_device();
+    d_face_orient.prefetch_to_device();
+    const double t_setup = lap();
+
+    // --- FEM: K (dt = 1e30, Leitwertterm praktisch null) und W = K + wC
+    // (dt = 1/w) auf demselben CSR-Muster. A_prev = 0, die rechte Seite ist
+    // damit die reine Quelle.
+    DeviceArray<double> d_zero(static_cast<size_t>(ndof));
+    DeviceArray<double> d_rhs(static_cast<size_t>(ndof));
+    DeviceArray<double> d_rhs_w(static_cast<size_t>(ndof));
+    DeviceArray<double> values_w(static_cast<size_t>(csr.nnz));
+    DeviceArray<double> values_c(static_cast<size_t>(csr.nnz));
+    d_zero.fill_zero();
+    const double beta_arg = bf::no_conductor_penalty() ? -REFERENCE_PENALTY_BETA
+                                                       :  REFERENCE_PENALTY_BETA;
+    const double dt_static = 1e30;
+    const double dt_omega  = 1.0 / omega;
+
+    csr.values.fill_zero();
+    d_rhs.fill_zero();
+    BF_LAUNCH_1D(reference_assemble, mesh.num_hexes,
+        static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
+        mesh.nodes_current.data(), d_materials.data(), d_zero.data(),
+        dt_static, beta_arg, t_peak,
+        csr.row_offsets.data(), csr.col_indices.data(),
+        csr.values.data(), d_rhs.data());
+    values_w.fill_zero();
+    d_rhs_w.fill_zero();
+    BF_LAUNCH_1D(reference_assemble, mesh.num_hexes,
+        static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
+        mesh.nodes_current.data(), d_materials.data(), d_zero.data(),
+        dt_omega, beta_arg, t_peak,
+        csr.row_offsets.data(), csr.col_indices.data(),
+        values_w.data(), d_rhs_w.data());
+    bf::sync();
+
+    csr.values.prefetch_to_host();
+    values_w.prefetch_to_host();
+    values_c.prefetch_to_host();
+    d_rhs.prefetch_to_host();
+    d_rhs_w.prefetch_to_host();
+    csr.row_offsets.prefetch_to_host();
+    csr.col_indices.prefetch_to_host();
+    bf::sync();
+    {
+        // C = (W - K) / w. Kontrolle: die rechten Seiten beider Assemblierungen
+        // muessen uebereinstimmen (A_prev = 0, die Quelle haengt nicht von dt
+        // ab). Bitgleichheit wird nicht verlangt: die Streuung ist atomar, die
+        // Summationsreihenfolge auf der GPU also nicht festgelegt.
+        //
+        // Aus demselben Grund ist W - K ausserhalb der Leiter nicht exakt null,
+        // sondern Rundungsrauschen der Groesse eps*|K| (gemessen 2e-14 gegen
+        // max|C| ~ 2). Solche Eintraege werden auf null gesetzt: echte
+        // Leitwerteintraege liegen bei TEAM 28 um 1e-2 * |K| und damit zehn
+        // Groessenordnungen ueber der Schwelle.
+        double c_max = 0.0, k_max = 0.0, rhs_diff = 0.0, rhs_norm = 0.0, rhs_max = 0.0;
+        double dropped_max = 0.0;
+        int c_rows = 0, dropped = 0;
+        for (int row = 0; row < csr.num_rows; ++row) {
+            bool any = false;
+            for (int k = csr.row_offsets[row]; k < csr.row_offsets[row + 1]; ++k) {
+                const double diff = values_w[k] - csr.values[k];
+                const double ref  = std::fmax(std::fabs(values_w[k]), std::fabs(csr.values[k]));
+                if (diff != 0.0 && std::fabs(diff) <= 1e-12 * ref) {
+                    dropped_max = std::fmax(dropped_max, std::fabs(diff) / omega);
+                    ++dropped;
+                    values_c[k] = 0.0;
+                } else {
+                    values_c[k] = diff / omega;
+                }
+                c_max = std::fmax(c_max, std::fabs(values_c[k]));
+                k_max = std::fmax(k_max, std::fabs(csr.values[k]));
+                if (values_c[k] != 0.0) any = true;
+            }
+            if (any) ++c_rows;
+        }
+        for (int i = 0; i < ndof; ++i) {
+            rhs_diff = std::fmax(rhs_diff, std::fabs(d_rhs[i] - d_rhs_w[i]));
+            rhs_max  = std::fmax(rhs_max, std::fabs(d_rhs[i]));
+            rhs_norm += d_rhs[i] * d_rhs[i];
+        }
+        std::cout << std::scientific << std::setprecision(3)
+                  << "[Ref-Harm] max|K| = " << k_max << ", max|C| = " << c_max
+                  << ", C in " << c_rows << " von " << csr.num_rows << " Zeilen\n"
+                  << "[Ref-Harm] Rundungsrauschen in W - K verworfen: " << dropped
+                  << " Eintraege, groesster " << dropped_max << "\n"
+                  << "[Ref-Harm] ||b|| = " << std::sqrt(rhs_norm)
+                  << ", Abweichung der rechten Seiten beider Assemblierungen = "
+                  << rhs_diff << std::defaultfloat << "\n";
+        if (rhs_diff > 1e-12 * rhs_max) {
+            throw std::runtime_error(
+                "Referenzloeser harmonisch: die rechten Seiten von K- und "
+                "(K+wC)-Assemblierung weichen ab. Mit A_prev = 0 duerfen sie das "
+                "nicht -- dann ist die Quelle zeitabhaengig ausgewertet worden.");
+        }
+        if (sigma_zero && c_max != 0.0) {
+            throw std::runtime_error("Referenzloeser harmonisch: sigma = 0, aber C != 0.");
+        }
+    }
+    values_c.prefetch_to_device();
+    csr.values.prefetch_to_device();
+    values_w.prefetch_to_device();
+    d_rhs.prefetch_to_device();
+    csr.row_offsets.prefetch_to_device();
+    csr.col_indices.prefetch_to_device();
+    const double t_fem = lap();
+
+    // --- BEM einmal: V, K_BEM, T, dann D = V^-1 (K_BEM - 1/2 I)
+    const size_t nb2 = static_cast<size_t>(nb) * static_cast<size_t>(nb);
+    DeviceArray<double> d_V(nb2), d_K(nb2), d_T(nb2);
+    DeviceArray<double> d_dtn_diag(static_cast<size_t>(nb));
+
+    BF_LAUNCH_1D_PAR(reference_bem_row, nb,
+        nb, static_cast<int>(mesh.num_boundary_faces),
+        d_bnode_ids.data(), d_node_to_bnode.data(),
+        mesh.boundary_faces.data(), d_face_orient.data(),
+        mesh.nodes_current.data(), d_V.data(), d_K.data());
+    bf::sync();
+    d_T.fill_zero();
+    BF_LAUNCH_1D(reference_bem_mass, mesh.num_boundary_faces,
+        static_cast<int>(mesh.num_boundary_faces), nb,
+        mesh.boundary_faces.data(), d_node_to_bnode.data(),
+        mesh.nodes_current.data(), d_T.data());
+    bf::sync();
+    const double t_bem = lap();
+
+    // Zeilen-major -> column-major fuer V und C = K_BEM - 1/2 I, wie oben.
+    d_K.prefetch_to_host();
+    d_V.prefetch_to_host();
+    bf::sync();
+    for (int i = 0; i < nb; ++i) d_K[static_cast<size_t>(i) * nb + i] -= 0.5;
+    for (int i = 0; i < nb; ++i) {
+        for (int j = i + 1; j < nb; ++j) {
+            std::swap(d_V[static_cast<size_t>(i) * nb + j], d_V[static_cast<size_t>(j) * nb + i]);
+            std::swap(d_K[static_cast<size_t>(i) * nb + j], d_K[static_cast<size_t>(j) * nb + i]);
+        }
+    }
+    d_K.prefetch_to_device();
+    d_V.prefetch_to_device();
+    {
+        bf::DenseLU lu;
+        lu.factorize(d_V.data(), nb);
+        lu.solve(d_K.data(), nb);      // d_K := D = V^-1 C  (column-major)
+    }
+    const double t_lu = lap();
+
+    // --- ILU(0) fuer M = W + diag(G), Begruendung in der Zeitschleife
+    BF_LAUNCH_1D_PAR(ref_dtn_diag, nb, nb, d_T.data(), d_K.data(), d_dtn_diag.data());
+    bf::sync();
+    values_w.prefetch_to_host();
+    csr.row_offsets.prefetch_to_host();
+    csr.col_indices.prefetch_to_host();
+    d_dtn_diag.prefetch_to_host();
+    bf::sync();
+    std::vector<double> ilu_values(values_w.data(), values_w.data() + csr.nnz);
+    std::vector<int>    ilu_diag;
+    for (int i = 0; i < nb; ++i) {
+        const double d = -d_dtn_diag[i] / MU_0;
+        for (int c = 0; c < 3; ++c) {
+            const int row = rb.bnode_ids[i] * 3 + c;
+            for (int k = csr.row_offsets[row]; k < csr.row_offsets[row + 1]; ++k) {
+                if (csr.col_indices[k] == row) { ilu_values[k] += d; break; }
+            }
+        }
+    }
+    const int zp = bf::csr_ilu0(csr.num_rows, csr.row_offsets.data(),
+                                csr.col_indices.data(), ilu_values.data(), ilu_diag);
+    const bool use_ilu = (zp < 0);
+    if (!use_ilu) {
+        std::cout << "[Ref-Harm] ILU(0) Nullpivot in Zeile " << zp
+                  << " -- innere Loesung ohne Vorkonditionierer.\n";
+    }
+    values_w.prefetch_to_device();
+    csr.row_offsets.prefetch_to_device();
+    csr.col_indices.prefetch_to_device();
+    const double t_ilu = lap();
+
+    cublasHandle_t cublas = nullptr;
+    if (bf::on_gpu()) {
+        if (cublasCreate(&cublas) != CUBLAS_STATUS_SUCCESS) {
+            throw std::runtime_error("Referenzloeser: cublasCreate fehlgeschlagen.");
+        }
+    }
+    struct CublasGuard {
+        cublasHandle_t h;
+        ~CublasGuard() { if (h != nullptr) cublasDestroy(h); }
+    } cublas_guard{cublas};
+
+    auto make_op = [&](ReferenceOperator& op, const double* values) {
+        op.num_rows    = csr.num_rows;
+        op.nb          = nb;
+        op.row_offsets = csr.row_offsets.data();
+        op.col_indices = csr.col_indices.data();
+        op.values      = values;
+        op.bnode_ids   = d_bnode_ids.data();
+        op.T           = d_T.data();
+        op.D           = d_K.data();
+        op.cublas      = cublas;
+        op.allocate_buffers();
+    };
+    ReferenceOperator op_k, op_w;
+    make_op(op_k, csr.values.data());
+    make_op(op_w, values_w.data());
+
+    // Selbsttest: K + G muss positiv definit sein (wie in der Zeitschleife).
+    {
+        DeviceArray<double> tv(static_cast<size_t>(ndof));
+        DeviceArray<double> tw(static_cast<size_t>(ndof));
+        tv.prefetch_to_host(); bf::sync();
+        unsigned seed = 12345u;
+        for (int i = 0; i < ndof; ++i) {
+            seed = seed * 1103515245u + 12345u;
+            tv[i] = ((seed >> 16) & 0x7fff) / 16383.5 - 1.0;
+        }
+        tv.prefetch_to_device();
+        op_k.apply(tv.data(), tw.data());
+        double quad = 0.0, nv = 0.0;
+        bf::ddot(cublas, ndof, tv.data(), tw.data(), &quad);
+        bf::dnrm2(cublas, ndof, tv.data(), &nv);
+        const double rayleigh = quad / (nv * nv);
+        std::cout << "[Ref-Harm] Selbsttest x^T (K+G) x / ||x||^2 = " << std::scientific
+                  << std::setprecision(4) << rayleigh << std::defaultfloat
+                  << (rayleigh > 0.0 ? "  (positiv)\n" : "  NEGATIV\n");
+        if (!(rayleigh > 0.0)) {
+            throw std::runtime_error(
+                "Referenzloeser harmonisch: K + G ist nicht positiv definit.");
+        }
+    }
+
+    // --- Blockoperator und FGMRES
+    ReferenceHarmonicOperator hop;
+    hop.n             = ndof;
+    hop.apply_kg      = [&](const double* x, double* y) { op_k.apply(x, y); };
+    hop.c_row_offsets = csr.row_offsets.data();
+    hop.c_col_indices = csr.col_indices.data();
+    hop.c_values      = values_c.data();
+    hop.omega         = omega;
+    hop.cublas        = cublas;
+    hop.allocate_buffers();
+
+    long long inner_total = 0;
+    int inner_calls = 0;
+    auto solve_m = [&](const double* rhs, double* x) {
+        const int it = reference_gmres(op_w, rhs, x, ilu_values, ilu_diag,
+                                       csr.row_offsets.data(), csr.col_indices.data(),
+                                       use_ilu, /*step=*/0,
+                                       REFERENCE_HARMONIC_INNER_TOL,
+                                       REFERENCE_GMRES_MAX_ITER, /*verbose=*/false);
+        inner_total += it;
+        ++inner_calls;
+        return it;
+    };
+    const ReferencePrecond P = reference_harmonic_block_precond(ndof, solve_m);
+    const ReferenceApply   A = [&](const double* x, double* y) { hop.apply(x, y); };
+
+    const int N = 2 * ndof;
+    DeviceArray<double> d_b2(static_cast<size_t>(N));
+    DeviceArray<double> d_x2(static_cast<size_t>(N));
+    d_b2.fill_zero();
+    d_x2.fill_zero();
+    bf::dcopy(cublas, ndof, d_rhs.data(), d_b2.data());
+
+    ReferenceFgmresOptions fopt;
+    std::cout << "[Ref-Harm] FGMRES(" << fopt.restart << "), Toleranz " << fopt.tol
+              << ", hoechstens " << fopt.max_iter << " Iterationen; Vorkonditionierer "
+                 "diag(M, M), M = K + G + wC, innen Referenz-GMRES mit ILU(0) bis "
+              << REFERENCE_HARMONIC_INNER_TOL << "\n";
+    const ReferenceFgmresResult fres =
+        reference_harmonic_fgmres(A, P, N, d_b2.data(), d_x2.data(), fopt, cublas, &std::cout);
+    bf::sync();
+    const double t_solve = lap();
+
+    std::cout << std::scientific << std::setprecision(3)
+              << "[Ref-Harm] FGMRES " << (fres.converged ? "KONVERGIERT" : "NICHT KONVERGIERT")
+              << ": " << fres.iterations << " Iterationen, echtes rel. Residuum "
+              << fres.rel_residual << std::defaultfloat
+              << ", innere Iterationen gesamt " << inner_total << " in " << inner_calls
+              << " Loesungen mit M\n";
+    if (!fres.converged) {
+        std::cout << "[Ref-Harm] ACHTUNG: Toleranz nicht erreicht. Die folgenden Zahlen "
+                     "gehoeren zu einer NICHT konvergierten Loesung.\n";
+    }
+
+    const double* d_Ar = d_x2.data();
+    const double* d_Ai = d_x2.data() + ndof;
+    {
+        double nr = 0.0, ni = 0.0;
+        bf::dnrm2(cublas, ndof, d_Ar, &nr);
+        bf::dnrm2(cublas, ndof, d_Ai, &ni);
+        std::cout << std::scientific << std::setprecision(4)
+                  << "[Ref-Harm] ||A_r|| = " << nr << ", ||A_i|| = " << ni
+                  << ", ||A_i||/||A_r|| = " << (nr > 0.0 ? ni / nr : 0.0)
+                  << std::defaultfloat << "\n";
+    }
+
+    // --- Feldpruefung bei sigma = 0: B_z(A_r) auf der Achse gegen Biot-Savart,
+    // dieselbe Auswertung wie die Zeitschleife mit --verify-field.
+    if (sigma_zero) {
+        mesh.nodes_current.prefetch_to_host();
+        mesh.hex_nodes.prefetch_to_host();
+        d_x2.prefetch_to_host();
+        bf::sync();
+        double ai_max = 0.0;
+        for (int i = 0; i < ndof; ++i) ai_max = std::fmax(ai_max, std::fabs(d_Ai[i]));
+        std::cout << "[Ref-Harm] sigma = 0: max|A_i| = " << std::scientific << ai_max
+                  << std::defaultfloat << (ai_max == 0.0 ? "  (exakt null)\n" : "\n");
+
+        std::vector<FieldSample> samples;
+        double r_min = 1e30;
+        for (int h : plate.get_hex_indices()) {
+            const Hexahedron H = mesh.hex_nodes[h];
+            double cx = 0.0, cy = 0.0;
+            for (int n = 0; n < 8; ++n) {
+                cx += mesh.nodes_current[H.v[n]].x;
+                cy += mesh.nodes_current[H.v[n]].y;
+            }
+            cx *= 0.125; cy *= 0.125;
+            r_min = std::fmin(r_min, std::sqrt(cx*cx + cy*cy));
+        }
+        for (int h : plate.get_hex_indices()) {
+            const Hexahedron H = mesh.hex_nodes[h];
+            double3 nd[8], Ah[8];
+            double cx = 0.0, cy = 0.0, cz = 0.0;
+            for (int n = 0; n < 8; ++n) {
+                nd[n] = mesh.nodes_current[H.v[n]];
+                Ah[n] = make_double3(d_Ar[H.v[n]*3+0], d_Ar[H.v[n]*3+1], d_Ar[H.v[n]*3+2]);
+                cx += nd[n].x; cy += nd[n].y; cz += nd[n].z;
+            }
+            cx *= 0.125; cy *= 0.125; cz *= 0.125;
+            const double rr = std::sqrt(cx*cx + cy*cy);
+            if (rr > r_min * 1.05) continue;
+            double3 gradN[8]; double detJ;
+            evaluate_nodal_gradients(nd, 0.0, 0.0, 0.0, gradN, detJ);
+            double3 B = make_double3(0.0, 0.0, 0.0);
+            for (int n = 0; n < 8; ++n) {
+                const double3 c = cross3(gradN[n], Ah[n]);
+                B.x += c.x; B.y += c.y; B.z += c.z;
+            }
+            samples.push_back({rr, cz, B.z});
+        }
+        report_field_verification("Q1-Knoten-FEM + dichte BEM, harmonisch (sigma = 0)",
+                                  samples, 20.0, r_min);
+        std::cout << std::fixed << std::setprecision(1)
+                  << "[Ref-Harm] Zeit: Aufbau " << t_setup << " s, FEM " << t_fem
+                  << " s, BEM " << t_bem << " s, LU " << t_lu << " s, ILU " << t_ilu
+                  << " s, FGMRES " << t_solve << " s, gesamt "
+                  << std::chrono::duration<double>(Clock::now() - t_start).count()
+                  << " s\n" << std::defaultfloat;
+        return fres.converged ? 0 : 1;
+    }
+
+    // --- Zeitgemittelte Kraft und Moment, zwei Quadraturordnungen
+    const double3 cm = plate.get_properties().center_of_mass;
+    MechanicalLoads lor[2];
+    for (int pass = 0; pass < 2; ++pass) {
+        const int order = (pass == 0) ? 2 : 3;
+        double* buf = nullptr;
+        bf::malloc_d(&buf, 6 * sizeof(double));
+        bf::memset_d(buf, 0, 6 * sizeof(double));
+        BF_LAUNCH_1D(nodal_lorentz_harmonic, mesh.num_hexes,
+            static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
+            mesh.nodes_current.data(), d_materials.data(), d_plate_mask.data(),
+            d_Ar, d_Ai, omega, order, cm,
+            buf + 0, buf + 1, buf + 2, buf + 3, buf + 4, buf + 5);
+        bf::sync();
+        double h[6];
+        bf::memcpy_d(h, buf, 6 * sizeof(double), cudaMemcpyDeviceToHost);
+        bf::free_d(buf);
+        lor[pass].force  = make_double3(h[0], h[1], h[2]);
+        lor[pass].torque = make_double3(h[3], h[4], h[5]);
+    }
+
+    // --- Wirbelstromdiagnose. nodal_eddy_diag bildet J = -kappa (A - A_prev)/dt;
+    // mit A_prev = 0 und dt = 1/w ist das -kappa*w*A. Aus J(t) = Re(J^ e^{jwt}),
+    // J^ = -j w sigma A^ folgt J(0) = w sigma A_i (Strommaximum) und
+    // J(T/4) = w sigma A_r (Stromnulldurchgang). Daraus
+    //     Verlustleistung (Mittel) = (P(A_r) + P(A_i)) / 2
+    //     Q_eff = |m_z(A_i)| / |m_z(A_r)|   wie [Ref-Q] der Zeitschleife.
+    double mz_r = 0.0, mz_i = 0.0, pw_r = 0.0, pw_i = 0.0;
+    for (int part = 0; part < 2; ++part) {
+        double* buf = nullptr;
+        bf::malloc_d(&buf, 3 * sizeof(double));
+        bf::memset_d(buf, 0, 3 * sizeof(double));
+        BF_LAUNCH_1D(nodal_eddy_diag, mesh.num_hexes,
+            static_cast<int>(mesh.num_hexes), mesh.hex_nodes.data(),
+            mesh.nodes_current.data(), d_materials.data(),
+            part == 0 ? d_Ar : d_Ai, d_zero.data(), dt_omega, buf, buf + 1, buf + 2);
+        bf::sync();
+        double h[3];
+        bf::memcpy_d(h, buf, 3 * sizeof(double), cudaMemcpyDeviceToHost);
+        bf::free_d(buf);
+        if (part == 0) { mz_r = h[0]; pw_r = h[1]; } else { mz_i = h[0]; pw_i = h[1]; }
+    }
+    const double t_force = lap();
+
+    const double weight = 0.107 * 9.81;
+    const double fz2 = lor[0].force.z, fz3 = lor[1].force.z;
+    const double qrel = (std::fabs(fz3) > 1e-30) ? std::fabs(fz2 - fz3) / std::fabs(fz3) : 0.0;
+    std::cout << "\n========================================================\n"
+              << " ERGEBNIS harmonischer Referenzpfad (Zyklusmittel)\n"
+              << "========================================================\n"
+              << std::fixed << std::setprecision(3)
+              << "  Schwebehoehe " << height_mm << " mm, f = "
+              << omega / (2.0 * M_PI) << " Hz"
+              << (fres.converged ? "" : "   -- NICHT KONVERGIERT") << "\n"
+              << std::scientific << std::setprecision(5)
+              << "  F (Lorentz, 3x3x3) = (" << lor[1].force.x << ", " << lor[1].force.y
+              << ", " << lor[1].force.z << ") N\n"
+              << "  F (Lorentz, 2x2x2) = (" << lor[0].force.x << ", " << lor[0].force.y
+              << ", " << lor[0].force.z << ") N\n"
+              << "  F_z = " << fz3 << " N"
+              << std::fixed << std::setprecision(4)
+              << ",  F_z/(m*g) = " << fz3 / weight
+              << "  (m*g = " << weight << " N)\n"
+              << std::scientific << std::setprecision(3)
+              << "  Moment um den Schwerpunkt (3x3x3) = (" << lor[1].torque.x << ", "
+              << lor[1].torque.y << ", " << lor[1].torque.z << ") Nm\n"
+              << std::fixed << std::setprecision(3)
+              << "  Quadratur 2x2x2 gegen 3x3x3: Abweichung " << qrel * 100.0 << " %\n"
+              << std::scientific << std::setprecision(4)
+              << "  Wirbelstrom: |m_z| im Strommaximum " << std::fabs(mz_i)
+              << " A m^2, im Nulldurchgang " << std::fabs(mz_r) << " A m^2\n"
+              << "  Verlustleistung (Zyklusmittel) = " << 0.5 * (pw_r + pw_i) << " W\n"
+              << std::fixed << std::setprecision(4)
+              << "  Q_eff = |m_z(Max)|/|m_z(Null)| = "
+              << (std::fabs(mz_r) > 0.0 ? std::fabs(mz_i) / std::fabs(mz_r) : 0.0) << "\n"
+              << std::setprecision(1)
+              << "  Zeit: Aufbau " << t_setup << " s, FEM " << t_fem << " s, BEM "
+              << t_bem << " s, LU " << t_lu << " s, ILU " << t_ilu << " s, FGMRES "
+              << t_solve << " s, Kraft " << t_force << " s, gesamt "
+              << std::chrono::duration<double>(Clock::now() - t_start).count() << " s\n"
+              << "========================================================\n"
+              << std::defaultfloat;
+    return fres.converged ? 0 : 1;
 }

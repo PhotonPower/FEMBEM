@@ -535,9 +535,11 @@ const char* backend_name();
 // wuerden Puffer aus dem einen Modus im anderen freigegeben.
 //
 // Rueckgabe: false, wenn --help angefordert wurde und das Programm sich
-// beenden soll; sonst true.
+// beenden soll; sonst true. Bei unzulaessigen Kombinationen ebenfalls false,
+// dann ist args_rejected() true und main() endet mit Fehlercode.
 // -----------------------------------------------------------------------------
 bool select_backend_from_args(int argc, char** argv);
+bool args_rejected();
 
 /// Kurzhilfe auf stdout.
 void print_usage(const char* exe_name);

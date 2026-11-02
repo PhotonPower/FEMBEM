@@ -52,6 +52,7 @@ std::string g_harmonic_field_dump;   // leer = keine Ausgabe
 double  g_harmonic_inner_tol = 1e-4;   // Stufe mit der kleinsten Gesamtarbeit
 int     g_harmonic_outer_cap = 0;      // 0 = bf::max_iter()
 double  g_harmonic_hz    = 50.0;   // TEAM 28: Netzfrequenz
+bool    g_args_rejected  = false;  // unzulaessige Kombination, siehe args_rejected()
 double  g_dt = 1e-4;
 double  g_amg_theta = 0.60;
 double  g_pc_inner_tol = 1e-2;
@@ -82,7 +83,20 @@ void print_usage(const char* exe_name) {
         << "                 VOLLBESETZTE BEM statt ACA. Bewusst einfach gehalten,\n"
         << "                 damit er als unabhaengige Zweitrechnung taugt.\n"
         << "                 Voraussetzung: mu_r == 1 ueberall (wird geprueft).\n"
-        << "                 Details in include/ReferenceSolver.cuh.\n\n"
+        << "                 Details in include/ReferenceSolver.cuh.\n"
+        << "  --reference --harmonic[=HZ] --fixed-plate\n"
+        << "                 Referenzloeser im FREQUENZBEREICH: loest\n"
+        << "                 (K + G + j*omega*C) A = b einmal statt Zeitschritte\n"
+        << "                 mit implizitem Euler, also ohne Zeitfehler. Ausgabe:\n"
+        << "                 zeitgemittelte Lorentzkraft F_z, F_z/(m*g), Moment.\n"
+        << "                 Quelle im Scheitelwert (20 A), unabhaengig von HZ.\n"
+        << "                 --fixed-plate ist Pflicht, --plate-z=MM setzt die Hoehe.\n"
+        << "                 Mit --verify-field: sigma = 0, B_z gegen Biot-Savart.\n"
+        << "                 Nicht kombinierbar mit --fem-direct*, --direct,\n"
+        << "                 --pc-study, --harmonic-study und den Optionen\n"
+        << "                 --harmonic-outer-restart/-inner-tol/-outer-cap/-checks/\n"
+        << "                 -inner-direct/-field-dump des Nedelec-Pfads.\n"
+        << "                 Details in include/ReferenceHarmonic.cuh.\n\n"
         << "Vorkonditionierung:\n"
         << "  --ams          Auxiliary-Space Maxwell Solver (Hiptmair und Xu) statt\n"
         << "                 ILU(0) fuer den FEM-Block. Die beiden Hilfsprobleme\n"
@@ -314,6 +328,8 @@ void print_usage(const char* exe_name) {
         << "  " << name << "                       Vollauf auf der GPU\n\n";
 }
 
+bool args_rejected() { return g_args_rejected; }
+
 bool select_backend_from_args(int argc, char** argv) {
     // 1. Umgebungsvariable als Vorbelegung.
     if (const char* env = std::getenv("FEMBEM_BACKEND")) {
@@ -329,8 +345,19 @@ bool select_backend_from_args(int argc, char** argv) {
     }
 
     // 2. Kommandozeile ueberstimmt die Umgebungsvariable.
+    // Stellgroessen des harmonischen NEDELEC-Pfads, die der harmonische
+    // Referenzpfad nicht kennt. Gemerkt wird, ob sie angegeben wurden -- ihre
+    // Werte allein sagen das nicht, sie haben Vorgaben.
+    std::string nedelec_harmonic_opts;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
+        if (arg.rfind("--harmonic-outer-restart=", 0) == 0 ||
+            arg.rfind("--harmonic-inner-tol=", 0) == 0 ||
+            arg.rfind("--harmonic-outer-cap=", 0) == 0 ||
+            arg == "--harmonic-checks" || arg == "--harmonic-inner-direct" ||
+            arg.rfind("--harmonic-field-dump=", 0) == 0) {
+            nedelec_harmonic_opts += " " + arg.substr(0, arg.find('='));
+        }
 
         if (arg == "--nocohomology") {
             g_no_cohomology = true;
@@ -575,6 +602,35 @@ bool select_backend_from_args(int argc, char** argv) {
         }
         // Alles andere ist positional (Schrittzahl, nobem, noilu) und wird
         // weiterhin in mainloop() ausgewertet.
+    }
+
+    // --reference zusammen mit --harmonic: harmonischer Referenzpfad
+    // (include/ReferenceHarmonic.cuh). Er teilt mit dem Nedelec-Pfad keinen
+    // Code und kennt dessen Stellgroessen nicht; eine stillschweigend
+    // ignorierte Option waere eine Fehlbedienung ohne Meldung.
+    if (g_use_reference_solver && g_harmonic_solve) {
+        std::string conflicts;
+        if (g_fem_direct)     conflicts += " --fem-direct*";
+        if (g_harmonic_study) conflicts += " --harmonic-study";
+        if (g_pc_study)       conflicts += " --pc-study";
+        else if (g_direct_solve) conflicts += " --direct";
+        conflicts += nedelec_harmonic_opts;
+        if (!conflicts.empty()) {
+            std::cerr << "[Backend] FEHLER: --reference --harmonic ist der harmonische "
+                         "Referenzpfad (Knoten-FEM + dichte BEM) und vertraegt sich nicht "
+                         "mit:" << conflicts << "\n"
+                         "          Diese Optionen gehoeren zum Nedelec- bzw. FEM-direkt-"
+                         "Pfad. Ohne --reference laufen sie dort.\n";
+            g_args_rejected = true;
+            return false;
+        }
+        if (!g_fixed_plate) {
+            std::cerr << "[Backend] FEHLER: --reference --harmonic verlangt --fixed-plate. "
+                         "Der eingeschwungene Zustand gilt fuer eine ruhende Platte; BEM "
+                         "und LU von V werden einmal gebaut.\n";
+            g_args_rejected = true;
+            return false;
+        }
     }
 
 #ifdef _OPENMP

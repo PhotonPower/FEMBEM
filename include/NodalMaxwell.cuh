@@ -310,6 +310,115 @@ static __global__ void nodal_lorentz(
 
 
 // =============================================================================
+// Zeitgemittelte Lorentzkraft aus dem Phasor -- Knotenfassung
+// =============================================================================
+//
+// Gegenstueck zu nodal_lorentz fuer den harmonischen Referenzpfad
+// (--reference --harmonic). Herleitung wie in HarmonicLorentz.cuh, hier nur
+// mit Q1-Knotenfeldern statt Nedelec-Kanten:
+//
+//     A(t) = Re(A^ e^{jwt}) = A_r cos(wt) - A_i sin(wt)
+//     <J x B> = (sigma*w/2) ( A_i x rot A_r  -  A_r x rot A_i )
+//     M = Int (x - x_cm) x <J x B> dV
+//
+// Das ist Re(J^ x B^*)/2 mit J^ = -j w sigma A^ und damit invariant gegen eine
+// gemeinsame Phasendrehung von A_r und A_i -- tests/test_reference_harmonic
+// prueft das und vergleicht mit dem Zyklusmittel von nodal_lorentz.
+//
+// Beitragende Elemente: kappa > 0 wie in nodal_lorentz, und zusaetzlich die
+// Maske 'plate_mask' (1 = Plattenelement, null = alle Leiter). Beim
+// Referenzpfad sind die Spulen stromgetrieben mit kappa = 0, die Maske
+// aendert dort also nichts; sie macht die Beschraenkung auf die Platte
+// ausdruecklich statt zufaellig.
+BF_HD inline void nodal_lorentz_harmonic_body(
+    int hex_id,
+    int num_hexes,
+    const Hexahedron* hex_nodes,
+    const double3* nodes,
+    const MaterialProperties* materials,
+    const unsigned char* plate_mask,     // null = alle Leiter
+    const double* A_r,                   // 3 * num_nodes
+    const double* A_i,                   // 3 * num_nodes
+    double omega,
+    int quad_order,
+    double3 center_of_mass,
+    double* out_fx, double* out_fy, double* out_fz,
+    double* out_mx, double* out_my, double* out_mz)
+{
+    (void)num_hexes;
+
+    if (plate_mask && !plate_mask[hex_id]) return;
+    const double kappa = materials[hex_id].kappa;
+    if (kappa <= 0.0) return;      // nur Leiter tragen bei
+
+    const Hexahedron hx = hex_nodes[hex_id];
+    double3 nd[8], Ar[8], Ai[8];
+    for (int i = 0; i < 8; ++i) {
+        nd[i] = nodes[hx.v[i]];
+        Ar[i] = make_double3(A_r[hx.v[i]*3+0], A_r[hx.v[i]*3+1], A_r[hx.v[i]*3+2]);
+        Ai[i] = make_double3(A_i[hx.v[i]*3+0], A_i[hx.v[i]*3+1], A_i[hx.v[i]*3+2]);
+    }
+
+    double fx = 0.0, fy = 0.0, fz = 0.0;
+    double mx = 0.0, my = 0.0, mz = 0.0;
+    const double k = 0.5 * kappa * omega;
+
+    const int ng = nodal_gauss_count_n(quad_order);
+    for (int g = 0; g < ng; ++g) {
+        double xi, eta, zeta, wg;
+        nodal_gauss_point_n(quad_order, g, xi, eta, zeta, wg);
+
+        double3 gradN[8]; double detJ;
+        evaluate_nodal_gradients(nd, xi, eta, zeta, gradN, detJ);
+        if (detJ <= 0.0) continue;
+
+        double N[8];
+        evaluate_nodal_shape(xi, eta, zeta, N);
+
+        double3 ar = make_double3(0.0, 0.0, 0.0), ai = make_double3(0.0, 0.0, 0.0);
+        double3 br = make_double3(0.0, 0.0, 0.0), bi = make_double3(0.0, 0.0, 0.0);
+        for (int i = 0; i < 8; ++i) {
+            ar.x += N[i] * Ar[i].x; ar.y += N[i] * Ar[i].y; ar.z += N[i] * Ar[i].z;
+            ai.x += N[i] * Ai[i].x; ai.y += N[i] * Ai[i].y; ai.z += N[i] * Ai[i].z;
+            const double3 cr = cross3(gradN[i], Ar[i]);
+            const double3 ci = cross3(gradN[i], Ai[i]);
+            br.x += cr.x; br.y += cr.y; br.z += cr.z;
+            bi.x += ci.x; bi.y += ci.y; bi.z += ci.z;
+        }
+
+        const double3 t1 = cross3(ai, br);
+        const double3 t2 = cross3(ar, bi);
+        const double3 f  = make_double3(k * (t1.x - t2.x), k * (t1.y - t2.y),
+                                        k * (t1.z - t2.z));
+        const double  dV = wg * detJ;
+        fx += f.x * dV; fy += f.y * dV; fz += f.z * dV;
+
+        const double3 x  = nodal_map_to_physical(nd, xi, eta, zeta);
+        const double3 mm = cross3(sub3(x, center_of_mass), f);
+        mx += mm.x * dV; my += mm.y * dV; mz += mm.z * dV;
+    }
+
+    bf::atomic_add(out_fx, fx); bf::atomic_add(out_fy, fy); bf::atomic_add(out_fz, fz);
+    bf::atomic_add(out_mx, mx); bf::atomic_add(out_my, my); bf::atomic_add(out_mz, mz);
+}
+
+static __global__ void nodal_lorentz_harmonic(
+    int num_hexes, const Hexahedron* hex_nodes, const double3* nodes,
+    const MaterialProperties* materials, const unsigned char* plate_mask,
+    const double* A_r, const double* A_i, double omega, int quad_order,
+    double3 center_of_mass,
+    double* out_fx, double* out_fy, double* out_fz,
+    double* out_mx, double* out_my, double* out_mz)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;
+    if (h >= num_hexes) return;
+    nodal_lorentz_harmonic_body(h, num_hexes, hex_nodes, nodes, materials, plate_mask,
+                                A_r, A_i, omega, quad_order, center_of_mass,
+                                out_fx, out_fy, out_fz, out_mx, out_my, out_mz);
+}
+
+
+// =============================================================================
 // Wirbelstromdiagnose: magnetisches Moment und Verlustleistung
 // =============================================================================
 //

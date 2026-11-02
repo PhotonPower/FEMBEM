@@ -140,4 +140,19 @@ int run_reference_solver(Mesh& mesh,
                          int max_steps,
                          double dt);
 
+/// Frequenzbereich: --reference --harmonic[=HZ] --fixed-plate.
+/// Loest (K + G + j*omega*C) A^ = b einmal fuer die feste Platte und gibt die
+/// zeitgemittelte Lorentzkraft aus. Die Quelle wird im Scheitelwert angesetzt
+/// (Spulen bei t_peak, also T/4 ihrer eigenen Frequenz). Mit --verify-field
+/// wird sigma = 0 gesetzt und B_z(A_r) gegen Biot-Savart geprueft.
+/// Gleichung und Loeser: include/ReferenceHarmonic.cuh.
+///
+/// Gibt 0 zurueck bei Konvergenz, 1 wenn FGMRES die Toleranz nicht erreicht.
+int run_reference_harmonic(Mesh& mesh,
+                           DeviceArray<MaterialProperties>& d_materials,
+                           class PhysicalObject& plate,
+                           const std::vector<class PhysicalObject*>& sources,
+                           double omega,
+                           double t_peak);
+
 #endif // REFERENCE_SOLVER_CUH
