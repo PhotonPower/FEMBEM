@@ -6,6 +6,25 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `--reference --harmonic[=HZ] --fixed-plate`: Referenzlöser im
+  Frequenzbereich. Löst (K + G + jωC)Â = b als reellen 2n-Block mit FGMRES
+  und dem Vorkonditionierer diag(M, M), M = K + G + ωC (innen der
+  vorhandene Referenz-GMRES mit ILU(0)), und gibt die zeitgemittelte
+  Lorentzkraft aus (`nodal_lorentz_harmonic`, Ordnung 2 und 3, nur
+  Plattenelemente), dazu Moment, Verlustleistung und Q_eff. Teilt keinen
+  Code mit dem Nédélec-Pfad; dessen Optionen, `--fem-direct*`, `--direct`,
+  `--pc-study`, `--harmonic-study` und ein fehlendes `--fixed-plate` werden
+  abgewiesen (Exit-Code 1). Mit `--verify-field` gilt σ = 0: A_i ist exakt
+  null, B_z gleicht dem transienten Feldtest auf sieben Stellen. Auf dem
+  groben Netz läuft das transiente Zyklusmittel mit dt, dt/2, dt/4 in erster
+  Ordnung auf den harmonischen Wert zu (Richardson 0,8534 N gegen
+  0,8533 N). Auf team28.vtk: F_z = 0,9436 N bei 11,3 mm (Ringmodell
+  1,0068 N, −6,3 %) und 3,1277 N bei 3,8 mm (3,2897 N, −4,9 %), 86 bzw.
+  110 s. Mit `--refine=1` steigt der Wert bei 11,3 mm auf 0,9694 N
+  (−3,7 %, 1 831 s); der Referenzpfad ist auf dem Standardnetz also nicht
+  netzkonvergiert. Der transiente Pfad lag näher am Ringmodell, weil sein Zeitfehler
+  die Kraft um rund 3,5 % anhebt (`docs/design/reference-harmonic.md`).
+  Host-Test `test_reference_harmonic` mit Gegenproben.
 - Felddiagnose im harmonischen Pfad: B_z auf der Achse gegen Biot-Savart,
   `--harmonic-field-dump=DATEI` (A und B je Element, dazu das FEM-System)
   und `tools/team28_field_check.py` (Vergleich je Körper gegen Biot-Savart).
