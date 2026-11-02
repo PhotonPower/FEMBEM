@@ -166,6 +166,30 @@ Der transiente Referenzpfad liegt bei 11,3 mm mit dt = 0,1 ms bei
 in dieser Arbeit nicht neu gerechnet), also 3,4 % über dem harmonischen
 Wert -- dieselbe Richtung und Größe wie auf dem groben Netz unter c).
 
+### e) Netzfolge mit `--refine=1`
+
+team28.vtk, 11,3 mm, 50 Hz, `--reference --harmonic --fixed-plate
+--plate-z=11.3 --refine=1`. Log: `build/refharm/std_r1_harm_11p3.log`.
+
+| Netz | Randknoten | FEM-Zeilen | F_z | F_z/(m·g) | gegen Ringmodell | Q_eff | außen / innen | Zeit |
+|---|---|---|---|---|---|---|---|---|
+| Standard | 4 138 | 21 039 | 0,9436 N | 0,8989 | −6,3 % | 0,784 | 11 / 518 | 86 s |
+| `--refine=1` | 16 546 | 140 973 | 0,9694 N | 0,9236 | −3,7 % | 0,773 | 11 / 840 | 1 831 s |
+
+Echtes rel. Residuum am Ende 5,6e-9; innen 40 Iterationen je Lösung mit M
+(Grenze 600 nicht erreicht). Quadratur 2×2×2 gegen 3×3×3 gleich auf
+0,000 %, F_x und F_y ≤ 5,5e-5 N, Moment ≤ 8,9e-4 Nm. Verlustleistung
+12,96 W.
+
+Die Kraft steigt beim Verfeinern um 2,7 %; der Referenzpfad ist auf dem
+Standardnetz also nicht netzkonvergiert, und ein großer Teil der −6,3 %
+ist Netzfehler. Aus zwei Stufen lässt sich die Ordnung nicht bestimmen.
+Nur unter der **Annahme** O(h²) ergäbe Richardson 0,978 N (−2,9 % zum
+Ringmodell) -- das ist gerechnet, nicht gemessen. Das grobe gmsh-Netz
+gehört zu einer anderen Familie und taugt nicht als dritte Stufe;
+`--refine=2` (rund 66 000 Randknoten, etwa 33 GiB je dichter Matrix)
+lehnt die Speicherprüfung ab.
+
 ## Laufzeiten
 
 FGMRES ist der ganze Aufwand: 81 s von 86 s bei 11,3 mm. Eine innere
@@ -173,6 +197,10 @@ Iteration kostet rund 0,15 s, weil die ILU-Substitution auf dem Host läuft
 (siehe ReferenceSolver.cuh). BEM 1,6 s, LU von V 2,8 s, Assemblierung 0,3 s.
 Zum Vergleich der transiente Pfad: rund 9 s je Zeitschritt, also etwa
 1,5 Stunden für drei Perioden.
+
+Mit `--refine=1` (11,3 mm): gesamt 1 831 s, davon FGMRES 1 748 s, LU von V
+74 s, BEM 4,4 s, Assemblierung 1,9 s. Eine innere Iteration kostet dort
+rund 2,1 s.
 
 ## Offene Punkte
 
@@ -182,8 +210,9 @@ Zum Vergleich der transiente Pfad: rund 9 s je Zeitschritt, also etwa
   Zeitfehler, der in die günstige Richtung zeigte. Was bleibt, ist ein
   Diskretisierungsfehler des Referenzpfads (stetige Neumann-Spur an
   Kanten, dokumentiert in ReferenceSolver.cuh; Netz; Strafterm-Eichung in
-  der Platte). Eine Netzfolge mit `--refine=1` (16 542 Randknoten,
-  6,1 GiB dichte Algebra) ist nicht gerechnet.
+  der Platte). Die Netzfolge unter e) zeigt: mit `--refine=1` schrumpft
+  der Abstand auf −3,7 %, der Wert ist aber noch nicht konvergiert. Eine
+  dritte Stufe derselben Familie ist mit der dichten BEM nicht rechenbar.
 - Der transiente Wert auf dem Standardnetz bei dt und dt/2 ist nicht neu
   gerechnet (etwa 1,5 und 3 Stunden). Befehl für den Nutzer:
   `fembem 600 --reference --fixed-plate --plate-z=11.3 --dt=1e-4` und

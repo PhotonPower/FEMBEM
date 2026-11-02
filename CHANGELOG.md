@@ -20,7 +20,9 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   Ordnung auf den harmonischen Wert zu (Richardson 0,8534 N gegen
   0,8533 N). Auf team28.vtk: F_z = 0,9436 N bei 11,3 mm (Ringmodell
   1,0068 N, −6,3 %) und 3,1277 N bei 3,8 mm (3,2897 N, −4,9 %), 86 bzw.
-  110 s. Der transiente Pfad lag näher am Ringmodell, weil sein Zeitfehler
+  110 s. Mit `--refine=1` steigt der Wert bei 11,3 mm auf 0,9694 N
+  (−3,7 %, 1 831 s); der Referenzpfad ist auf dem Standardnetz also nicht
+  netzkonvergiert. Der transiente Pfad lag näher am Ringmodell, weil sein Zeitfehler
   die Kraft um rund 3,5 % anhebt (`docs/design/reference-harmonic.md`).
   Host-Test `test_reference_harmonic` mit Gegenproben.
 - Felddiagnose im harmonischen Pfad: B_z auf der Achse gegen Biot-Savart,
