@@ -34,7 +34,7 @@ int     g_pc_inner_iters = 10;
 int     g_gmres_restart = 50;
 bool    g_want_ritz = false;
 int     g_max_iter = 1000;
-std::string g_mesh_file = "team28.vtk";
+std::string g_mesh_file = "team28_hex.vtk";
 bool    g_direct_solve = false;
 bool    g_pc_study     = false;
 bool    g_harmonic_study = false;
@@ -198,7 +198,9 @@ void print_usage(const char* exe_name) {
         << "                 sind beide nur Naeherungen daran. Bringt sie nichts, ist der\n"
         << "                 Ansatz widerlegt, bevor er gebaut wird. Kubischer Aufwand,\n"
         << "                 also nur fuer die groben Ersatznetze.\n"
-        << "  --mesh=DATEI        Netzdatei (Standard team28.vtk). Fuer die Netzstudie:\n"
+        << "  --mesh=DATEI        Netzdatei (Standard team28_hex.vtk, Gmsh-Hexaeder\n"
+        << "                 mit 4944 Zellen; das alte Netz team28.vtk bleibt als\n"
+        << "                 --mesh=team28.vtk waehlbar). Fuer die Netzstudie:\n"
         << "                 tools/make_coarse_team28.py erzeugt grobe Ersatznetze\n"
         << "                 derselben Geometrie. Faellt das Residuum dort sauber auf\n"
         << "                 1e-6 und wird mit feinerem Netz systematisch schlechter,\n"
@@ -303,8 +305,8 @@ void print_usage(const char* exe_name) {
         << "Netz:\n"
         << "  --refine=N     Netz N mal uniform verfeinern, je Stufe 1 -> 8 Kinder\n"
         << "                 (2x2x2, also auch ueber die Plattendicke). 0..4.\n"
-        << "                 Stufe 1:  4805 ->  38440 Elemente,  7013 ->  46991 Knoten\n"
-        << "                 Stufe 2: 38440 -> 307520 Elemente\n"
+        << "                 Stufe 1:  4944 ->  39552 Elemente,  6916 ->  47191 Knoten\n"
+        << "                 Stufe 2: 39552 -> 316416 Elemente\n"
         << "                 ACHTUNG bei --reference: die vollbesetzte BEM waechst\n"
         << "                 mit N_bem^2. Stufe 1 braucht 6.1 GiB, Stufe 2 rund\n"
         << "                 100 GiB und passt nicht in 16 GiB.\n"
@@ -517,7 +519,7 @@ bool select_backend_from_args(int argc, char** argv) {
             if (g_mesh_file.empty()) {
                 std::cerr << "[Backend] Warnung: --mesh= ohne Dateinamen. "
                              "Wird ignoriert.\n";
-                g_mesh_file = "team28.vtk";
+                g_mesh_file = "team28_hex.vtk";
             }
         } else if (arg.rfind("--max-iter=", 0) == 0) {
             const int v = std::atoi(arg.c_str() + 11);

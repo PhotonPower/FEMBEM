@@ -8,7 +8,8 @@ man sie prüft. Plan und Hintergrund der Gmsh-Werkzeuge:
 
 | Quelle | Werkzeug | Ergebnis |
 |---|---|---|
-| Standardnetz | — | `data/team28/team28.vtk`, 4805 Hexaeder; liegt nach dem Konfigurieren im Build-Verzeichnis |
+| Standardnetz | `tools/gmsh/team28_hex.py --scale 1.0` | `data/team28/team28_hex.vtk`, 4944 Hexaeder, eingecheckt; liegt nach dem Konfigurieren im Build-Verzeichnis |
+| Legacy-Netz | — | `data/team28/team28.vtk`, 4805 Hexaeder, bleibt unverändert; `--mesh=team28.vtk` |
 | Gmsh, parametrisch, BEM-FEM | `tools/gmsh/team28_hex.py` | reines Hexaedernetz der Leiter, beliebig fein, geprüft |
 | Gmsh, parametrisch, FEM-direkt | `tools/gmsh/team28_fem_air.py` | Prismennetz mit Luftgebiet, Abschneidefaktor einstellbar, geprüft |
 | Gmsh, eigenes Modell | `tools/gmsh/import_msh.py` | `.msh` oder `.geo`; Physical Volumes über ihren Namen auf `component_id` abgebildet, geprüft |

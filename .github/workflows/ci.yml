@@ -66,9 +66,10 @@ jobs:
           python-version: "3.12"
       - name: Syntax pruefen
         run: python3 -m compileall -q tools tests
-      - name: Spulenzuordnung des Standardnetzes
+      - name: Spulenzuordnung der Netze (Standard- und Legacy-Netz)
         run: |
           python3 -m pip install numpy
+          python3 tools/check_map.py data/team28/team28_hex.vtk
           python3 tools/check_map.py data/team28/team28.vtk
       - name: Netzpruefungen (tools/meshcheck.py, tools/check_map.py)
         run: |
@@ -76,6 +77,11 @@ jobs:
           python3 tools/tests/test_check_map.py
       - name: Ringmodell als Kraftreferenz (tools/team28_axisymmetric.py)
         run: python3 tools/tests/test_team28_axisymmetric.py
+      - name: Netzpruefung der eingecheckten Netze (Standard- und Legacy-Netz)
+        # Nur meshcheck und Zaehlwerte, kein Byte-Vergleich mit einer frischen
+        # Gmsh-Ausgabe: die Gmsh-Version der CI kann von der des Netzes abweichen.
+        run: |
+          python3 tools/meshcheck.py data/team28/team28_hex.vtk --require-hex --separate-bodies
           python3 tools/meshcheck.py data/team28/team28.vtk --require-hex --separate-bodies
 
   gmsh:

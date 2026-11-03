@@ -164,7 +164,7 @@ void assemble_A_sys(const Mesh& mesh, const std::vector<MaterialProperties>& mat
 
 int main(int argc, char** argv)
 {
-    const char* mesh_path = (argc > 1) ? argv[1] : "team28.vtk";
+    const char* mesh_path = (argc > 1) ? argv[1] : "team28_hex.vtk";
 
     Mesh mesh;
     VtkReader::read_hexahedral_mesh(mesh_path, mesh);

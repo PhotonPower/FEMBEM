@@ -70,8 +70,11 @@ cd build
 ./fembem 3 --cpu          # drei Zeitschritte, ohne GPU
 ```
 
-Das Standardnetz `data/team28/team28.vtk` wird beim Konfigurieren ins
-Build-Verzeichnis kopiert; das Programm erwartet es im Arbeitsverzeichnis.
+Das Standardnetz `data/team28/team28_hex.vtk` (Gmsh-Hexaeder, 4944 Zellen,
+erzeugt mit `tools/gmsh/team28_hex.py --scale 1.0`) wird beim Konfigurieren
+ins Build-Verzeichnis kopiert; das Programm erwartet es im Arbeitsverzeichnis.
+Das frühere Standardnetz `team28.vtk` (4805 Zellen) bleibt als Legacy-Netz
+erhalten und wird mitkopiert: `./fembem --mesh=team28.vtk`.
 Plattformdetails, GCC/CUDA-Versionen, OpenMP und cuDSS stehen in
 [BUILD.md](BUILD.md).
 
@@ -99,7 +102,7 @@ FEMBEM/
 ├── tools/                Python-Werkzeuge: Netzprüfung, Netzimport, Plots
 │   ├── gmsh/             Netze mit Gmsh erzeugen
 │   └── plot/
-├── data/team28/          Standardnetz und Vergleichsdaten zu TEAM 28
+├── data/team28/          Standardnetz (`team28_hex.vtk`), Legacy-Netz (`team28.vtk`) und Vergleichsdaten zu TEAM 28
 └── docs/
     ├── architecture.md   Überblick über die Module
     ├── theory/           Formulierung und Numerik (LaTeX)
