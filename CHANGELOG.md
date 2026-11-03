@@ -6,6 +6,14 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `tools/reference_series.py`: Netzserie für den harmonischen
+  Referenzlöser. Erzeugt Netze mit `team28_hex.py`, schätzt vor jedem Lauf
+  Randknoten und Speicher der dichten BEM, rechnet, tabelliert und endet
+  mit 1, wenn eine Netzprüfung oder ein Lauf scheitert. Befund
+  (`docs/design/reference-harmonic-mesh-series.md`): bei 11,3 mm steigt
+  F_z uniform von 0,853 auf 0,997 N, beobachtete Ordnung 1,77,
+  extrapoliert 1,0095 N (+0,26 % zum Ringmodell); der Strafterm ändert
+  F_z um +0,03 %.
 - `--reference --harmonic[=HZ] --fixed-plate`: Referenzlöser im
   Frequenzbereich. Löst (K + G + jωC)Â = b als reellen 2n-Block mit FGMRES
   und dem Vorkonditionierer diag(M, M), M = K + G + ωC (innen der
