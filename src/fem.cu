@@ -772,6 +772,13 @@ int mainloop(int argc, char** argv) {
         Mesh mesh;
         std::cout << "[Setup] Reading VTK Mesh...\n";
         VtkReader::read_hexahedral_mesh(bf::mesh_file(), mesh);
+        // Der Referenzloeser liest hx.v[0..7]; auf Prismen waere das ein
+        // Knotenindex -1. Deshalb vor jedem Aufbau (Kohomologie usw.) abweisen.
+        if (bf::use_reference_solver() && !mesh.is_pure_hex()) {
+            throw std::runtime_error(
+                "Referenzloeser braucht ein reines Hexaedernetz (Q1-Hexaeder, "
+                "Vierecks-Panels am Rand). Das Netz enthaelt andere Elementtypen.");
+        }
 
         // ---------------------------------------------------------------------
         // Einheiten: team28.vtk ist in Millimetern, die Physik in SI
@@ -1054,6 +1061,36 @@ int mainloop(int argc, char** argv) {
                 for (int n = 0; n < nn; ++n) {
                     const double z = mesh.nodes_initial[H.v[n]].z;
                     if (first || z < plate_z0) { plate_z0 = z; first = false; }
+                }
+            }
+            // Die Platte wird starr verschoben. Haengt an ihren Knoten ein
+            // Element einer anderen Komponente (etwa Luft im Netz), wuerde
+            // die Verschiebung dieses Element mitziehen und das Netz
+            // zerreissen.
+            {
+                mesh.hex_component_ids.prefetch_to_host();
+                std::vector<char> is_plate_node(mesh.num_nodes, 0);
+                std::vector<char> is_plate_elem(mesh.num_hexes, 0);
+                for (int h : plate.get_hex_indices()) {
+                    is_plate_elem[h] = 1;
+                    const Hexahedron H = mesh.hex_nodes[h];
+                    const int nn = element_num_nodes(mesh.elem_type(h));
+                    for (int n = 0; n < nn; ++n) is_plate_node[H.v[n]] = 1;
+                }
+                for (size_t h = 0; h < mesh.num_hexes; ++h) {
+                    if (is_plate_elem[h]) continue;
+                    const Hexahedron H = mesh.hex_nodes[h];
+                    const int nn = element_num_nodes(mesh.elem_type(h));
+                    for (int n = 0; n < nn; ++n) {
+                        if (is_plate_node[H.v[n]]) {
+                            throw std::runtime_error(
+                                "--plate-z verschiebt die Platte starr; das Netz enthaelt "
+                                "Elemente (Komponente " +
+                                std::to_string(mesh.hex_component_ids[h]) +
+                                "), die an der Platte haengen. Plattenhoehe im Generator "
+                                "setzen (--plate-z0).");
+                        }
+                    }
                 }
             }
             const double target = bf::plate_z_mm() * 1e-3;

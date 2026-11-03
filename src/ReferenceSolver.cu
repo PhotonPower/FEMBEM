@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -787,6 +788,12 @@ int run_reference_solver(Mesh& mesh,
     std::cout << "\n========================================================\n"
               << " REFERENZLOESER: Q1-Knoten-FEM + vollbesetzte BEM        \n"
               << "========================================================\n";
+
+    if (!mesh.is_pure_hex()) {
+        throw std::runtime_error(
+            "Referenzloeser braucht ein reines Hexaedernetz (Q1-Hexaeder, "
+            "Vierecks-Panels am Rand). Das Netz enthaelt andere Elementtypen.");
+    }
 
     // --- Voraussetzung pruefen: mu_r == 1 ueberall
     d_materials.prefetch_to_host();
@@ -1573,6 +1580,11 @@ int run_reference_harmonic(Mesh& mesh,
               << " REFERENZLOESER HARMONISCH: Q1-Knoten-FEM + dichte BEM   \n"
               << "========================================================\n";
 
+    if (!mesh.is_pure_hex()) {
+        throw std::runtime_error(
+            "Referenzloeser braucht ein reines Hexaedernetz (Q1-Hexaeder, "
+            "Vierecks-Panels am Rand). Das Netz enthaelt andere Elementtypen.");
+    }
     if (!bf::fixed_plate()) {
         throw std::runtime_error(
             "Referenzloeser harmonisch: --fixed-plate fehlt. Der eingeschwungene "
@@ -1948,6 +1960,13 @@ int run_reference_harmonic(Mesh& mesh,
     bf::dcopy(cublas, ndof, d_rhs.data(), d_b2.data());
 
     ReferenceFgmresOptions fopt;
+    // Debugschalter fuer den Abnahmetest "nicht konvergiert -> Exit-Code 1":
+    // begrenzt die aeusseren Iterationen kuenstlich. Ohne die Variable
+    // aendert sich nichts.
+    if (const char* mi = std::getenv("FEMBEM_REF_FGMRES_MAXIT")) {
+        const int v = std::atoi(mi);
+        if (v > 0) fopt.max_iter = v;
+    }
     std::cout << "[Ref-Harm] FGMRES(" << fopt.restart << "), Toleranz " << fopt.tol
               << ", hoechstens " << fopt.max_iter << " Iterationen; Vorkonditionierer "
                  "diag(M, M), M = K + G + wC, innen Referenz-GMRES mit ILU(0) bis "

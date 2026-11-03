@@ -25,8 +25,8 @@ bestimmt (Bedarf wie im Loeser: 3,2 * N^2 * 8 Byte). Liegt er ueber
 
 Exit-Code 1, wenn eine Netzpruefung oder ein Lauf scheitert (Abbruch,
 fehlendes Ergebnis, FGMRES nicht konvergiert oder Kohomologie != 2).
-fembem selbst endet auch bei nicht konvergiertem FGMRES mit 0; das Skript
-erkennt den Fall am Log.
+Das Skript prueft den Exit-Code von fembem (1 bei nicht konvergiertem FGMRES)
+und zusaetzlich das Log; bei --reuse liest es den Exit-Code aus NAME.log.exit.
 """
 import argparse
 import json
@@ -208,9 +208,16 @@ def run_one(run, args, log):
             p = subprocess.run(cmd, cwd=args.build, stdout=f, stderr=subprocess.STDOUT)
         rec["exit"] = p.returncode
         rec["wall_s"] = time.time() - t0
+        with open(log_path + ".exit", "w") as f:
+            f.write(str(p.returncode))
+    elif os.path.exists(log_path + ".exit"):
+        # --reuse: Exit-Code des frueheren Laufs
+        rec["exit"] = int(open(log_path + ".exit").read().strip() or "0")
     text = open(log_path, encoding="utf-8", errors="replace").read()
     rec.update(parse_log(text))
-    if rec.get("fz3") is None:
+    if rec.get("exit") not in (None, 0):
+        rec["status"] = f"Exit-Code {rec['exit']}"
+    elif rec.get("fz3") is None:
         rec["status"] = "kein Ergebnis"
     elif not rec.get("converged"):
         rec["status"] = "NICHT KONVERGIERT"
