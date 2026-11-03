@@ -18,6 +18,18 @@ Gruppen (alle bei 11,3 mm ausser E; Platte starr verschoben mit --plate-z,
      das gelaufen ist
   D  team28.vtk und das grobe Netz gmsh_team28_hex_coarse.vtk
   E  3,8 mm fuer --scale 1.0 und 2.0
+  F  Netze mit Luft (tools/gmsh/team28_hex_air.py), Kopplungsflaeche schrittweise
+     auf die Leiter verlegt (docs/design/reference-harmonic-air.md):
+       trunc  Abschneidestudie bei 11,3 mm: D und B0 auf air_s1_t1p5/t2/t3/t5/t5x10,
+              dazu --verify-field (sigma = 0) auf air_s1_t3
+       chain  Stufenkette B1 .. B_end auf air_s1_t3 (11,3 mm), jede Stufe aus dem
+              vollen Netz mit tools/strip_air.py
+       z38    dieselbe Kette bei 3,8 mm: B0, B_S, B_platte, B_end
+       smoke  --smoke: scale 0.5, 11,3 mm, nur D, B0, B_end (Rauchtest)
+     Netze, Logs und Dumps landen in build/refair, die Tabellen in
+     build/refair/summary.md. --groups F waehlt alles ausser smoke;
+     --f-parts trunc,chain,z38 waehlt Teile, --f-extra SCALE:Z0:STUFE,STUFE ergaenzt
+     weitere Stufen auf einem anderen Netz (z. B. 1.5:11.3:B_S,B_rille).
 
 Vor jedem Lauf werden Randknoten und Speicher der dichten BEM aus dem Netz
 bestimmt (Bedarf wie im Loeser: 3,2 * N^2 * 8 Byte). Liegt er ueber
@@ -163,6 +175,19 @@ def parse_log(text):
             r[f"fz{order}"] = float(m.group(3))
     r["q_eff"] = num(r"Q_eff = .*?= ([\d.]+)", text)
     r["time_s"] = num(r"Zeit: .*gesamt ([\d.]+) s", text)
+    r["power_w"] = num(r"Verlustleistung \(Zyklusmittel\) = ([\d.eE+-]+) W", text)
+    # Dirichlet-Zweig (--reference-dirichlet)
+    m = re.search(r"\[Ref-Harm\] Dirichlet: A = 0 an (\d+) Randknoten", text)
+    r["dirichlet"] = m is not None
+    if m:
+        r["dirichlet_nodes"] = int(m.group(1))
+    r["dirichlet_max_a"] = num(r"max\|A\| auf den Dirichlet-Zeilen = ([\d.eE+-]+)", text)
+    # Feldpruefung (--verify-field): groesste und mittlere Abweichung B_z gegen Biot-Savart
+    r["vf_worst_pct"] = num(r"Groesste Abweichung im Betrag: ([\d.]+) %", text)
+    devs = [float(x.replace(" ", "")) for x in re.findall(
+        r"^\s+[-\d.]+\s+[+-][\d.]+e[+-]\d+\s+[+-][\d.]+e[+-]\d+\s+([+-]\s*[\d.]+) %",
+        text, re.M)]
+    r["vf_devs"] = devs
     return r
 
 
@@ -324,6 +349,387 @@ def evaluate(recs):
     return out
 
 
+
+# =============================================================================
+# Gruppe F: Netze mit Luft, Kopplungsflaeche schrittweise auf die Leiter verlegt
+# =============================================================================
+F_TRUNC = (("t1p5", 1.5, 1.5), ("t2", 2.0, 2.0), ("t3", 3.0, 3.0), ("t5", 5.0, 5.0),
+           ("t5x10", 5.0, 10.0))
+F_STAGES = (("B1", "4"), ("B2", "3-4"), ("B3", "2-4"), ("B_S", "1-4"),
+            ("B_rille", "1-4,12"), ("B_kern", "1-4,11,12"),
+            ("B_platte", "1-4,11,12,13"), ("B_end", "1-4,10-13"))
+F_STAGE_ZONES = dict(F_STAGES)
+F_Z38_STAGES = ("B_S", "B_platte", "B_end")
+BODY_NAMES = (("Platte", 3), ("Innenspule", 2), ("Aussenspule", 1))
+
+
+def f_mesh_name(scale, z0, trunc=None):
+    s_tag = f"s{scale:g}".replace(".", "p")
+    base = f"air_{s_tag}_{trunc or 't3'}"
+    return base + ("" if abs(z0 - 11.3) < 1e-9 else f"_z{z0:g}".replace(".", "p"))
+
+
+def f_gen_args(scale, z0, tr, tz):
+    return ["--scale", f"{scale:g}", "--plate-z0", f"{z0:g}",
+            "--truncation-radial", f"{tr:g}", "--truncation-axial", f"{tz:g}"]
+
+
+def plan_f(args):
+    """Laeufe der Gruppe F: dicts mit name, mesh (Elternnetz), stage, gen, mode, z0, extra."""
+    runs = []
+
+    def add(mesh, gen, stage, mode, z0, extra=(), tag=None, part=""):
+        name = f"{mesh}_{tag or (stage if mode == 'B' else 'D')}"
+        runs.append(dict(name=name, mesh=mesh, gen=gen, stage=stage, mode=mode, z0=z0,
+                         extra=list(extra), part=part))
+
+    if args.smoke:
+        gen = f_gen_args(0.5, 11.3, 3, 3)
+        mesh = "air_s0p5_t3"
+        add(mesh, gen, "B0", "B", 11.3, part="smoke", tag="B0")
+        add(mesh, gen, "B0", "D", 11.3, part="smoke", tag="D")
+        add(mesh, gen, "B_end", "B", 11.3, part="smoke")
+        return runs
+    parts = set(args.f_parts.split(","))
+    scale = args.f_scale
+    t3 = f_mesh_name(scale, 11.3, "t3")
+    g3 = f_gen_args(scale, 11.3, 3, 3)
+    if "trunc" in parts:
+        # Bezug zuerst: B0 auf t3
+        order = [x for x in F_TRUNC if x[0] == "t3"] + [x for x in F_TRUNC if x[0] != "t3"]
+        for tag, tr, tz in order:
+            mesh = f_mesh_name(scale, 11.3, tag)
+            gen = f_gen_args(scale, 11.3, tr, tz)
+            add(mesh, gen, "B0", "B", 11.3, part="trunc", tag="B0")
+            add(mesh, gen, "B0", "D", 11.3, part="trunc", tag="D")
+        add(t3, g3, "B0", "B", 11.3, ["--verify-field"], tag="B0_vf", part="trunc")
+        add(t3, g3, "B0", "D", 11.3, ["--verify-field"], tag="D_vf", part="trunc")
+    if "chain" in parts:
+        add(t3, g3, "B0", "B", 11.3, tag="B0", part="chain")
+        for stage, _ in F_STAGES:
+            add(t3, g3, stage, "B", 11.3, part="chain")
+    if "z38" in parts:
+        m38 = f_mesh_name(scale, 3.8, "t3")
+        g38 = f_gen_args(scale, 3.8, 3, 3)
+        add(m38, g38, "B0", "B", 3.8, tag="B0", part="z38")
+        for stage in F_Z38_STAGES:
+            add(m38, g38, stage, "B", 3.8, part="z38")
+    for item in args.f_extra:
+        sc, z0, stages = item.split(":")
+        sc, z0 = float(sc), float(z0)
+        mesh = f_mesh_name(sc, z0, "t3")
+        gen = f_gen_args(sc, z0, 3, 3)
+        add(mesh, gen, "B0", "B", z0, tag="B0", part="extra")
+        for st in stages.split(","):
+            add(mesh, gen, st, "B", z0, part="extra")
+    # Duplikate (gleicher Name) nur einmal
+    seen, out = set(), []
+    for r in runs:
+        if r["name"] not in seen:
+            seen.add(r["name"])
+            out.append(r)
+    return out
+
+
+def f_run_cmd(cmd, log_path, cwd=None):
+    with open(log_path, "w", encoding="utf-8", errors="replace") as f:
+        f.write(" ".join(cmd) + "\n")
+        f.flush()
+        p = subprocess.run(cmd, cwd=cwd, stdout=f, stderr=subprocess.STDOUT)
+    return p.returncode, open(log_path, encoding="utf-8", errors="replace").read()
+
+
+def f_ensure_mesh(run, args, log):
+    """Volles Luftnetz erzeugen (oder wiederverwenden). Gibt (Pfad, Text, ok) zurueck."""
+    out = os.path.join(args.workdir, run["mesh"] + ".vtk")
+    gl = os.path.join(args.workdir, run["mesh"] + ".gen.log")
+    if os.path.exists(out) and os.path.exists(gl) and os.path.exists(out[:-4] + ".zones.json"):
+        text = open(gl, encoding="utf-8").read()
+        if "Netz in Ordnung." in text:
+            return out, text, True
+    cmd = [sys.executable, os.path.join(HERE, "gmsh", "team28_hex_air.py"), "-o", out] + run["gen"]
+    log(" ".join(cmd))
+    rc, text = f_run_cmd(cmd, gl)
+    return out, text, rc == 0 and "Netz in Ordnung." in text
+
+
+def f_ensure_stage(run, parent, args, log):
+    """Stufe mit strip_air.py. Gibt (VTK-Pfad, Text, ok) zurueck; B0 = volles Netz."""
+    if run["stage"] == "B0":
+        gl = os.path.join(args.workdir, run["mesh"] + ".b0check.log")
+        if not (args.reuse and os.path.exists(gl)):
+            cmd = [sys.executable, os.path.join(HERE, "strip_air.py"), parent, "--check-only"]
+            rc, text = f_run_cmd(cmd, gl)
+        else:
+            text = open(gl, encoding="utf-8").read()
+        return parent, text, "Netz in Ordnung." in text
+    out = os.path.join(args.workdir, f"{run['mesh']}_{run['stage']}.vtk")
+    gl = out[:-4] + ".strip.log"
+    if os.path.exists(out) and os.path.exists(gl):
+        text = open(gl, encoding="utf-8").read()
+        if "Stufe in Ordnung." in text:
+            return out, text, True
+    cmd = [sys.executable, os.path.join(HERE, "strip_air.py"), parent,
+           "--remove-zones", F_STAGE_ZONES[run["stage"]], "-o", out]
+    log(" ".join(cmd[1:]))
+    rc, text = f_run_cmd(cmd, gl)
+    return out, text, rc == 0 and "Stufe in Ordnung." in text
+
+
+def parse_surface(text):
+    """Randkomponenten, Randknoten, Euler-Charakteristiken aus der Ausgabe von strip_air.py."""
+    r = {}
+    m = re.search(r"Randkomponenten (\d+), Randknoten (\d+), Randflaechen (\d+), dichte Algebra "
+                  r"ca\. ([\d.]+) GiB", text)
+    if m:
+        r.update(components=int(m.group(1)), bnodes=int(m.group(2)), bfaces=int(m.group(3)),
+                 dense_gib=float(m.group(4)))
+    r["chi"] = [int(x) for x in re.findall(r"Euler-Charakteristik (-?\d+)", text)]
+    return r
+
+
+def parse_air_gen(text):
+    r = {}
+    m = re.search(r"Zellen je Komponente: (.*)", text)
+    r["cells"] = m.group(1).strip() if m else "?"
+    m = re.search(r"Zellen je Zone: (.*)", text)
+    r["zones"] = m.group(1).strip() if m else "?"
+    m = re.search(r"min\. skalierte Jacobi-Determinante: (.*)", text)
+    r["min_sj"] = m.group(1).strip() if m else "?"
+    m = re.search(r"Randknoten des vollen Netzes (\d+)", text)
+    r["bnodes_full"] = int(m.group(1)) if m else None
+    m = re.search(r"Abschneidefaktoren \(x / y / z\)\s+\S+\s+(.*?) \(verlangt", text)
+    r["trunc"] = m.group(1).strip() if m else "?"
+    return r
+
+
+def f_check_conductor_nodes(meshes, args):
+    """Leiter- und Spaltknoten zweier Netze muessen identisch sein (AP 7, Voraussetzung)."""
+    import numpy as np
+    import meshcheck as mc
+
+    def nodes(path):
+        m = mc.read_vtk(path)
+        z = mc.read_zones(path[:-4] + ".zones.json", len(m.comp))
+        sel = np.flatnonzero((m.comp > 0) | (z == 10))
+        n = np.unique(np.concatenate([m.cells[i] for i in sel]))
+        return {tuple(p) for p in m.points[n]}
+    ref = nodes(meshes[0])
+    bad = []
+    for other in meshes[1:]:
+        if nodes(other) != ref:
+            bad.append(os.path.basename(other))
+    return bad
+
+
+def f_table(recs, ref_name):
+    head = ("| Lauf | Randknoten | n (FEM) | dichte Algebra [GiB] | F_z O3 [N] | F_z O2 [N] | "
+            "Q_eff | Verlust [W] | außen / innen | echtes Res. | Zeit [s] | Status |\n"
+            "|---|---:|---:|---:|---:|---:|---:|---:|---|---:|---:|---|\n")
+    rows = []
+    for r in recs:
+        it = f"{r['outer']} / {r['inner']}" if r.get("outer") is not None else "–"
+        rows.append(f"| {r['name']} | {fmt(r.get('bem_nodes') or r.get('bnodes'), 'd')} | "
+                    f"{fmt(r.get('fem_rows'), 'd')} | {fmt(r.get('dense_gib') or r.get('dense_gib_est'), '.2f')} | "
+                    f"{fmt(r.get('fz3'), '.5f')} | {fmt(r.get('fz2'), '.5f')} | "
+                    f"{fmt(r.get('q_eff'), '.4f')} | {fmt(r.get('power_w'), '.3f')} | {it} | "
+                    f"{fmt(r.get('residual'), '.1e')} | {fmt(r.get('time_s') or r.get('wall_s'), '.0f')} | "
+                    f"{r['status']} |")
+    return head + "\n".join(rows) + "\n"
+
+
+def f_table_a(recs, ref_name):
+    head = (f"| Lauf | F_z / F_z({ref_name}) − 1 | Platte ΔA_r | Platte ΔA_i | Innenspule ΔA_r | "
+            "Innenspule ΔA_i | Außenspule ΔA_r | Außenspule ΔA_i | Phase Platte [°] | "
+            "max. Knotenabw. Platte (Ort) |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
+    ref = next((r for r in recs if r["name"] == ref_name and r.get("fz3") is not None), None)
+    rows = []
+    for r in recs:
+        c = r.get("cmp")
+        rel = (f"{100 * (r['fz3'] / ref['fz3'] - 1):+.3f} %"
+               if ref and r.get("fz3") is not None else "–")
+        if not c:
+            rows.append(f"| {r['name']} | {rel} | – | – | – | – | – | – | – | – |")
+            continue
+        b = c["bodies"]
+        cell = lambda cid, key: fmt(b[cid][key], ".2e") if cid in b else "–"   # noqa: E731
+        pl = b.get(3)
+        rows.append(f"| {r['name']} | {rel} | {cell(3, 'rel_r')} | {cell(3, 'rel_i')} | "
+                    f"{cell(2, 'rel_r')} | {cell(2, 'rel_i')} | {cell(1, 'rel_r')} | "
+                    f"{cell(1, 'rel_i')} | {fmt(pl['phase_deg'], '+.3f') if pl else '–'} | "
+                    f"{fmt(pl['max_dev_rel'], '.2e') if pl else '–'}"
+                    + (f" bei ({pl['where_mm'][0]:.0f}, {pl['where_mm'][1]:.0f}, {pl['where_mm'][2]:.1f}) mm"
+                       if pl else "") + " |")
+    return head + "\n".join(rows) + "\n"
+
+
+def f_surface_table(recs):
+    head = ("| Lauf | Randkomponenten | Euler-Charakteristik je Komponente | Randflächen | Randknoten |\n"
+            "|---|---:|---|---:|---:|\n")
+    rows = []
+    for r in recs:
+        sf = r.get("surface") or {}
+        if not sf:
+            continue
+        rows.append(f"| {r['name']} | {sf.get('components', '–')} | "
+                    f"{', '.join(str(x) for x in sf.get('chi', []))} | {sf.get('bfaces', '–')} | "
+                    f"{sf.get('bnodes', '–')} |")
+    return head + "\n".join(rows) + "\n"
+
+
+def f_evaluate(recs, scale=1.0):
+    """Abnahmepunkte aus AP 7 und 8, nur Zahlen."""
+    out = []
+    by = {r["name"]: r for r in recs}
+    ok = lambda r: r is not None and r.get("status") == "ok" and r.get("fz3") is not None   # noqa: E731
+    b0 = [(t, by.get(f_mesh_name(scale, 11.3, t) + "_B0")) for t, _, _ in F_TRUNC]
+    b0 = [(t, r) for t, r in b0 if ok(r)]
+    if len(b0) >= 2:
+        fz = [r["fz3"] for _, r in b0]
+        out.append(f"B0 ueber {len(b0)} Abschneidefaktoren: F_z von {min(fz):.5f} bis {max(fz):.5f} N, "
+                   f"Streuung {100 * (max(fz) - min(fz)) / (sum(fz) / len(fz)):.3f} % "
+                   "(Vorschlag 0,1 %, Abbruch ab 0,5 %)")
+    d = [(t, by.get(f_mesh_name(scale, 11.3, t) + "_D")) for t, _, _ in F_TRUNC]
+    d = [(t, r) for t, r in d if ok(r)]
+    ref = by.get(f_mesh_name(scale, 11.3, "t3") + "_B0")
+    if d and ok(ref):
+        out.append("D gegen B0(t3), F_z: " + ", ".join(
+            f"{t}: {100 * (r['fz3'] / ref['fz3'] - 1):+.2f} %" for t, r in d))
+    return out
+
+
+def f_run_one(run, args, log, parents, ref_dump):
+    """Ein Lauf der Gruppe F. Gibt rec zurueck."""
+    rec = dict(name=run["name"], group="F", mesh=run["mesh"], stage=run["stage"],
+               mode=run["mode"], z=run["z0"], status="", extra=run["extra"], part=run["part"])
+    if run["mesh"] not in parents:
+        full, text, ok = f_ensure_mesh(run, args, log)
+        parents[run["mesh"]] = (full, parse_air_gen(text), ok)
+    full, gen, ok = parents[run["mesh"]]
+    rec["gen"] = gen
+    if not ok:
+        rec["status"] = "Netzpruefung gescheitert"
+        return rec
+    vtk, stext, sok = f_ensure_stage(run, full, args, log)
+    rec["surface"] = parse_surface(stext)
+    rec["bnodes"] = rec["surface"].get("bnodes")
+    rec["dense_gib_est"] = rec["surface"].get("dense_gib")
+    if not sok:
+        rec["status"] = "Stufenpruefung gescheitert"
+        return rec
+    if rec["dense_gib_est"] and rec["dense_gib_est"] > args.budget_gib and run["mode"] == "B":
+        rec["status"] = "Speicher"
+        return rec
+    base = os.path.splitext(os.path.basename(vtk))[0]
+    tag = "D" if run["mode"] == "D" else run["stage"]
+    suffix = "_vf" if "--verify-field" in run["extra"] else ""
+    dump_rel = os.path.join(os.path.relpath(args.workdir, args.build),
+                            f"{run['mesh']}_{run['name'][len(run['mesh']) + 1:]}.csv")
+    log_path = os.path.join(args.workdir, run["name"] + ".log")
+    csv_path = os.path.join(args.build, dump_rel)
+    mesh_rel = os.path.relpath(vtk, args.build)
+    cmd = [args.fembem, "--reference", "--harmonic", "--fixed-plate", f"--mesh={mesh_rel}"]
+    if run["mode"] == "D":
+        cmd.append("--reference-dirichlet")
+    if not run["extra"]:
+        cmd.append(f"--reference-dump-a={dump_rel}")
+    cmd += run["extra"]
+    rec["cmd"] = "fembem " + " ".join(cmd[1:])
+    rec["log"] = os.path.relpath(log_path, REPO)
+    if args.dry_run:
+        rec["status"] = "geplant"
+        return rec
+    if not (args.reuse and os.path.exists(log_path)):
+        log(rec["cmd"])
+        t0 = time.time()
+        rc, _ = f_run_cmd(cmd, log_path, cwd=args.build)
+        rec["exit"] = rc
+        rec["wall_s"] = time.time() - t0
+        with open(log_path + ".exit", "w") as f:
+            f.write(str(rc))
+    elif os.path.exists(log_path + ".exit"):
+        rec["exit"] = int(open(log_path + ".exit").read().strip() or "0")
+    text = open(log_path, encoding="utf-8", errors="replace").read()
+    rec.update(parse_log(text))
+    if rec.get("exit") not in (None, 0):
+        rec["status"] = f"Exit-Code {rec['exit']}"
+    elif "--verify-field" in run["extra"]:
+        rec["status"] = "ok" if rec.get("vf_worst_pct") is not None and rec.get("converged") else "kein Ergebnis"
+    elif rec.get("fz3") is None:
+        rec["status"] = "kein Ergebnis"
+    elif not rec.get("converged"):
+        rec["status"] = "NICHT KONVERGIERT"
+    elif run["mode"] == "D" and rec.get("dirichlet_max_a") != 0.0:
+        rec["status"] = "Dirichlet verletzt"
+    else:
+        rec["status"] = "ok"
+    # Vergleich von A mit dem Bezug (B0 auf t3 bzw. B0 des gleichen Netzes)
+    if rec["status"] == "ok" and os.path.exists(csv_path) and not run["extra"]:
+        ref = ref_dump.get(run["mesh"]) or ref_dump.get("t3_" + str(run["z0"]))
+        if ref and os.path.exists(ref) and ref != csv_path:
+            import compare_a
+            try:
+                rec["cmp"] = compare_a.compare(ref, csv_path)
+            except compare_a.CompareError as e:
+                rec["status"] = f"Vergleich: {e}"
+        if run["mode"] == "B" and run["stage"] == "B0":
+            ref_dump[run["mesh"]] = csv_path
+            if abs(run["z0"] - 11.3) < 1e-9 and run["mesh"].endswith("_t3"):
+                ref_dump["t3_" + str(run["z0"])] = csv_path
+    return rec
+
+
+def run_group_f(args, log):
+    parents, ref_dump, recs = {}, {}, []
+    runs = plan_f(args)
+    for run in runs:
+        rec = f_run_one(run, args, log, parents, ref_dump)
+        recs.append(rec)
+        log(f"{rec['name']}: {rec['status']}"
+            + (f", F_z = {rec['fz3']:.5f} N" if rec.get("fz3") is not None else ""))
+    # Voraussetzung AP 7: Leiter- und Spaltknoten gleich ueber die Abschneidefaktoren
+    trunc_meshes = [os.path.join(args.workdir, m + ".vtk") for m in
+                    [f_mesh_name(args.f_scale, 11.3, t) for t, _, _ in F_TRUNC]
+                    if os.path.exists(os.path.join(args.workdir, m + ".vtk"))]
+    node_check = []
+    if len(trunc_meshes) >= 2 and not args.smoke:
+        bad = f_check_conductor_nodes(trunc_meshes, args)
+        node_check.append("Leiter- und Spaltknoten ueber die Abschneidefaktoren identisch: "
+                          + ("ja" if not bad else "NEIN bei " + ", ".join(bad)))
+    return recs, node_check
+
+
+def f_summary(recs, node_check, args):
+    md = ["# Gruppe F: Netze mit Luft", ""]
+    md.append("## Laeufe\n\n" + f_table(recs, "")) 
+    ref = f_mesh_name(0.5 if args.smoke else args.f_scale, 11.3, "t3") + "_B0"
+    md.append(f"\n## A gegen B0(t3) ({ref})\n\n" + f_table_a(recs, ref))
+    md.append("\n## Kopplungsflaeche\n\n" + f_surface_table(recs))
+    vf = [r for r in recs if r.get("vf_worst_pct") is not None]
+    if vf:
+        md.append("\n## Feldpruefung s = 0 (B_z auf der Achse gegen Biot-Savart)\n\n"
+                  "| Lauf | groesste Abweichung [%] | mittlere Abweichung [%] |\n|---|---:|---:|\n")
+        for r in vf:
+            devs = r.get("vf_devs") or []
+            mean = sum(devs) / len(devs) if devs else None
+            md.append(f"| {r['name']} | {r['vf_worst_pct']:.3f} | {fmt(mean, '+.3f')} |\n")
+    seen, gm = set(), []
+    for r in recs:
+        if r["mesh"] in seen or not r.get("gen"):
+            continue
+        seen.add(r["mesh"])
+        g = r["gen"]
+        gm.append(f"| {r['mesh']} | {g['cells']} | {g['zones']} | {g['min_sj']} | {g['trunc']} | "
+                  f"{g['bnodes_full']} |")
+    if gm:
+        md.append("\n## Netze\n\n| Netz | Zellen je Komponente | Zellen je Zone | kleinste skal. Jacobi-Det. | "
+                  "Abschneidefaktoren | Randknoten (voll) |\n|---|---|---|---|---|---:|\n" + "\n".join(gm) + "\n")
+    notes = node_check + f_evaluate(recs, 0.5 if args.smoke else args.f_scale)
+    if notes:
+        md.append("\n" + "\n".join(f"- {n}" for n in notes) + "\n")
+    return "\n".join(md)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0],
                                  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -336,6 +742,13 @@ def main():
                     help="hoechster Bedarf der dichten BEM, darueber kein Lauf")
     ap.add_argument("--reuse", action="store_true", help="vorhandene Logs auswerten statt rechnen")
     ap.add_argument("--dry-run", action="store_true", help="Netze erzeugen und pruefen, Randknoten und Speicher, kein fembem")
+    ap.add_argument("--smoke", action="store_true",
+                    help="Gruppe F: Rauchtest scale 0.5, 11,3 mm, D, B0 und B_end")
+    ap.add_argument("--f-parts", default="trunc,chain,z38",
+                    help="Gruppe F: Teile (trunc, chain, z38)")
+    ap.add_argument("--f-scale", type=float, default=1.0, help="Gruppe F: --scale der Luftnetze")
+    ap.add_argument("--f-extra", action="append", default=[],
+                    help="Gruppe F: weitere Stufen, SCALE:Z0:STUFE,STUFE (z. B. 1.5:11.3:B_S,B_rille)")
     args = ap.parse_args()
     try:
         sys.stdout.reconfigure(encoding="utf-8")
@@ -346,12 +759,33 @@ def main():
         exe = "fembem.exe" if os.name == "nt" else "fembem"
         cands = [os.path.join(args.build, "Release", exe), os.path.join(args.build, exe)]
         args.fembem = next((c for c in cands if os.path.exists(c)), cands[0])
-    args.workdir = os.path.abspath(args.workdir or os.path.join(args.build, "refseries"))
-    os.makedirs(args.workdir, exist_ok=True)
     groups = set(g.strip().upper() for g in args.groups.split(","))
+    if args.smoke:
+        groups = {"F"}
+    only_f = groups == {"F"}
+    args.workdir = os.path.abspath(args.workdir or os.path.join(
+        args.build, "refair" if only_f else "refseries"))
+    if args.smoke:
+        args.workdir = os.path.join(args.workdir, "smoke") if not args.workdir.endswith("smoke") else args.workdir
+    os.makedirs(args.workdir, exist_ok=True)
 
     def log(msg):
         print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+    if "F" in groups:
+        recs_f, node_check = run_group_f(args, log)
+        md_f = f_summary(recs_f, node_check, args)
+        open(os.path.join(args.workdir, "summary.md"), "w", encoding="utf-8").write(md_f)
+        json.dump(recs_f, open(os.path.join(args.workdir, "results.json"), "w", encoding="utf-8"),
+                  indent=1, ensure_ascii=False, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
+        print()
+        print(md_f)
+        bad = [r for r in recs_f if r["status"] not in ("ok", "geplant", "Speicher")]
+        if bad:
+            print("FEHLGESCHLAGEN: " + ", ".join(f"{r['name']} ({r['status']})" for r in bad))
+        groups.discard("F")
+        if not groups:
+            return 1 if bad else 0
 
     recs = []
     for run in plan(groups):

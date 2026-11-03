@@ -1152,6 +1152,12 @@ if (_fembem_py_numpy EQUAL 0)
                          tools_team28_axisymmetric_tests tools_team28_hex_air_tests
                          tools_strip_air_tests tools_compare_a_tests
                          PROPERTIES LABELS "tools" TIMEOUT 120)
+    # Ketten-Rauchtest (ohne Marke, braucht fembem und eine GPU): D, B0 und B_end
+    # auf dem Luftnetz scale 0.5 bei 11,3 mm laufen, konvergieren, Exit-Code 0.
+    add_test(NAME reference_series_air_smoke
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/reference_series.py --groups F --smoke
+                     --build ${CMAKE_BINARY_DIR} --fembem $<TARGET_FILE:fembem>)
+    set_tests_properties(reference_series_air_smoke PROPERTIES TIMEOUT 900)
     message(STATUS "FEMBEM: Tests tools  aktiv (${Python3_EXECUTABLE})")
 else()
     message(STATUS "FEMBEM: Tests tools  aus (Python mit numpy nicht gefunden)")
