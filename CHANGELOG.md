@@ -108,6 +108,16 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Geändert
 
+- Standardnetz ist jetzt `data/team28/team28_hex.vtk` (Gmsh-Hexaeder,
+  `tools/gmsh/team28_hex.py --scale 1.0`, 4944 Zellen) statt `team28.vtk`
+  (4805 Zellen, bleibt unverändert als Legacy-Netz, `--mesh=team28.vtk`).
+  Betroffen: Vorgabe von `--mesh`, CMake kopiert beide Netze ins
+  Build-Verzeichnis, Hilfetext, CI (`check_map` und `meshcheck` für beide
+  Dateien, ohne Byte-Vergleich mit Gmsh-Ausgabe). Referenzpfad bei 11,3 mm:
+  0,96649 N statt 0,94356 N (Ringmodell 1,0068 N). Tests: `test_determinism_fingerprint`
+  bleibt ausdrücklich auf `team28.vtk` (Prüfsummen), `test_bem_index_mapping`,
+  `test_cohomology_gauge` und `test_tree_cotree_gauge` laufen auf dem neuen
+  Standard. Löser unverändert. Siehe `docs/design/standard-mesh-switch.md`.
 - Bericht `docs/design/gmsh-phase9-report.md`: Der Rand des Luftgebiets
   trägt −0,77 % (unabhängig von der Spulenauflösung); FEM-direkt liegt
   hochgerechnet +0,8 … +1,0 % (11,3 mm) und +0,5 … +0,6 % (3,8 mm) über dem

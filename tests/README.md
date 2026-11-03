@@ -20,7 +20,7 @@ ctest --test-dir build --output-on-failure
 | `host` | Läuft ohne GPU und ohne Dateien von der Platte; baut Netze und Matrizen selbst. Geeignet für CI. |
 | `tools` | Python-Prüfmodule für Netze und das Ringmodell als Kraftreferenz (`tools/tests/`), brauchen numpy; nur registriert, wenn Python mit numpy gefunden wird. |
 | `gmsh` | Netzgeneratoren `tools/gmsh/team28_hex.py` und `team28_fem_air.py` (prüfen jedes erzeugte Netz) und der Import `tools/gmsh/import_msh.py` (`tools/tests/test_import_msh.py`); nur registriert, wenn das Python-Paket gmsh gefunden wird (`-DPython3_EXECUTABLE=...`). |
-| (keine) | Braucht teils eine GPU, teils das Netz `team28.vtk`. Das Netz liegt nach dem Konfigurieren im Build-Verzeichnis, CTest startet die Tests dort. |
+| (keine) | Braucht teils eine GPU, teils ein Netz (`team28_hex.vtk`, Standard; `team28.vtk`, Legacy). Beide liegen nach dem Konfigurieren im Build-Verzeichnis, CTest startet die Tests dort; den Netzpfad geben die Tests in `CMakeLists.txt` ausdrücklich an. |
 
 `host_tests` ist ein CMake-Ziel, das genau die Tests mit der Marke `host`
 baut. Das CUDA-Toolkit wird zum Übersetzen auch für diese gebraucht.
@@ -74,7 +74,7 @@ ihre Ausgaben, die erste abweichende Zeile benennt die Stufe.
 | H5 | Blattpartition des fertigen Baums |
 | H6 | `boundary_edges_to_fem_edges` (ganzzahlig) |
 
-Referenzwerte für das Standardnetz `data/team28/team28.vtk`, gemessen mit
+Referenzwerte **für `data/team28/team28.vtk`** (Legacy-Netz, nicht das Standardnetz `team28_hex.vtk`; der Test läuft in CTest ausdrücklich darauf), gemessen mit
 g++ 12.4 (libstdc++), CUDA 12.0, x86-64, Release (`-O3`), CPU-Modus; ein
 Wiederholungslauf liefert dieselben Werte:
 
@@ -100,7 +100,7 @@ Schwerpunkte. Weicht H5 bei gleichem H4 ab, an der Rekursion selbst
 (Achsenwahl, Bounding Box, Median-Teilung).
 
 Der Test gibt zusätzlich Rohwerte einzelner Schwerpunkte mit `%.17g` aus und
-die Zahl exakter Gleichstände je Achse. Beim Standardnetz sind es für x, y, z
+die Zahl exakter Gleichstände je Achse. Bei `team28.vtk` sind es für x, y, z
 1576, 1510 und 56 verschiedene Werte bei 4136 Quads (2560, 2626 und 4080
 Gleichstands-Paare), also viele Gleichstände, an denen eine instabile
 Sortierung plattformabhängig würde.
