@@ -118,7 +118,7 @@ struct ReferenceBoundary {
     size_t num_bnodes() const { return bnode_ids.size(); }
 };
 
-ReferenceBoundary build_reference_boundary(const Mesh& mesh);
+ReferenceBoundary build_reference_boundary(const Mesh& mesh, bool check_memory = true);
 
 // -----------------------------------------------------------------------------
 // Einsprungpunkt

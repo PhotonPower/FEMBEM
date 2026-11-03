@@ -1377,7 +1377,23 @@ int mainloop(int argc, char** argv) {
         // es keine Baum-Koordinatenmaske, auf der die Projektoren aufsetzen
         // koennten, und die Regularisierung entfernt die harmonischen Moden
         // ohnehin mit.
-        const CohomologyGaugeResult cohomology = bf::no_gauge()
+        // Der Referenzloeser benutzt die Generatoren nicht. Auf einem Netz mit
+        // Luft (component_id 0) bricht die Suche ab -- sie ist fuer Leiter-only-
+        // Netze gebaut --, deshalb wird sie dort uebersprungen. Alle Netze
+        // ohne Luft laufen unveraendert.
+        bool skip_cohomology_for_reference = false;
+        if (bf::use_reference_solver()) {
+            mesh.hex_component_ids.prefetch_to_host();
+            bf::sync();
+            for (size_t h = 0; h < mesh.num_hexes; ++h) {
+                if (mesh.hex_component_ids[h] == 0) { skip_cohomology_for_reference = true; break; }
+            }
+            if (skip_cohomology_for_reference) {
+                std::cout << "[Gauge] Referenzloeser mit Luftnetz: Kohomologie-Suche "
+                             "uebersprungen (wird nicht gebraucht).\n";
+            }
+        }
+        const CohomologyGaugeResult cohomology = (bf::no_gauge() || skip_cohomology_for_reference)
                               ? CohomologyGaugeResult{}
                               : find_cohomology_generators(
             mesh, gauge, d_materials.data(), 0.0);

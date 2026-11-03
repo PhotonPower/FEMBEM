@@ -12,6 +12,29 @@
 #include <stdexcept>
 #include <string>
 
+void reference_apply_dirichlet(int n, const int* row_offsets, const int* col_indices,
+                               double* values, const unsigned char* is_dirichlet,
+                               double diag_value)
+{
+    for (int i = 0; i < n; ++i) {
+        bool has_diag = false;
+        for (int k = row_offsets[i]; k < row_offsets[i + 1]; ++k) {
+            const int j = col_indices[k];
+            if (is_dirichlet[i]) {
+                if (j == i) { values[k] = diag_value; has_diag = true; }
+                else        { values[k] = 0.0; }
+            } else if (is_dirichlet[j]) {
+                values[k] = 0.0;
+            }
+        }
+        if (is_dirichlet[i] && !has_diag) {
+            throw std::runtime_error(
+                "reference_apply_dirichlet: Zeile " + std::to_string(i) +
+                " hat keinen Diagonaleintrag im Muster.");
+        }
+    }
+}
+
 void ReferenceHarmonicOperator::apply(const double* x, double* y) const {
     const double* xr = x;
     const double* xi = x + n;

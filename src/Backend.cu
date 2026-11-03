@@ -25,6 +25,7 @@ int     g_refine_levels = 0;
 bool    g_verify_field = false;
 bool    g_no_conductor_penalty = false;
 bool    g_fixed_plate = false;
+bool    g_reference_dirichlet = false;
 double  g_plate_z_mm = -1.0;
 bool    g_no_gauge = false;
 bool    g_use_ams = false;
@@ -92,6 +93,8 @@ void print_usage(const char* exe_name) {
         << "                 Quelle im Scheitelwert (20 A), unabhaengig von HZ.\n"
         << "                 --fixed-plate ist Pflicht, --plate-z=MM setzt die Hoehe.\n"
         << "                 Mit --verify-field: sigma = 0, B_z gegen Biot-Savart.\n"
+        << "                 --reference-dirichlet: A = 0 an allen Randknoten, keine\n"
+        << "                 BEM (Vergleichsproblem fuer Netze mit Luftgebiet).\n"
         << "                 Nicht kombinierbar mit --fem-direct*, --direct,\n"
         << "                 --pc-study, --harmonic-study und den Optionen\n"
         << "                 --harmonic-outer-restart/-inner-tol/-outer-cap/-checks/\n"
@@ -555,6 +558,8 @@ bool select_backend_from_args(int argc, char** argv) {
             g_no_gauge = true;
         } else if (arg == "--fixed-plate") {
             g_fixed_plate = true;
+        } else if (arg == "--reference-dirichlet") {
+            g_reference_dirichlet = true;
         } else if (arg == "--no-conductor-penalty") {
             g_no_conductor_penalty = true;
         } else if (arg == "--verify-field") {
@@ -602,6 +607,13 @@ bool select_backend_from_args(int argc, char** argv) {
         }
         // Alles andere ist positional (Schrittzahl, nobem, noilu) und wird
         // weiterhin in mainloop() ausgewertet.
+    }
+
+    if (g_reference_dirichlet && !(g_use_reference_solver && g_harmonic_solve)) {
+        std::cerr << "[Backend] FEHLER: --reference-dirichlet gilt nur im harmonischen "
+                     "Referenzpfad (--reference --harmonic --fixed-plate).\n";
+        g_args_rejected = true;
+        return false;
     }
 
     // --reference zusammen mit --harmonic: harmonischer Referenzpfad

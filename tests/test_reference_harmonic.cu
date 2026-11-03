@@ -20,6 +20,13 @@
 //      A_i = 0 exakt in einer Iteration.
 //      Gegenprobe: ein Operator mit falschem Kopplungsvorzeichen liefert eine
 //      andere Loesung, und der Vergleich erkennt sie.
+//   6. reference_apply_dirichlet (--reference-dirichlet): n = 40, Maske mit
+//      Randknoten, Zeilen UND Spalten eliminiert; FGMRES auf dem
+//      eliminierten 2n-Blocksystem gegen die dichte komplexe Direktloesung
+//      des reduzierten Systems (1e-10), Dirichlet-Eintraege exakt 0, Muster
+//      und C = (W - K)/w in den Dirichlet-Zeilen exakt null.
+//      Gegenprobe: nur Zeilen zu eliminieren verletzt die Symmetrie, und die
+//      Pruefung meldet das.
 //
 // Braucht keine GPU (setzt bf::g_backend selbst auf CPU).
 // =============================================================================
@@ -32,8 +39,10 @@
 
 #include <cmath>
 #include <complex>
+#include <algorithm>
 #include <cstdio>
 #include <random>
+#include <stdexcept>
 #include <vector>
 
 namespace {
@@ -531,6 +540,202 @@ void test_fgmres() {
     }
 }
 
+// -----------------------------------------------------------------------------
+// 6. Dirichlet-Elimination
+// -----------------------------------------------------------------------------
+double max_asymmetry(int n, const int* ro, const int* ci, const double* v) {
+    std::vector<double> D(static_cast<size_t>(n) * n, 0.0);
+    for (int i = 0; i < n; ++i)
+        for (int k = ro[i]; k < ro[i + 1]; ++k) D[static_cast<size_t>(i) * n + ci[k]] = v[k];
+    double a = 0.0;
+    for (int i = 0; i < n; ++i)
+        for (int j = i + 1; j < n; ++j)
+            a = std::fmax(a, std::fabs(D[static_cast<size_t>(i) * n + j] - D[static_cast<size_t>(j) * n + i]));
+    return a;
+}
+
+void test_dirichlet() {
+    std::puts("\n[6] reference_apply_dirichlet: Elimination von Zeilen UND Spalten");
+
+    const int n = 40;
+    Model m;
+    m.build(n, 2.0 * PI * 50.0, 0.4 / (2.0 * PI * 50.0), 5);
+    std::fill(m.G.begin(), m.G.end(), 0.0);     // reines CSR-Problem, SPD
+
+    std::vector<unsigned char> dir(n, 0);
+    for (int i : {0, 7, 8, 21, 22, 23, 39}) dir[i] = 1;     // darunter Nachbarn
+    int n_free = 0;
+    for (int i = 0; i < n; ++i) if (!dir[i]) ++n_free;
+
+    const size_t nnz = static_cast<size_t>(m.ro[n]);
+    std::vector<double> kv(nnz), wv(nnz);
+    for (size_t k = 0; k < nnz; ++k) { kv[k] = m.kv[k]; wv[k] = m.kv[k] + m.omega * m.cv[k]; }
+    double dsum = 0.0; int dcount = 0;
+    for (int i = 0; i < n; ++i) {
+        if (dir[i]) continue;
+        for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) if (m.ci[k] == i) { dsum += kv[k]; ++dcount; }
+    }
+    const double diag = dsum / dcount;
+    const std::vector<double> kv0 = kv, wv0 = wv;      // Kopien ohne Elimination
+
+    // Fehlerhafte Variante fuer die Gegenprobe: nur Zeilen eliminieren
+    auto rows_only = [&](std::vector<double> v) {
+        for (int i = 0; i < n; ++i) {
+            if (!dir[i]) continue;
+            for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) v[k] = (m.ci[k] == i) ? diag : 0.0;
+        }
+        return v;
+    };
+    const double asym_before = max_asymmetry(n, m.ro.data(), m.ci.data(), kv.data());
+    const std::vector<double> kv_rows = rows_only(kv);
+    const double asym_rows = max_asymmetry(n, m.ro.data(), m.ci.data(), kv_rows.data());
+
+    const std::vector<int> ro_before(m.ro.data(), m.ro.data() + n + 1);
+    const std::vector<int> ci_before(m.ci.data(), m.ci.data() + nnz);
+    reference_apply_dirichlet(n, m.ro.data(), m.ci.data(), kv.data(), dir.data(), diag);
+    reference_apply_dirichlet(n, m.ro.data(), m.ci.data(), wv.data(), dir.data(), diag);
+
+    check(std::equal(ro_before.begin(), ro_before.end(), m.ro.data()) &&
+          std::equal(ci_before.begin(), ci_before.end(), m.ci.data()),
+          "Muster von K und W bleibt unveraendert (gleiches CSR-Muster)");
+    check(max_asymmetry(n, m.ro.data(), m.ci.data(), kv.data()) <= asym_before + 1e-300 &&
+          max_asymmetry(n, m.ro.data(), m.ci.data(), kv.data()) == 0.0,
+          "K nach der Elimination symmetrisch");
+    check_gt(asym_rows, 0.5, "Gegenprobe: nur Zeilen eliminiert -> Asymmetrie wird gemeldet");
+
+    // C = (W - K)/w: in Dirichlet-Zeilen und -Spalten exakt null
+    DeviceArray<double> cv(static_cast<size_t>(nnz));
+    bool c_zero = true;
+    for (int i = 0; i < n; ++i)
+        for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) {
+            cv[k] = (wv[k] - kv[k]) / m.omega;
+            if ((dir[i] || dir[m.ci[k]]) && cv[k] != 0.0) c_zero = false;
+        }
+    check(c_zero, "C = (W - K)/w in den Dirichlet-Zeilen und -Spalten exakt null");
+
+    // Operator mit eliminierten Matrizen; rechte Seite in Dirichlet-Zeilen null
+    DeviceArray<double> kdev(static_cast<size_t>(nnz));
+    for (size_t k = 0; k < nnz; ++k) kdev[k] = kv[k];
+    ReferenceHarmonicOperator op;
+    op.n = n;
+    op.apply_kg = [&](const double* x, double* y) {
+        bf::csr_spmv(n, m.ro.data(), m.ci.data(), kdev.data(), x, y);
+    };
+    op.c_row_offsets = m.ro.data(); op.c_col_indices = m.ci.data(); op.c_values = cv.data();
+    op.omega = m.omega; op.cublas = nullptr; op.allocate_buffers();
+
+    std::vector<double> b(n);
+    for (int i = 0; i < n; ++i) b[i] = dir[i] ? 0.0 : std::sin(0.4 * i) + 0.3;
+    DeviceArray<double> b2(2 * n), x2(2 * n);
+    for (int i = 0; i < n; ++i) { b2[i] = b[i]; b2[n + i] = 0.0; }
+    x2.fill_zero();
+
+    // exakter innerer Loeser: M = W (eliminiert), dicht
+    std::vector<double> M(static_cast<size_t>(n) * n, 0.0);
+    for (int i = 0; i < n; ++i)
+        for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) M[static_cast<size_t>(i) * n + m.ci[k]] = wv[k];
+    auto exact_m = [&](const double* rhs, double* x) {
+        std::vector<double> A = M, r(rhs, rhs + n);
+        gauss_solve(A, r, n);
+        for (int i = 0; i < n; ++i) x[i] = r[i];
+        return 0;
+    };
+    ReferenceFgmresOptions opt;
+    opt.tol = 1e-12; opt.restart = 30; opt.max_iter = 200;
+    const ReferenceFgmresResult res = reference_harmonic_fgmres(
+        [&op](const double* x, double* y) { op.apply(x, y); },
+        reference_harmonic_block_precond(n, exact_m), 2 * n, b2.data(), x2.data(),
+        opt, nullptr, nullptr);
+    check(res.converged, "FGMRES auf dem eliminierten Blocksystem konvergiert");
+
+    // dichte komplexe Direktloesung des REDUZIERTEN Systems (nur freie Zeilen/Spalten)
+    std::vector<int> fi;
+    for (int i = 0; i < n; ++i) if (!dir[i]) fi.push_back(i);
+    std::vector<std::complex<double>> Ar(static_cast<size_t>(n_free) * n_free), zr(n_free);
+    {
+        std::vector<double> Kd(static_cast<size_t>(n) * n, 0.0), Cd(static_cast<size_t>(n) * n, 0.0);
+        for (int i = 0; i < n; ++i)
+            for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) {
+                Kd[static_cast<size_t>(i) * n + m.ci[k]] = kv[k];
+                Cd[static_cast<size_t>(i) * n + m.ci[k]] = cv[k];
+            }
+        for (int a = 0; a < n_free; ++a) {
+            zr[a] = b[fi[a]];
+            for (int c = 0; c < n_free; ++c)
+                Ar[static_cast<size_t>(a) * n_free + c] = std::complex<double>(
+                    Kd[static_cast<size_t>(fi[a]) * n + fi[c]],
+                    m.omega * Cd[static_cast<size_t>(fi[a]) * n + fi[c]]);
+        }
+        gauss_solve(Ar, zr, n_free);
+    }
+    double err = 0.0, ref = 0.0;
+    for (int a = 0; a < n_free; ++a) {
+        err = std::fmax(err, std::abs(std::complex<double>(x2[fi[a]], x2[n + fi[a]]) - zr[a]));
+        ref = std::fmax(ref, std::abs(zr[a]));
+    }
+    double ai_max = 0.0, ar_max = 0.0;
+    for (int a = 0; a < n_free; ++a) {
+        ai_max = std::fmax(ai_max, std::fabs(zr[a].imag()));
+        ar_max = std::fmax(ar_max, std::fabs(zr[a].real()));
+    }
+    std::printf("      n = %d, davon %d Dirichlet, %d FGMRES-Iterationen, "
+                "max|A_i|/max|A_r| = %.2f\n", n, n - n_free, res.iterations, ai_max / ar_max);
+    check_lt(err / ref, 1e-10, "Loesung gleich dichter Direktloesung des reduzierten Systems");
+    double dmax = 0.0;
+    for (int i = 0; i < n; ++i)
+        if (dir[i]) dmax = std::fmax(dmax, std::fmax(std::fabs(x2[i]), std::fabs(x2[n + i])));
+    check(dmax == 0.0, "Dirichlet-Eintraege exakt 0");
+
+    // Gegenprobe der LOESUNG: dieselbe rechte Seite, aber ohne Elimination
+    // (Original-K und -W) -- die Loesung weicht vom reduzierten System ab, und
+    // der Vergleich muss das erkennen.
+    {
+        DeviceArray<double> k_orig(static_cast<size_t>(nnz)), c_orig(static_cast<size_t>(nnz));
+        for (size_t k = 0; k < nnz; ++k) {
+            k_orig[k] = kv0[k];
+            c_orig[k] = (wv0[k] - kv0[k]) / m.omega;
+        }
+        ReferenceHarmonicOperator op2;
+        op2.n = n;
+        op2.apply_kg = [&](const double* x, double* y) {
+            bf::csr_spmv(n, m.ro.data(), m.ci.data(), k_orig.data(), x, y);
+        };
+        op2.c_row_offsets = m.ro.data(); op2.c_col_indices = m.ci.data();
+        op2.c_values = c_orig.data(); op2.omega = m.omega; op2.cublas = nullptr;
+        op2.allocate_buffers();
+        std::vector<double> M2(static_cast<size_t>(n) * n, 0.0);
+        for (int i = 0; i < n; ++i)
+            for (int k = m.ro[i]; k < m.ro[i + 1]; ++k) M2[static_cast<size_t>(i) * n + m.ci[k]] = wv0[k];
+        auto exact2 = [&](const double* rhs, double* x) {
+            std::vector<double> A = M2, r(rhs, rhs + n);
+            gauss_solve(A, r, n);
+            for (int i = 0; i < n; ++i) x[i] = r[i];
+            return 0;
+        };
+        x2.fill_zero();
+        reference_harmonic_fgmres(
+            [&op2](const double* x, double* y) { op2.apply(x, y); },
+            reference_harmonic_block_precond(n, exact2), 2 * n, b2.data(), x2.data(),
+            opt, nullptr, nullptr);
+        double e2 = 0.0;
+        for (int a = 0; a < n_free; ++a)
+            e2 = std::fmax(e2, std::abs(std::complex<double>(x2[fi[a]], x2[n + fi[a]]) - zr[a]));
+        check_gt(e2 / ref, 1e-3, "Gegenprobe: ohne Elimination weicht die Loesung ab");
+    }
+
+    // fehlender Diagonaleintrag in einer Dirichlet-Zeile wird abgewiesen
+    {
+        const int ro2[3] = {0, 1, 2};
+        const int ci2[2] = {1, 0};            // keine Diagonale
+        double v2[2] = {1.0, 1.0};
+        const unsigned char d2[2] = {1, 0};
+        bool thrown = false;
+        try { reference_apply_dirichlet(2, ro2, ci2, v2, d2, 1.0); }
+        catch (const std::runtime_error&) { thrown = true; }
+        check(thrown, "Dirichlet-Zeile ohne Diagonaleintrag wird abgewiesen");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -545,6 +750,7 @@ int main() {
     test_lorentz_invariance();
     test_operator();
     test_fgmres();
+    test_dirichlet();
 
     std::puts("\n========================================================");
     if (g_fail == 0) {

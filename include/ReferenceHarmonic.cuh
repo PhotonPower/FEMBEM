@@ -146,4 +146,17 @@ inline ReferencePrecond reference_harmonic_block_precond(
     };
 }
 
+/// Dirichlet-Elimination auf einer CSR-Matrix (Host-Zeiger).
+///
+/// Setzt die Zeilen UND Spalten der Freiheitsgrade mit is_dirichlet[i] != 0
+/// auf null und die Diagonale auf diag_value. Das Muster bleibt erhalten
+/// (Nullen statt Entfernen), damit K und W dasselbe CSR-Muster behalten und
+/// die Matrix symmetrisch bleibt. Die rechte Seite wird getrennt genullt
+/// (rhs[i] = 0 fuer Dirichlet-Zeilen); wegen A = 0 entsteht kein Beitrag in
+/// die uebrigen Zeilen. Fehlt in einer Dirichlet-Zeile der Diagonaleintrag,
+/// wirft die Funktion std::runtime_error.
+void reference_apply_dirichlet(int n, const int* row_offsets, const int* col_indices,
+                               double* values, const unsigned char* is_dirichlet,
+                               double diag_value);
+
 #endif // REFERENCE_HARMONIC_CUH
