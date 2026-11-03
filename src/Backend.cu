@@ -95,8 +95,12 @@ void print_usage(const char* exe_name) {
         << "                 Nicht kombinierbar mit --fem-direct*, --direct,\n"
         << "                 --pc-study, --harmonic-study und den Optionen\n"
         << "                 --harmonic-outer-restart/-inner-tol/-outer-cap/-checks/\n"
-        << "                 -inner-direct/-field-dump des Nedelec-Pfads.\n"
-        << "                 Details in include/ReferenceHarmonic.cuh.\n\n"
+        << "                 -inner-direct des Nedelec-Pfads.\n"
+        << "                 --harmonic-field-dump=DATEI schreibt A und B je Hexaeder\n"
+        << "                 (Schwerpunkt, B = rot A der Q1-Felder) im Format des\n"
+        << "                 BEM-FEM-Dumps; ohne dessen FEM-System-Dateien.\n"
+        << "                 Details in include/ReferenceHarmonic.cuh,\n"
+        << "                 include/ReferenceFieldDump.cuh.\n\n"
         << "Vorkonditionierung:\n"
         << "  --ams          Auxiliary-Space Maxwell Solver (Hiptmair und Xu) statt\n"
         << "                 ILU(0) fuer den FEM-Block. Die beiden Hilfsprobleme\n"
@@ -356,8 +360,7 @@ bool select_backend_from_args(int argc, char** argv) {
         if (arg.rfind("--harmonic-outer-restart=", 0) == 0 ||
             arg.rfind("--harmonic-inner-tol=", 0) == 0 ||
             arg.rfind("--harmonic-outer-cap=", 0) == 0 ||
-            arg == "--harmonic-checks" || arg == "--harmonic-inner-direct" ||
-            arg.rfind("--harmonic-field-dump=", 0) == 0) {
+            arg == "--harmonic-checks" || arg == "--harmonic-inner-direct") {
             nedelec_harmonic_opts += " " + arg.substr(0, arg.find('='));
         }
 

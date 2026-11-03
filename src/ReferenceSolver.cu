@@ -19,6 +19,7 @@
 #include "NodalMaxwell.cuh"
 #include "PhysicalObject.h"
 #include "ReferenceHarmonic.cuh"
+#include "ReferenceFieldDump.cuh"
 #include "TransientSolver.cuh"
 
 #include <algorithm>
@@ -1978,6 +1979,31 @@ int run_reference_harmonic(Mesh& mesh,
                   << "[Ref-Harm] ||A_r|| = " << nr << ", ||A_i|| = " << ni
                   << ", ||A_i||/||A_r|| = " << (nr > 0.0 ? ni / nr : 0.0)
                   << std::defaultfloat << "\n";
+    }
+
+    // --- Felddump (--harmonic-field-dump=DATEI), Format des BEM-FEM-Dumps.
+    // Koerperkennung: 1 Platte, 2 Innenspule (sources[0]), 3 Aussenspule.
+    if (!bf::harmonic_field_dump().empty()) {
+        d_x2.prefetch_to_host();
+        mesh.nodes_current.prefetch_to_host();
+        mesh.hex_nodes.prefetch_to_host();
+        bf::sync();
+        std::vector<int> body(mesh.num_hexes, 0);
+        for (int h : plate.get_hex_indices()) body[h] = 1;
+        if (sources.size() > 0) for (int h : sources[0]->get_hex_indices()) body[h] = 2;
+        if (sources.size() > 1) for (int h : sources[1]->get_hex_indices()) body[h] = 3;
+        if (write_reference_field_dump(bf::harmonic_field_dump(), mesh.nodes_current.data(),
+                                       mesh.hex_nodes.data(), mesh.num_hexes, body.data(),
+                                       d_Ar, d_Ai)) {
+            std::cout << "[Ref-Harm] Feld je Element nach " << bf::harmonic_field_dump()
+                      << " geschrieben (" << mesh.num_hexes << " Elemente, B = rot A "
+                         "der Q1-Felder am Schwerpunkt).\n";
+        } else {
+            std::cout << "[Ref-Harm] WARNUNG: " << bf::harmonic_field_dump()
+                      << " laesst sich nicht schreiben.\n";
+        }
+        d_x2.prefetch_to_device();
+        bf::sync();
     }
 
     // --- Feldpruefung bei sigma = 0: B_z(A_r) auf der Achse gegen Biot-Savart,
