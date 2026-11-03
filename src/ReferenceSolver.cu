@@ -1561,6 +1561,49 @@ int run_reference_solver(Mesh& mesh,
 // Netz, Randtopologie, BEM, LU von V und ILU(0) sind dieselben Bausteine wie
 // in der Zeitschleife oben; sie werden hier genau einmal gebaut, weil die
 // Platte fest steht (--fixed-plate ist Pflicht).
+namespace {
+
+/// --reference-dump-a: eine Zeile je Knoten, der zu mindestens einem Element mit
+/// component_id 1, 2 oder 3 gehoert. comp = kleinste Leiter-ID der angrenzenden
+/// Elemente. Koordinaten aus nodes_current (SI). Werte mit %.17g.
+bool write_reference_a_dump(const std::string& path, const Mesh& mesh,
+                            const double* Ar, const double* Ai)
+{
+    mesh.hex_component_ids.prefetch_to_host();
+    mesh.hex_nodes.prefetch_to_host();
+    mesh.nodes_current.prefetch_to_host();
+    bf::sync();
+    std::vector<int> comp(mesh.num_nodes, 0);
+    for (size_t h = 0; h < mesh.num_hexes; ++h) {
+        const int id = mesh.hex_component_ids[h];
+        if (id < 1 || id > 3) continue;
+        const Hexahedron H = mesh.hex_nodes[h];
+        for (int n = 0; n < 8; ++n) {
+            int& c = comp[H.v[n]];
+            if (c == 0 || id < c) c = id;
+        }
+    }
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return false;
+    std::fprintf(f, "x_m,y_m,z_m,comp,Ar_x,Ar_y,Ar_z,Ai_x,Ai_y,Ai_z\n");
+    size_t rows = 0;
+    for (size_t i = 0; i < mesh.num_nodes; ++i) {
+        if (comp[i] == 0) continue;
+        const double3 p = mesh.nodes_current[i];
+        std::fprintf(f, "%.17g,%.17g,%.17g,%d,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g\n",
+                     p.x, p.y, p.z, comp[i],
+                     Ar[3 * i + 0], Ar[3 * i + 1], Ar[3 * i + 2],
+                     Ai[3 * i + 0], Ai[3 * i + 1], Ai[3 * i + 2]);
+        ++rows;
+    }
+    std::fclose(f);
+    std::cout << "[Ref-Harm] A an " << rows << " Leiterknoten nach " << path
+              << " geschrieben" << std::endl;
+    return true;
+}
+
+} // namespace
+
 int run_reference_harmonic(Mesh& mesh,
                            DeviceArray<MaterialProperties>& d_materials,
                            PhysicalObject& plate,
@@ -2056,6 +2099,15 @@ int run_reference_harmonic(Mesh& mesh,
                   << (amax_dir == 0.0 ? "  (exakt null)" : "  ABWEICHUNG VON NULL")
                   << ", max|A| auf den freien Zeilen = " << amax_free
                   << std::defaultfloat << std::endl;
+    }
+
+    if (!bf::reference_dump_a().empty()) {
+        d_x2.prefetch_to_host();
+        bf::sync();
+        if (!write_reference_a_dump(bf::reference_dump_a(), mesh, d_Ar, d_Ai)) {
+            throw std::runtime_error("--reference-dump-a: Datei " + bf::reference_dump_a() +
+                                     " laesst sich nicht schreiben.");
+        }
     }
 
     // --- Feldpruefung bei sigma = 0: B_z(A_r) auf der Achse gegen Biot-Savart,

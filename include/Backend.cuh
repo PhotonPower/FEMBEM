@@ -108,6 +108,11 @@ extern bool g_no_conductor_penalty;
 /// "Dirichlet" der Abschneidestudie (docs/design/reference-harmonic-air.md).
 extern bool g_reference_dirichlet;
 
+/// --reference-dump-a=DATEI. Nur im harmonischen Referenzpfad: A_r und A_i an
+/// allen Leiterknoten als CSV (x_m,y_m,z_m,comp,Ar_x,..,Ai_z), Werte mit %.17g.
+/// Auswertung mit tools/compare_a.py. Leer = keine Ausgabe.
+extern std::string g_reference_dump_a;
+
 /// --fixed-plate. Platte nicht bewegen. Voraussetzung fuer die saubere
 /// Q-Messung: bei freier Bewegung legt die Platte in EINER Kraftperiode rund
 /// 10 mm zurueck, in einem Feld, das darueber stark abfaellt. Ein
@@ -471,6 +476,7 @@ inline bool verify_field()          { return g_verify_field; }
 inline bool no_conductor_penalty()  { return g_no_conductor_penalty; }
 inline bool   fixed_plate()         { return g_fixed_plate; }
 inline bool   reference_dirichlet() { return g_reference_dirichlet; }
+inline const std::string& reference_dump_a() { return g_reference_dump_a; }
 inline double plate_z_mm()          { return g_plate_z_mm; }
 // --fem-direct zaehlt hier mit: dieser Pfad entfernt den Curl-Curl-Nullraum
 // durch eine kleine Leitfaehigkeit in der Luft, nicht durch Eichung. Die

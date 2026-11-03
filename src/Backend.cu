@@ -26,6 +26,7 @@ bool    g_verify_field = false;
 bool    g_no_conductor_penalty = false;
 bool    g_fixed_plate = false;
 bool    g_reference_dirichlet = false;
+std::string g_reference_dump_a;       // leer = keine Ausgabe
 double  g_plate_z_mm = -1.0;
 bool    g_no_gauge = false;
 bool    g_use_ams = false;
@@ -95,6 +96,8 @@ void print_usage(const char* exe_name) {
         << "                 Mit --verify-field: sigma = 0, B_z gegen Biot-Savart.\n"
         << "                 --reference-dirichlet: A = 0 an allen Randknoten, keine\n"
         << "                 BEM (Vergleichsproblem fuer Netze mit Luftgebiet).\n"
+        << "                 --reference-dump-a=DATEI: A_r, A_i an allen Leiterknoten\n"
+        << "                 als CSV (tools/compare_a.py vergleicht zwei Laeufe).\n"
         << "                 Nicht kombinierbar mit --fem-direct*, --direct,\n"
         << "                 --pc-study, --harmonic-study und den Optionen\n"
         << "                 --harmonic-outer-restart/-inner-tol/-outer-cap/-checks/\n"
@@ -560,6 +563,8 @@ bool select_backend_from_args(int argc, char** argv) {
             g_fixed_plate = true;
         } else if (arg == "--reference-dirichlet") {
             g_reference_dirichlet = true;
+        } else if (arg.rfind("--reference-dump-a=", 0) == 0) {
+            g_reference_dump_a = arg.substr(19);
         } else if (arg == "--no-conductor-penalty") {
             g_no_conductor_penalty = true;
         } else if (arg == "--verify-field") {
@@ -609,9 +614,10 @@ bool select_backend_from_args(int argc, char** argv) {
         // weiterhin in mainloop() ausgewertet.
     }
 
-    if (g_reference_dirichlet && !(g_use_reference_solver && g_harmonic_solve)) {
-        std::cerr << "[Backend] FEHLER: --reference-dirichlet gilt nur im harmonischen "
-                     "Referenzpfad (--reference --harmonic --fixed-plate).\n";
+    if ((g_reference_dirichlet || !g_reference_dump_a.empty()) &&
+        !(g_use_reference_solver && g_harmonic_solve)) {
+        std::cerr << "[Backend] FEHLER: --reference-dirichlet und --reference-dump-a gelten "
+                     "nur im harmonischen Referenzpfad (--reference --harmonic --fixed-plate).\n";
         g_args_rejected = true;
         return false;
     }
