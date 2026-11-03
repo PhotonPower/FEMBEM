@@ -189,6 +189,7 @@ set(SOURCES
     src/DenseLinalg.cu          # dichte LU (cuSOLVER / eigene)
     src/ReferenceSolver.cu      # Baseline Knoten-FEM + vollbesetzte BEM
     src/ReferenceHarmonic.cu    # Referenzloeser im Frequenzbereich (FGMRES)
+    src/ReferenceFieldDump.cu   # Felddump des harmonischen Referenzpfads
     src/MeshRefinement.cu       # uniforme Verfeinerung (--refine=N)
     src/BiotSavart.cpp          # analytische Referenz (--verify-field)
     src/FieldVerification.cpp   # gemeinsamer Vergleich beider Loeserpfade
@@ -841,6 +842,14 @@ if (FEMBEM_OPENMP_AVAILABLE)
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${FEMBEM_OMP_NVCC_FLAGS}>)
 endif()
 
+# Felddump des harmonischen Referenzpfads: Rundlauf (host)
+add_executable(test_reference_field_dump
+    tests/test_reference_field_dump.cu
+    src/ReferenceFieldDump.cu
+)
+target_include_directories(test_reference_field_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_reference_field_dump PRIVATE CUDA::cudart)
+
 # Unsymmetrie-Schaetzer
 add_executable(test_asymmetry_estimator tests/test_asymmetry_estimator.cu)
 target_include_directories(test_asymmetry_estimator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -1006,6 +1015,8 @@ set_tests_properties(test_dense_direct PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_harmonic_phase_average COMMAND test_harmonic_phase_average)
 add_test(NAME test_reference_harmonic COMMAND test_reference_harmonic)
 set_tests_properties(test_reference_harmonic PROPERTIES LABELS "host" TIMEOUT 120)
+add_test(NAME test_reference_field_dump COMMAND test_reference_field_dump)
+set_tests_properties(test_reference_field_dump PROPERTIES LABELS "host" TIMEOUT 120)
 set_tests_properties(test_harmonic_phase_average PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_preconditioner_study COMMAND test_block_preconditioner_study)
 set_tests_properties(test_block_preconditioner_study PROPERTIES LABELS "host" TIMEOUT 600)
@@ -1106,6 +1117,7 @@ add_custom_target(host_tests DEPENDS
     test_dense_direct
     test_harmonic_phase_average
     test_reference_harmonic
+    test_reference_field_dump
     test_block_preconditioner_study
     test_nedelec_prism
     test_nedelec_tet
@@ -1167,9 +1179,11 @@ if (_fembem_py_numpy EQUAL 0)
                      ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk)
     add_test(NAME tools_team28_axisymmetric_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_axisymmetric.py)
+    add_test(NAME tools_compare_fields_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_compare_fields.py)
     set_tests_properties(tools_meshcheck_tests tools_check_map_tests tools_standard_mesh
                          tools_legacy_mesh tools_standard_mesh_map tools_legacy_mesh_map
-                         tools_team28_axisymmetric_tests
+                         tools_team28_axisymmetric_tests tools_compare_fields_tests
                          PROPERTIES LABELS "tools" TIMEOUT 120)
     message(STATUS "FEMBEM: Tests tools  aktiv (${Python3_EXECUTABLE})")
 else()

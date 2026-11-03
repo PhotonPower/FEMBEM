@@ -6,6 +6,22 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Feldvergleich Referenzpfad gegen BEM-FEM harmonisch
+  (`docs/design/field-comparison-reference-vs-bemfem.md`). Neu:
+  `--reference --harmonic --fixed-plate --harmonic-field-dump=DATEI`
+  schreibt A und B = rot A (Q1-Felder, Schwerpunkt) je Hexaeder im Format des
+  BEM-FEM-Dumps (eigener Schreiber `src/ReferenceFieldDump.cu`, Host-Test
+  `test_reference_field_dump` mit Gegenproben), und `tools/compare_fields.py`
+  vergleicht zwei Dumps je Körper, Phase und Randtiefe (Projektion, L2-Fehler,
+  Betragsverhältnis, B_φ-Anteil; optional Biot-Savart und Ringmodell; Test
+  `tools/tests/test_compare_fields.py`). Befund auf `--scale 1.0`, 2 Hz:
+  BEM-FEM-Feld in der Platte praktisch unkorreliert zur Referenz (Projektion
+  +0,035, 3,7-facher Betrag), Spulen +0,87 / +0,52 bei 3-fachem Betrag; der
+  Fehler sitzt schon im Spuleninneren, wächst im Betrag zum Rand, ist
+  frequenzabhängig (Referenz nicht) und hat im Spulenkörper einen um zwei bis
+  drei Größenordnungen zu großen Imaginärteil. `--scale 1.5` passt nicht in
+  den GPU-Speicher (59,7 GiB gegen 48 GiB). Produktiver Pfad und Löser
+  unverändert.
 - `tools/reference_series.py`: Netzserie für den harmonischen
   Referenzlöser. Erzeugt Netze mit `team28_hex.py`, schätzt vor jedem Lauf
   Randknoten und Speicher der dichten BEM, rechnet, tabelliert und endet
