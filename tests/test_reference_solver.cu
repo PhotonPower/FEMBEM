@@ -16,7 +16,15 @@
 //      auf der KUGEL (glatt) mit Konvergenzordnung, und auf dem WUERFEL, um
 //      die Kantenbeschraenkung zu dokumentieren statt sie zu verschweigen.
 //   5. Dichte LU: A x = b gegen eine bekannte Loesung
+//   6. NAHE FLAECHEN: geschlossener flacher Quader 1 x 1 x d mit Q1-Panels der
+//      Kantenlaenge h; Innengleichung (1/2 I + K) u = V q mit u = x und u = z
+//      (harmonisch, q = n_x bzw. n_z) fuer d/h = 4, 2, 1, 0,5. Zeigt, wie die
+//      Knoten-BEM mit gegenueberliegenden Flaechen im Abstand der Zellweite
+//      umgeht -- das ist die Lage der Kopplungsflaeche bei B_rille und im
+//      Spalt von B_end (docs/design/reference-harmonic-air.md).
+//      Gegenprobe: falsches Vorzeichen bei 1/2 I wird erkannt.
 //
+
 // Braucht keine GPU (setzt bf::g_backend selbst auf CPU).
 // =============================================================================
 
@@ -26,6 +34,7 @@
 #include "NodalHexahedron.cuh"
 #include "NodalMaxwell.cuh"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdio>
@@ -199,7 +208,8 @@ double3 node_normal(const Surface& s, int i) {
     return scale3(1.0 / norm3(acc), acc);
 }
 
-void assemble_VK(const Surface& s, std::vector<double>& V, std::vector<double>& K) {
+void assemble_VK(const Surface& s, std::vector<double>& V, std::vector<double>& K,
+                 int force_subdivisions = 0) {
     const int N = static_cast<int>(s.nodes.size());
     const int NP = static_cast<int>(s.panels.size());
     V.assign(static_cast<size_t>(N) * N, 0.0);
@@ -220,7 +230,9 @@ void assemble_VK(const Surface& s, std::vector<double>& V, std::vector<double>& 
                 const double3 c = nodal_bem_panel_center(nd);
                 const double  d = norm3(sub3(x, c));
                 const double  h = nodal_bem_panel_size(nd);
-                nodal_bem_panel_regular(x, nd, 1.0, nodal_bem_subdivisions(d, h), lV, lK);
+                nodal_bem_panel_regular(x, nd, 1.0,
+                    force_subdivisions > 0 ? force_subdivisions : nodal_bem_subdivisions(d, h),
+                    lV, lK);
             }
             for (int k = 0; k < 4; ++k) {
                 V[static_cast<size_t>(i) * N + s.panels[p][k]] += lV[k];
@@ -543,6 +555,138 @@ void test_nodal_maxwell() {
     }
 }
 
+// -----------------------------------------------------------------------------
+// 6. Nahe Flaechen: flacher geschlossener Quader
+// -----------------------------------------------------------------------------
+/// Quader [-1/2,1/2]^2 x [-d/2,d/2]; n x n Panels auf Deckel und Boden (h = 1/n),
+/// n x m auf den Seiten (m Schichten der Dicke d/m).
+Surface make_box(int n, double d, int m) {
+    Surface s;
+    std::map<std::array<long long, 3>, int> lut;
+    auto add = [&](double3 p) {
+        auto q = [](double v) { return static_cast<long long>(std::llround(v * 1e9)); };
+        std::array<long long, 3> k{ q(p.x), q(p.y), q(p.z) };
+        auto it = lut.find(k);
+        if (it != lut.end()) return it->second;
+        const int id = static_cast<int>(s.nodes.size());
+        s.nodes.push_back(p); lut[k] = id; return id;
+    };
+    for (int axis = 0; axis < 3; ++axis) {
+        for (int sgn = -1; sgn <= 1; sgn += 2) {
+            // (a, b) wie in make_surface: axis 0: (y, z), axis 1: (z, x), axis 2: (x, y)
+            const int na = (axis == 0) ? n : (axis == 1 ? m : n);
+            const int nb = (axis == 0) ? m : (axis == 1 ? n : n);
+            const double La = (axis == 0) ? 1.0 : (axis == 1 ? d : 1.0);
+            const double Lb = (axis == 0) ? d : (axis == 1 ? 1.0 : 1.0);
+            for (int i = 0; i < na; ++i) {
+                for (int j = 0; j < nb; ++j) {
+                    const double a0 = -0.5 * La + La * i / na, a1 = -0.5 * La + La * (i + 1) / na;
+                    const double b0 = -0.5 * Lb + Lb * j / nb, b1 = -0.5 * Lb + Lb * (j + 1) / nb;
+                    const double aa[4] = { a0, a1, a1, a0 };
+                    const double bb[4] = { b0, b0, b1, b1 };
+                    std::array<int, 4> P{};
+                    for (int k = 0; k < 4; ++k) {
+                        const int kk = (sgn > 0) ? k : 3 - k;
+                        double3 p{};
+                        if (axis == 0) p = make_double3(sgn * 0.5, aa[kk], bb[kk]);
+                        if (axis == 1) p = make_double3(bb[kk], sgn * 0.5, aa[kk]);
+                        if (axis == 2) p = make_double3(aa[kk], bb[kk], sgn * 0.5 * d);
+                        P[k] = add(p);
+                    }
+                    s.panels.push_back(P);
+                }
+            }
+        }
+    }
+    return s;
+}
+
+/// Relatives Residuum von (sign*1/2 I + K) u = V q fuer u = Koordinate axis
+/// (q = n_axis, an Kanten gemittelte Knotennormale).
+double inner_residual_box(const Surface& s, int axis, double half_sign = 1.0,
+                          int force_subdivisions = 0) {
+    const int N = static_cast<int>(s.nodes.size());
+    std::vector<double> V, K;
+    assemble_VK(s, V, K, force_subdivisions);
+    std::vector<double> lhs(N), rhs(N), u(N), q(N);
+    for (int i = 0; i < N; ++i) {
+        const double3 p = s.nodes[i];
+        const double3 nrm = node_normal(s, i);
+        u[i] = (axis == 0) ? p.x : (axis == 1 ? p.y : p.z);
+        q[i] = (axis == 0) ? nrm.x : (axis == 1 ? nrm.y : nrm.z);
+    }
+    for (int i = 0; i < N; ++i) {
+        double a = half_sign * 0.5 * u[i], b = 0.0;
+        for (int j = 0; j < N; ++j) {
+            a += K[static_cast<size_t>(i) * N + j] * u[j];
+            b += V[static_cast<size_t>(i) * N + j] * q[j];
+        }
+        lhs[i] = a; rhs[i] = b;
+    }
+    return rel_l2(lhs, rhs);
+}
+
+void test_near_surfaces() {
+    std::puts("\n[6] NAHE FLAECHEN: flacher Quader 1 x 1 x d, h = 1/n, Innengleichung");
+    std::puts("     (1/2 I + K) u = V q mit u = x (parallel zu den nahen Flaechen) und");
+    std::puts("     u = z (senkrecht dazu); q = n_x bzw. n_z.");
+
+    const int n = 8;                          // h = 0,125
+    const double ratios[4] = { 4.0, 2.0, 1.0, 0.5 };
+    double res_x[4], res_z[4];
+    for (int t = 0; t < 4; ++t) {
+        const double d = ratios[t] / n;
+        const int m = std::max(1, static_cast<int>(std::lround(ratios[t])));
+        const Surface s = make_box(n, d, m);
+        res_x[t] = inner_residual_box(s, 0);
+        res_z[t] = inner_residual_box(s, 2);
+        std::printf("      d/h = %3.1f (m = %d Schichten, %4d Knoten):  u = x %.3e   u = z %.3e\n",
+                    ratios[t], m, static_cast<int>(s.nodes.size()), res_x[t], res_z[t]);
+    }
+    // Schwellen aus der ersten Messung (d/h = 1: u = x 0,300, u = z 0,0377), mit
+    // Spielraum von rund 15 % bzw. 30 %: sie sollen eine Verschlechterung der
+    // Nahfeldquadratur erkennen, nicht die Rundung der Messung. Der Wert fuer
+    // u = x ist keine Aussage ueber die Quadratur: bei d/h <= 1 sind ALLE Knoten
+    // der Seitenflaechen Kantenknoten mit gemittelter Normale, die stetige
+    // Neumann-Spur (Abschnitt 4b) dominiert. u = z misst die Nahfeldkopplung
+    // der gegenueberliegenden grossen Flaechen.
+    const double THRESHOLD_X = 0.35, THRESHOLD_Z = 0.05;
+    check_lt(res_x[2], THRESHOLD_X, "d/h = 1, u = x: Residuum unter der gemessenen Schwelle");
+    check_lt(res_z[2], THRESHOLD_Z, "d/h = 1, u = z: Residuum unter der gemessenen Schwelle");
+    check_lt(res_z[3], THRESHOLD_Z, "d/h = 0,5, u = z: Residuum unter der Schwelle");
+
+    // Gegenprobe: falsches Vorzeichen bei 1/2 I
+    const Surface s1 = make_box(n, 1.0 / n, 1);
+    const double bad = inner_residual_box(s1, 2, -1.0);
+    std::printf("      Gegenprobe (Vorzeichen von 1/2 I vertauscht, d/h = 1): %.3e\n", bad);
+    check(bad > 5.0 * res_z[2], "Gegenprobe: falsches Vorzeichen bei 1/2 I wird erkannt");
+
+    // Nahfeldquadratur: die automatische Unterteilung (nodal_bem_subdivisions,
+    // hoechstens 5) muss mit einer feinen Referenz (immer 9) uebereinstimmen.
+    // Gemessen: bei d/h = 1 und 0,5 auf 1e-6 bzw. besser, ab d/h ~ 0,1 weicht sie
+    // ab (0,1: 3 %, 0,05: 9 %, 0,02: Faktor 4). Das Residuum bei d/h = 1 kommt
+    // also NICHT von der Quadratur.
+    for (double r : {1.0, 0.5}) {
+        const Surface sq = make_box(n, r / n, 1);
+        const double a = inner_residual_box(sq, 2, 1.0, 0);
+        const double f = inner_residual_box(sq, 2, 1.0, 9);
+        std::printf("      Nahfeldquadratur d/h = %.1f, u = z: automatisch %.8e, immer 9 %.8e\n",
+                    r, a, f);
+        check_lt(std::fabs(a - f) / f, 1e-4,
+                 "automatische Nahfeld-Unterteilung gleich feiner Referenz (1e-4)");
+    }
+    // Gegenprobe: ohne Unterteilung (immer 1) ist der Abstand d/h = 0,2 deutlich
+    // falsch; die Pruefung oben kann also scheitern.
+    {
+        const Surface sq = make_box(n, 0.2 / n, 1);
+        const double c = inner_residual_box(sq, 2, 1.0, 1);
+        const double f = inner_residual_box(sq, 2, 1.0, 9);
+        std::printf("      d/h = 0.2, u = z: immer 1 %.8e, immer 9 %.8e\n", c, f);
+        check(std::fabs(c - f) / f > 0.5,
+              "Gegenprobe: grobe Nahfeldquadratur (immer 1) weicht bei d/h = 0,2 um > 50 % ab");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -559,6 +703,7 @@ int main() {
     test_bie_cube_documents_limit();
     test_dense_lu();
     test_nodal_maxwell();
+    test_near_surfaces();
 
     std::puts("\n========================================================");
     if (g_fail == 0) {
