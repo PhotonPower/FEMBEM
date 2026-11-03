@@ -31,6 +31,7 @@ tools/import_bdf.py (Prismen-Affinitaet, Einheiten) und laesst beide
 Importeure dieses Modul benutzen.
 """
 import argparse
+import json
 import sys
 from collections import namedtuple
 
@@ -100,6 +101,25 @@ def read_vtk(path):
             raise ValueError(f"{path}: SCALARS ohne LOOKUP_TABLE wird nicht unterstuetzt")
         comp = np.array(tokens[k + 2:k + 2 + n_cells], dtype=float).astype(int)
     return Mesh(pts, cells, types, comp)
+
+
+def read_zones(path, n_cells=None):
+    """Zonenkennung je Zelle aus NAME.zones.json (tools/gmsh/team28_hex_air.py).
+
+    Wirft ValueError, wenn das Format nicht stimmt oder die Zahl der Zonen
+    nicht zu n_cells passt: eine Zonendatei, die nicht zur VTK gehoert,
+    wuerde Zellen der falschen Zone loeschen.
+    """
+    with open(path) as f:
+        data = json.load(f)
+    if data.get("version") != 1 or "zone" not in data:
+        raise ValueError(f"{path}: keine zones.json der Version 1")
+    zone = np.array(data["zone"], dtype=np.int64)
+    if data.get("n_cells") != len(zone):
+        raise ValueError(f"{path}: n_cells = {data.get('n_cells')}, aber {len(zone)} Zonen")
+    if n_cells is not None and len(zone) != n_cells:
+        raise ValueError(f"{path}: {len(zone)} Zonen fuer {n_cells} Zellen")
+    return zone
 
 
 def _by_type(mesh, t):

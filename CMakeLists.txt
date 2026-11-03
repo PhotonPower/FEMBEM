@@ -1142,8 +1142,10 @@ if (_fembem_py_numpy EQUAL 0)
                      --require-hex --separate-bodies)
     add_test(NAME tools_team28_axisymmetric_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_axisymmetric.py)
+    add_test(NAME tools_team28_hex_air_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_hex_air.py)
     set_tests_properties(tools_meshcheck_tests tools_check_map_tests tools_standard_mesh
-                         tools_team28_axisymmetric_tests
+                         tools_team28_axisymmetric_tests tools_team28_hex_air_tests
                          PROPERTIES LABELS "tools" TIMEOUT 120)
     message(STATUS "FEMBEM: Tests tools  aktiv (${Python3_EXECUTABLE})")
 else()
