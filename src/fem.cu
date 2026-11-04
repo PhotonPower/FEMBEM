@@ -1166,6 +1166,20 @@ int mainloop(int argc, char** argv) {
         d_bem_to_fem.prefetch_to_device();
         d_bem_sign.prefetch_to_device();
 
+        // Randquads in BAUMREIHENFOLGE fuer die T-Kopplung. bem_to_fem und
+        // bem_sign sind permutiert (Position pos gehoert zum Quad perm[pos]);
+        // G und D greifen ueber perm auf die Geometrie zu. Der T-Kernel liest
+        // dagegen faces[pos] -- ohne diese Kopie waere seine Geometrie die des
+        // Quads pos statt perm[pos] (Befund b in docs/design/bem-row-check.md).
+        DeviceArray<Mesh::QuadFace> d_bem_faces(skip_bem_setup ? 0u : static_cast<size_t>(mesh.num_boundary_faces));
+        if (!skip_bem_setup) {
+            mesh.boundary_faces.prefetch_to_host();
+            d_bem_faces.prefetch_to_host();
+            const std::vector<Mesh::QuadFace> faces_bem = bem_ordered_boundary_faces(mesh, bem_map);
+            for (size_t pos = 0; pos < faces_bem.size(); ++pos) d_bem_faces[pos] = faces_bem[pos];
+            d_bem_faces.prefetch_to_device();
+        }
+
         // Hierarchische Blockstruktur. Haengt nur an der Baumtopologie und den
         // Zulaessigkeitsradien, nicht an den Knotenkoordinaten der aktuellen
         // Zeitschicht -- deshalb einmalig vor der Zeitschleife.
@@ -1917,7 +1931,7 @@ int mainloop(int argc, char** argv) {
                 // bewegenden Speicher -- der Zeiger selbst bleibt aber gueltig,
                 // daher genuegt ein Aufruf pro (neu konstruiertem) op.
                 op.setup_bem_mesh(static_cast<int>(mesh.num_boundary_faces),
-                                  mesh.boundary_faces.data(), mesh.nodes_current.data());
+                                  d_bem_faces.data(), mesh.nodes_current.data());
             }
             for (size_t g = 0; g < d_cohomology_vectors.size(); ++g) {
                 // --nocohomology: Projektor nicht installieren. Begruendung und

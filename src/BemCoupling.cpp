@@ -171,3 +171,12 @@ std::vector<BemBlockPair> build_block_pairs(const ClusterTree& tree, double eta)
     }
     return out;
 }
+
+std::vector<Mesh::QuadFace> bem_ordered_boundary_faces(const Mesh& mesh, const BemCouplingMap& map)
+{
+    std::vector<Mesh::QuadFace> out(map.perm.size());
+    for (size_t pos = 0; pos < map.perm.size(); ++pos) {
+        out[pos] = mesh.boundary_faces[static_cast<size_t>(map.perm[pos])];
+    }
+    return out;
+}

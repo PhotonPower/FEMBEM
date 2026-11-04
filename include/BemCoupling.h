@@ -126,4 +126,12 @@ std::vector<BemBlockPair> build_block_pairs(const ClusterTree& tree, double eta)
 // Falschrechnung zu.
 BemCouplingMap build_bem_coupling_map(const Mesh& mesh, const ClusterTree& tree);
 
+// Randquads in BEM-Reihenfolge (Baumreihenfolge): Eintrag pos ist
+// mesh.boundary_faces[map.perm[pos]]. Gehoert zusammen mit bem_to_fem/bem_sign,
+// die ebenfalls an der Position pos stehen: Freiheitsgrade pos*4+e sind die
+// Kanten des Quads perm[pos]. Wer die Geometrie eines Quads pro BEM-Position
+// braucht (die T-Kopplung), muss diese Reihenfolge benutzen und nicht
+// mesh.boundary_faces direkt.
+std::vector<Mesh::QuadFace> bem_ordered_boundary_faces(const Mesh& mesh, const BemCouplingMap& map);
+
 #endif // BEM_COUPLING_H

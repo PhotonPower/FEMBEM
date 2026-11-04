@@ -144,7 +144,8 @@ private:
     std::vector<DenseBlock> dense_blocks;
     std::vector<AcaBlock> aca_blocks;
 
-    // BEM Blöcke fuer den Double-Layer-Anteil (H_BEM = 0.5*T + D_BEM).
+    // BEM Blöcke fuer den Double-Layer-Anteil (H_BEM = -0.5*T + D_BEM; die K-Zeile
+    // wirkt mit -H_BEM, siehe apply_physical).
     // D_BEM wirkt auf die (gegatherte) Randspur von A, genau wie G_BEM auf K
     // wirkt -- daher dieselbe DenseBlock/AcaBlock-Struktur, nur separat
     // gespeichert, weil es ein anderer Integralkern ist (siehe
@@ -329,7 +330,7 @@ private:
     // Der bisherige Vorkonditionierer ist blockdiagonal, P = diag(A~, I). Er
     // ignoriert die Kopplungsbloecke vollstaendig -- physikalisch entkoppelt er
     // Leiter und Aussenraum. Weil die Kopplung bauartbedingt UNSYMMETRISCH ist
-    // (oben rechts steht -T, unten links -0.5*T - D_BEM; die beiden koennen per
+    // (oben rechts steht -T, unten links +0.5*T - D_BEM; die beiden koennen per
     // Definition nicht zueinander transponiert sein), muss das Krylov-Verfahren
     // die Stetigkeit der Tangentialkomponente allein ueber Matrix-Vektor-
     // Produkte rekonstruieren. Genau dort sitzt das Residuum-Plateau.
@@ -340,7 +341,7 @@ private:
     //         (  0   S~ )                 (        S~^-1 r_K            )
     //
     // Das exakte Schur-Komplement waere
-    //     S = mu_0*G_BEM - (-0.5*T - D_BEM) * A^-1 * (-T).
+    //     S = mu_0*G_BEM - (+0.5*T - D_BEM) * A^-1 * (-T).
     // Bewiesen (Hiptmair, Steinbach, Heuer) und in der BEM-FEM-Praxis etabliert
     // ist die spektrale Aequivalenz des Single-Layer-Operators zum exakten
     // Schur-Komplement, also
@@ -518,7 +519,9 @@ public:
     void setup_bem_coupling(int num_bem_dofs_in, const int* d_map, const int* d_sign);
 
     // Geometrie fuer die T-Massenmatrix-Anwendung (siehe
-    // apply_T_matrix_kernel). Muss zusammen mit setup_bem_coupling() vor
+    // apply_T_matrix_kernel). d_faces MUSS in BEM-Reihenfolge liegen:
+    // d_faces[pos] ist das Quad perm[pos], zu dem die Freiheitsgrade pos*4+e
+    // gehoeren (bem_ordered_boundary_faces in BemCoupling.h). Muss zusammen mit setup_bem_coupling() vor
     // apply() aufgerufen werden, sobald BEM-Kopplung aktiv ist. d_faces/d_nodes
     // bleiben im Eigentum des Aufrufers; d_nodes darf sich zwischen
     // Zeitschritten aendern (bewegte Geometrie), der Zeiger selbst aber nicht.
@@ -678,7 +681,7 @@ public:
 
     // Die Kernoperation loest jetzt das 2x2-Blocksystem
     //     ( A_sys   -T      ) (A_FEM )   (RHS_FEM)
-    //     ( 0.5*T+D  -mu_0*G) (K_BEM )  = (   0   )
+    //     ( +0.5*T-D  mu_0*G) (K_BEM )  = (   0   )   (so im Operator implementiert)
     // d_x/d_y haben Laenge get_total_dofs() = FEM-DOFs + BEM-DOFs: die ersten
     // FEM-DOFs Eintraege sind A, der Rest ist K. Ohne aktive BEM-Kopplung
     // (setup_bem_coupling() nicht aufgerufen) reduziert sich das auf das reine
@@ -720,7 +723,7 @@ public:
     //   d_a    Laenge total_dofs   FEM-Kantenwerte (global orientiert)
     //   d_k    Laenge num_bem_dofs K in der Zaehlung der Operatoren (permutiert)
     //   d_TK_A   Laenge total_dofs     Beitrag  -T k      zu Zeile 1
-    //   d_TA_K   Laenge num_bem_dofs   Beitrag  -0.5 T a  zu Zeile 2
+    //   d_TA_K   Laenge num_bem_dofs   Beitrag  +0.5 T a  zu Zeile 2
     //   d_Da_K   Laenge num_bem_dofs   Beitrag  -D_BEM a  zu Zeile 2
     //   d_Gk_K   Laenge num_bem_dofs   Beitrag  +mu0 G k  zu Zeile 2
     // Die Ausgaben werden zuerst auf null gesetzt. Ist d_xbem_in != nullptr

@@ -127,7 +127,7 @@ void print_usage(const char* exe_name) {
         << "                 (spektral aequivalent; Hiptmair, Steinbach, Heuer) und mit\n"
         << "                 einem inneren CG angewendet. Anlass: die Kopplungsbloecke\n"
         << "                 sind bauartbedingt zu 81 %% unsymmetrisch (oben rechts -T,\n"
-        << "                 unten links -0.5*T - D_BEM), ein blockdiagonaler\n"
+        << "                 unten links +0.5*T - D_BEM), ein blockdiagonaler\n"
         << "                 Vorkonditionierer ignoriert sie vollstaendig.\n"
         << "  --ritz         Ritz-Spektrum nach dem ersten Arnoldi-Zyklus ausgeben.\n"
         << "                 Liefert eine untere Schranke fuer die Konditionszahl des\n"
