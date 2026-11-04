@@ -354,7 +354,8 @@ BF_HD inline void compute_dense_block_kernel_body(
     int num_q, const int* quads_q,  // Quads des Quell-Clusters (Spalten)
     const Mesh::QuadFace* faces,
     const double3* nodes_current,
-    double* d_dense_matrix          // Output Matrix (m x n) in Column-Major
+    double* d_dense_matrix,         // Output Matrix (m x n) in Column-Major
+    int near_nsub                   // --bem-near-subdiv: max. Unterteilung disjunkter Paare, 0 = aus
 ) {
     (void)num_q;
 
@@ -401,8 +402,11 @@ BF_HD inline void compute_dense_block_kernel_body(
         integrate_singular_quad_pair(n_p, gid_p, n_q, gid_q, 0, block);
     }
     else {
-        // Disjunktes Quad-Paar -> glatte 4-Punkt-Gauss-Quadratur
-        integrate_regular_quad_pair(n_p, n_q, block);
+        // Disjunktes Quad-Paar -> glatte 4-Punkt-Gauss-Quadratur; mit
+        // --bem-near-subdiv bei geringem Abstand gleichmaessig unterteilt
+        const int lvl = (near_nsub > 0) ? near_subdivision_level(n_p, n_q, near_nsub) : 0;
+        if (lvl > 0) integrate_adjacent_quad_pair(n_p, n_q, block, lvl);
+        else         integrate_regular_quad_pair(n_p, n_q, block);
     }
 
     // Schreiben in die globale Dense-Matrix im cuBLAS Column-Major Format!
@@ -425,14 +429,15 @@ __global__ void compute_dense_block_kernel(
     int num_q, const int* quads_q,
     const Mesh::QuadFace* faces,
     const double3* nodes_current,
-    double* d_dense_matrix
+    double* d_dense_matrix,
+    int near_nsub
 ) {
     // 2D-Grid: Thread x bearbeitet Quad p, Thread y bearbeitet Quad q
     int idx_p = blockIdx.x * blockDim.x + threadIdx.x;
     int idx_q = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx_p >= num_p || idx_q >= num_q) return;
     compute_dense_block_kernel_body(idx_p, idx_q, num_p, quads_p, num_q, quads_q,
-                                    faces, nodes_current, d_dense_matrix);
+                                    faces, nodes_current, d_dense_matrix, near_nsub);
 }
 
 // =================================================================================
@@ -462,7 +467,8 @@ BF_HD inline void compute_dense_block_kernel_H_body(
     int num_q, const int* quads_q,
     const Mesh::QuadFace* faces,
     const double3* nodes_current,
-    double* d_dense_matrix_H
+    double* d_dense_matrix_H,
+    int near_nsub
 ) {
     (void)num_q;
 
@@ -505,7 +511,9 @@ BF_HD inline void compute_dense_block_kernel_H_body(
         // Jacobi-Determinante der Transformation auf.
         integrate_singular_quad_pair(n_p, gid_p, n_q, gid_q, 1, block);
     } else {
-        integrate_regular_quad_pair_dlp(n_p, n_q, block);
+        const int lvl = (near_nsub > 0) ? near_subdivision_level(n_p, n_q, near_nsub) : 0;
+        if (lvl > 0) integrate_adjacent_quad_pair_dlp(n_p, n_q, block, lvl);
+        else         integrate_regular_quad_pair_dlp(n_p, n_q, block);
     }
 
     int m_rows = num_p * 4;
@@ -523,13 +531,14 @@ __global__ void compute_dense_block_kernel_H(
     int num_q, const int* quads_q,
     const Mesh::QuadFace* faces,
     const double3* nodes_current,
-    double* d_dense_matrix_H
+    double* d_dense_matrix_H,
+    int near_nsub
 ) {
     int idx_p = blockIdx.x * blockDim.x + threadIdx.x;
     int idx_q = blockIdx.y * blockDim.y + threadIdx.y;
     if (idx_p >= num_p || idx_q >= num_q) return;
     compute_dense_block_kernel_H_body(idx_p, idx_q, num_p, quads_p, num_q, quads_q,
-                                      faces, nodes_current, d_dense_matrix_H);
+                                      faces, nodes_current, d_dense_matrix_H, near_nsub);
 }
 
 // apply_T_matrix_kernel wurde nach src/CoupledSolver.cu
@@ -2147,7 +2156,8 @@ int mainloop(int argc, char** argv) {
                             num_q, d_quads_j,
                             mesh.boundary_faces.data(),
                             mesh.nodes_current.data(),
-                            d_dense_mat);
+                            d_dense_mat,
+                            bf::bem_near_subdiv());
                         // Kein Sync hier! Wir lassen alle Kernels asynchron
                         // in die Queue laufen, was die Auslastung der GPU maximiert!
 
@@ -2195,7 +2205,8 @@ int mainloop(int argc, char** argv) {
                             num_q, d_quads_j,
                             mesh.boundary_faces.data(),
                             mesh.nodes_current.data(),
-                            d_dense_mat_H);
+                            d_dense_mat_H,
+                            bf::bem_near_subdiv());
 
                         op.add_dense_block_H(m, n, row_off, col_off, d_dense_mat_H);
                     }

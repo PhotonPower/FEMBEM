@@ -26,6 +26,7 @@ bool    g_verify_field = false;
 bool    g_no_conductor_penalty = false;
 bool    g_fixed_plate = false;
 bool    g_reference_dirichlet = false;
+int     g_bem_near_subdiv = 0;       // --bem-near-subdiv[=N]; 0 = aus
 double  g_bem_row_check_mm = -1.0;   // --bem-row-check[=mm]; negativ = aus
 std::string g_reference_dump_a;       // leer = keine Ausgabe
 double  g_plate_z_mm = -1.0;
@@ -182,6 +183,10 @@ void print_usage(const char* exe_name) {
         << "                 Fuer BEM-FEM-Netze, auf denen das innere GMRES seine\n"
         << "                 Toleranz nicht erreicht. Speicher nd^2 * 8 B (nd = 33435:\n"
         << "                 8,3 GiB), dazu nd Operatoranwendungen zum Abtasten.\n"
+        << "  --bem-near-subdiv[=N]  Nur BEM-FEM-Pfad (Prototyp): disjunkte Quadpaare in den\n"
+        << "                 dichten Bloecken bei geringem Abstand (d/s < 2) gleichmaessig in\n"
+        << "                 hoechstens N x N Zellen je Quad unterteilen (Standard 8). Ohne die\n"
+        << "                 Option bleibt alles bitgleich. Siehe docs/design/bem-near-field.md.\n"
         << "  --bem-row-check[=MM]  Nur mit --harmonic (BEM-FEM-Pfad): Gegenprobe 2. Setzt\n"
         << "                 das exakte Biot-Savart-Paar (A_ex als Kantenintegrale, K1 =\n"
         << "                 dA/dn tangential, K2 = -n x B / mu0) in beide Blockzeilen ein,\n"
@@ -573,6 +578,13 @@ bool select_backend_from_args(int argc, char** argv) {
             g_no_gauge = true;
         } else if (arg == "--fixed-plate") {
             g_fixed_plate = true;
+        } else if (arg == "--bem-near-subdiv" || arg.rfind("--bem-near-subdiv=", 0) == 0) {
+            g_bem_near_subdiv = 8;
+            if (arg.size() > 17) {
+                const int v = std::atoi(arg.c_str() + 18);
+                if (v >= 2 && v <= 64) g_bem_near_subdiv = v;
+                else std::cerr << "[Backend] Warnung: --bem-near-subdiv=N erwartet 2 bis 64, bleibe bei 8.\n";
+            }
         } else if (arg == "--bem-row-check" || arg.rfind("--bem-row-check=", 0) == 0) {
             g_bem_row_check_mm = 0.5;
             if (arg.size() > 15) {
