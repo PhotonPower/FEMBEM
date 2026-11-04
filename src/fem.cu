@@ -7,6 +7,7 @@
 #include "DenseLinalg.cuh"
 #include "BlockPreconditionerStudy.h"
 #include "HarmonicSolver.cuh"
+#include "BemRowCheckRun.h"
 #include "HarmonicLorentz.cuh"
 #include "HarmonicMaxwell.cuh"
 // FEM-direkt-Pfad (--fem-direct), siehe docs/design/fem-direct-plan.md
@@ -5331,6 +5332,34 @@ int mainloop(int argc, char** argv) {
                 bf::memset_d(d_xr.data(), 0, static_cast<size_t>(nd_h) * sizeof(double));
                 bf::memset_d(d_xi.data(), 0, static_cast<size_t>(nd_h) * sizeof(double));
                 bf::sync();
+
+                // --bem-row-check: Gegenprobe 2 (docs/design/bem-row-check.md).
+                // Nur lesend, vor dem Loesen; ohne die Option laeuft dieser
+                // Block nicht und nichts aendert sich.
+                if (bf::bem_row_check_mm() > 0.0) {
+                    std::vector<int> body(mesh.num_hexes, 0);
+                    for (int h : plate.get_hex_indices())      body[h] = 1;
+                    for (int h : coil_inner.get_hex_indices()) body[h] = 2;
+                    for (int h : coil_outer.get_hex_indices()) body[h] = 3;
+                    // b im physikalischen Raum (d_br liegt im Tilde-Raum, siehe
+                    // der Felddump weiter unten)
+                    std::vector<double> b_phys(static_cast<size_t>(total_dofs));
+                    {
+                        DeviceArray<double> tmp(static_cast<size_t>(nd_h));
+                        bf::memcpy_d(tmp.data(), d_br.data(),
+                                     static_cast<size_t>(nd_h) * sizeof(double),
+                                     cudaMemcpyDeviceToDevice);
+                        op.scale_by_D_inverse(tmp.data());
+                        bf::sync();
+                        bf::memcpy_d(b_phys.data(), tmp.data(),
+                                     static_cast<size_t>(total_dofs) * sizeof(double),
+                                     cudaMemcpyDeviceToHost);
+                    }
+                    const int rc = run_bem_row_check(op, mesh, bem_map, body, csr_matrix, csr_C,
+                                                     omega, b_phys,
+                                                     bf::bem_row_check_mm() * 1e-3);
+                    return rc;
+                }
 
                 // --harmonic-inner-direct: (W+T) einmal dicht zerlegen, damit
                 // C-to-R exakt wirkt. Das innere GMRES erreicht auf dem

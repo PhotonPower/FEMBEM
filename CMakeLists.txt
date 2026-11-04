@@ -190,6 +190,7 @@ set(SOURCES
     src/ReferenceSolver.cu      # Baseline Knoten-FEM + vollbesetzte BEM
     src/ReferenceHarmonic.cu    # Referenzloeser im Frequenzbereich (FGMRES)
     src/ReferenceFieldDump.cu   # Felddump des harmonischen Referenzpfads
+    src/BemRowCheck.cu          # Gegenprobe 2 (--bem-row-check)
     src/MeshRefinement.cu       # uniforme Verfeinerung (--refine=N)
     src/BiotSavart.cpp          # analytische Referenz (--verify-field)
     src/FieldVerification.cpp   # gemeinsamer Vergleich beider Loeserpfade
@@ -341,6 +342,15 @@ add_executable(test_coupling_sign_convention
 )
 target_include_directories(test_coupling_sign_convention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_coupling_sign_convention PRIVATE CUDA::cudart)
+
+# 🧪 Gegenprobe 2 (--bem-row-check): Feldauswertung, Projektion, Residuen
+# Reiner Host-Code (include/BemRowCheck.h), ohne GPU und ohne Netz.
+add_executable(test_bem_row_check
+    tests/test_bem_row_check.cu
+    src/BiotSavart.cpp          # B_z auf der Achse als unabhaengige Referenz
+)
+target_include_directories(test_bem_row_check PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_bem_row_check PRIVATE CUDA::cudart)
 
 # 🧪 G_BEM ist als Operator exakt symmetrisch
 # Prueft <x, G y> == <G x, y> am angewandten Operator, mit Gegenprobe. Bauen:
@@ -984,6 +994,8 @@ endforeach()
 
 add_test(NAME test_coupling_sign_convention COMMAND test_coupling_sign_convention)
 set_tests_properties(test_coupling_sign_convention PROPERTIES LABELS "host" TIMEOUT 600)
+add_test(NAME test_bem_row_check COMMAND test_bem_row_check)
+set_tests_properties(test_bem_row_check PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_block_triangular_consistency COMMAND test_block_triangular_consistency)
 set_tests_properties(test_block_triangular_consistency PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_norm_nan_propagation COMMAND test_norm_nan_propagation)
@@ -1101,6 +1113,7 @@ add_custom_target(host_tests DEPENDS
     test_edge_sign_convention
     test_curl_gradient_nullspace
     test_coupling_sign_convention
+    test_bem_row_check
     test_block_triangular_consistency
     test_norm_nan_propagation
     test_dgemv_beta_zero

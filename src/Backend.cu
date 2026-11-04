@@ -26,6 +26,7 @@ bool    g_verify_field = false;
 bool    g_no_conductor_penalty = false;
 bool    g_fixed_plate = false;
 bool    g_reference_dirichlet = false;
+double  g_bem_row_check_mm = -1.0;   // --bem-row-check[=mm]; negativ = aus
 std::string g_reference_dump_a;       // leer = keine Ausgabe
 double  g_plate_z_mm = -1.0;
 bool    g_no_gauge = false;
@@ -181,6 +182,12 @@ void print_usage(const char* exe_name) {
         << "                 Fuer BEM-FEM-Netze, auf denen das innere GMRES seine\n"
         << "                 Toleranz nicht erreicht. Speicher nd^2 * 8 B (nd = 33435:\n"
         << "                 8,3 GiB), dazu nd Operatoranwendungen zum Abtasten.\n"
+        << "  --bem-row-check[=MM]  Nur mit --harmonic (BEM-FEM-Pfad): Gegenprobe 2. Setzt\n"
+        << "                 das exakte Biot-Savart-Paar (A_ex als Kantenintegrale, K1 =\n"
+        << "                 dA/dn tangential, K2 = -n x B / mu0) in beide Blockzeilen ein,\n"
+        << "                 gibt Residuentabellen je Koerper und Quadklasse aus und endet\n"
+        << "                 vor dem Loesen. MM = Fadenabstand der Quelle (Standard 0.5).\n"
+        << "                 Aendert Operatoren und Loesung nicht.\n"
         << "  --harmonic-field-dump=DATEI  A und B (Real- und Imaginaerteil) im\n"
         << "                 Schwerpunkt jedes Elements als CSV, mit Koerper-Kennung\n"
         << "                 (0 sonst, 1 Platte, 2 Innen-, 3 Aussenspule). Fuer den\n"
@@ -566,6 +573,14 @@ bool select_backend_from_args(int argc, char** argv) {
             g_no_gauge = true;
         } else if (arg == "--fixed-plate") {
             g_fixed_plate = true;
+        } else if (arg == "--bem-row-check" || arg.rfind("--bem-row-check=", 0) == 0) {
+            g_bem_row_check_mm = 0.5;
+            if (arg.size() > 15) {
+                const double v = std::atof(arg.c_str() + 16);
+                if (std::isfinite(v) && v > 0.0) g_bem_row_check_mm = v;
+                else std::cerr << "[Backend] Warnung: --bem-row-check=MM erwartet einen "
+                                  "positiven Wert, bleibe bei 0.5 mm.\n";
+            }
         } else if (arg == "--reference-dirichlet") {
             g_reference_dirichlet = true;
         } else if (arg.rfind("--reference-dump-a=", 0) == 0) {
@@ -617,6 +632,13 @@ bool select_backend_from_args(int argc, char** argv) {
         }
         // Alles andere ist positional (Schrittzahl, nobem, noilu) und wird
         // weiterhin in mainloop() ausgewertet.
+    }
+
+    if (g_bem_row_check_mm > 0.0 && (!g_harmonic_solve || g_use_reference_solver)) {
+        std::cerr << "[Backend] FEHLER: --bem-row-check gilt nur im harmonischen BEM-FEM-Pfad "
+                     "(--harmonic, ohne --reference).\n";
+        g_args_rejected = true;
+        return false;
     }
 
     if ((g_reference_dirichlet || !g_reference_dump_a.empty()) &&

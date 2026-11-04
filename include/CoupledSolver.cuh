@@ -708,6 +708,27 @@ public:
     // BEM-Kopplung identisch zum bisherigen (reinen FEM-)Verhalten.
     int get_total_dofs() const { return total_dofs + num_bem_dofs; }
     int get_num_bem_dofs() const { return num_bem_dofs; }
+
+    // -------------------------------------------------------------------------
+    // Nur lesende Diagnose fuer --bem-row-check (include/BemRowCheck.h)
+    // -------------------------------------------------------------------------
+    // Wendet die BESTEHENDEN Kopplungs- und BEM-Operatoren einzeln auf ein
+    // vorgegebenes Paar (a, k) an, im physikalischen Raum, OHNE Eichprojektion,
+    // OHNE Aequilibrierung. Neue Rechenschritte gibt es nicht: gerufen werden
+    // dieselben Kernel und Bloecke wie in apply_physical().
+    //
+    //   d_a    Laenge total_dofs   FEM-Kantenwerte (global orientiert)
+    //   d_k    Laenge num_bem_dofs K in der Zaehlung der Operatoren (permutiert)
+    //   d_TK_A   Laenge total_dofs     Beitrag  -T k      zu Zeile 1
+    //   d_TA_K   Laenge num_bem_dofs   Beitrag  -0.5 T a  zu Zeile 2
+    //   d_Da_K   Laenge num_bem_dofs   Beitrag  -D_BEM a  zu Zeile 2
+    //   d_Gk_K   Laenge num_bem_dofs   Beitrag  +mu0 G k  zu Zeile 2
+    // Die Ausgaben werden zuerst auf null gesetzt. Ist d_xbem_in != nullptr
+    // (Laenge num_bem_dofs, BEM-Zaehlung), ersetzt es den Gather von d_a als
+    // Eingabe fuer D_BEM; d_a bleibt dann fuer die T-Kopplung massgebend.
+    void row_check_parts(const double* d_a, const double* d_k,
+                         double* d_TK_A, double* d_TA_K, double* d_Da_K, double* d_Gk_K,
+                         const double* d_xbem_in = nullptr);
     cublasHandle_t get_cublas_handle() const { return cublas; }
 };
 
