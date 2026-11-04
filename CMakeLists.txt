@@ -365,6 +365,16 @@ add_executable(test_bem_calderon
 target_include_directories(test_bem_calderon PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_bem_calderon PRIVATE CUDA::cudart)
 
+# 🧪 Nahfeldquadratur disjunkter Paare und duenner Quader (Calderon), host
+add_executable(test_bem_near_field
+    tests/test_bem_near_field.cu
+    src/Backend.cu
+    src/SauterSchwab.cu
+    src/AdjacentIntegration.cu
+)
+target_include_directories(test_bem_near_field PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_bem_near_field PRIVATE CUDA::cudart)
+
 # 🧪 Gegenprobe 2 (--bem-row-check): Feldauswertung, Projektion, Residuen
 # Reiner Host-Code (include/BemRowCheck.h), ohne GPU und ohne Netz.
 add_executable(test_bem_row_check
@@ -1020,6 +1030,8 @@ add_test(NAME test_bem_coupling_geometry COMMAND test_bem_coupling_geometry ${CM
 set_tests_properties(test_bem_coupling_geometry PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_bem_calderon COMMAND test_bem_calderon)
 set_tests_properties(test_bem_calderon PROPERTIES LABELS "host" TIMEOUT 600)
+add_test(NAME test_bem_near_field COMMAND test_bem_near_field)
+set_tests_properties(test_bem_near_field PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_bem_row_check COMMAND test_bem_row_check)
 set_tests_properties(test_bem_row_check PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_block_triangular_consistency COMMAND test_block_triangular_consistency)
@@ -1140,6 +1152,7 @@ add_custom_target(host_tests DEPENDS
     test_curl_gradient_nullspace
     test_coupling_sign_convention
     test_bem_row_check
+    test_bem_near_field
     test_bem_calderon
     test_bem_coupling_geometry
     test_block_triangular_consistency
