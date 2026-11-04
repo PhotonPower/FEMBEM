@@ -166,7 +166,7 @@ extern bool g_no_cohomology;
 /// 2x2-System statt des blockdiagonalen diag(A~, I).
 ///
 /// Anlass ist eine Messung: die Kopplungsbloecke sind zu 81 % unsymmetrisch,
-/// und zwar bauartbedingt -- oben rechts steht -T, unten links -0.5*T - D_BEM,
+/// und zwar bauartbedingt -- oben rechts steht -T, unten links +0.5*T - D_BEM,
 /// die koennen per Definition nicht zueinander transponiert sein. Ein
 /// blockdiagonaler Vorkonditionierer ignoriert sie vollstaendig und entkoppelt
 /// damit Leiter und Aussenraum; die Stetigkeit der Tangentialkomponente muss

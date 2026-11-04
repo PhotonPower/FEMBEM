@@ -752,7 +752,7 @@ __global__ void apply_T_to_A_kernel(
 // =================================================================================
 // Der 2x2-gekoppelte Operator. Loest
 //     ( A_sys      -T     ) (A_FEM)   (RHS_FEM)
-//     ( 0.5*T+D_BEM -mu_0*G) (K_BEM) = (   0   )
+//     ( +0.5*T-D_BEM mu_0*G) (K_BEM) = (   0   )   (so im Operator implementiert)
 // d_x/d_y sind Vektoren der Laenge get_total_dofs() = total_dofs (FEM,
 // erste total_dofs Eintraege = A) + num_bem_dofs (Rest = K). Ohne aktive
 // BEM-Kopplung (num_bem_dofs == 0) reduziert sich alles auf das reine
@@ -1199,8 +1199,8 @@ void CoupledMVOperator::apply_physical(const double* d_x, double* d_y) {
     }
 
     // -------------------------------------------------------------------------
-    // Kopplungs-Massenmatrix T: y_A -= T*K_in, y_K += 0.5*T*x_use (siehe
-    // apply_T_matrix_kernel oben fuer die Herleitung der Vorzeichen).
+    // Kopplungs-Massenmatrix T: y_A -= T*K_in, y_K += 0.5*T*x_use (K-Zeile:
+    // +0.5 T a - D a + mu0 G k; siehe apply_T_matrix_kernel fuer die Herleitung).
     // WICHTIG: fuer die Randspur von A wird dieselbe geeichte Version x_use
     // verwendet wie fuer den FEM-Sparse-Anteil, nicht das rohe d_A_in.
     // -------------------------------------------------------------------------
@@ -1215,7 +1215,7 @@ void CoupledMVOperator::apply_physical(const double* d_x, double* d_y) {
 
     // -------------------------------------------------------------------------
     // Randspur von A (x_use) in den BEM-Elementraum gathern -- gebraucht als
-    // Eingabe fuer D_BEM (H_BEM = 0.5*T + D_BEM, T-Anteil kommt vom Kernel
+    // Eingabe fuer D_BEM (K-Zeile: +0.5*T - D_BEM, T-Anteil kommt vom Kernel
     // oben, D_BEM hier ueber die dichten/ACA-Bloecke).
     // -------------------------------------------------------------------------
     BF_LAUNCH_1D_PAR(k_gather_bem, num_bem_dofs,
@@ -1287,7 +1287,7 @@ void CoupledMVOperator::row_check_parts(const double* d_a, const double* d_k,
     bf::memset_d(d_Da_K, 0, nb * sizeof(double));
     bf::memset_d(d_Gk_K, 0, nb * sizeof(double));
 
-    // y_A = -T k, y_K = -0.5 T a (apply_T_matrix_kernel: y_A -= T x_K, y_K -= 0.5 T x_A)
+    // y_A = -T k, y_K = +0.5 T a (apply_T_matrix_kernel: y_A -= T x_K, y_K += 0.5 T x_A)
     BF_LAUNCH_1D(apply_T_matrix_kernel, m_num_boundary_faces,
         m_num_boundary_faces, d_mesh_faces, d_mesh_nodes,
         d_bem_to_fem, d_bem_sign, d_a, d_k, d_TK_A, d_TA_K);

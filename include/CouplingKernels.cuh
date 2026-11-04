@@ -19,7 +19,7 @@
 // auf dem Host, ohne GPU und ohne Netz.
 //
 // Die beiden Ruempfe gehoeren strikt zusammen: sie beschreiben dieselbe
-// Matrix T, einmal fuer den Operator (Bloecke -T oben rechts, -0.5*T unten
+// Matrix T, einmal fuer den Operator (Bloecke -T oben rechts, +0.5*T unten
 // links) und einmal fuer die Rueckwaertssubstitution des blocktriangulaeren
 // Vorkonditionierers (+T). Wer an einem der Vorzeichen dreht, muss das andere
 // mitziehen -- der Test haelt genau diese Kopplung fest.
@@ -30,7 +30,7 @@
 #include "Mesh.cuh"
 
 // -----------------------------------------------------------------------------
-// Operator-Anteil: y_A -= T*x_K und y_K -= 0.5*T*x_A
+// Operator-Anteil: y_A -= T*x_K und y_K += 0.5*T*x_A
 // -----------------------------------------------------------------------------
 //
 // T ist blockdiagonal pro Rand-Quad (Wi und Wj leben auf demselben Quad) --
@@ -62,7 +62,16 @@
 //   sum_c T_rc * sign[c] * a[g_c]. NUR das Spaltenvorzeichen.
 //
 // Beide Bloecke tragen damit jeweils EIN sign, und die Kopplungsbloecke bleiben
-// zueinander transponiert (Zeile 1: -S T, Zeile 2: -0.5 T S, S = diag(sign)).
+// zueinander transponiert bis auf Faktor und Vorzeichen (Zeile 1: -S T, Zeile 2:
+// +0.5 T S, S = diag(sign)).
+//
+// Herleitung des Vorzeichens des 1/2-T-Terms (K-Zeile): Fuer eine im Aussengebiet
+// harmonische, im Unendlichen abklingende Funktion u gilt auf dem Rand mit der
+// Normale n nach aussen (aus dem Leiter heraus, ins Gebiet hinein)
+//     (1/2 - D) u = -G du/dn,   D u = int u d/dn_y(1/(4 pi R)) dS_y.
+// Handrechnung Einheitskugel, u = 1/r: D*1 = -1/2, G du/dn = -1, beide Seiten 1.
+// Mit mu_0 k = du/dn und der Testfunktion W_r (roh): (+1/2 T - D) a + mu_0 G k = 0.
+// Gemessen: Wuerfeltest ohne FEM (tests/test_bem_calderon.cu) und --bem-row-check.
 // Beitrag zu y_K: kein atomicAdd noetig (blockdiagonal pro Quad); zu y_A:
 // additiv ueber geteilte Kanten, daher atomicAdd.
 //
@@ -101,16 +110,16 @@ BF_HD inline void apply_T_matrix_kernel_body(
             // Oberer rechter Block (Gl. 11): y_A -= S T * x_K (nur Zeilenvorzeichen)
             val_A -= static_cast<double>(sgn[r]) * T_loc[r][c] * x_K[face_idx * 4 + c];
 
-            // Unterer linker Block, "1/2 T"-Anteil von H (Gl. 12), SYMMETRISIERT:
-            // die gesamte K-Gleichung (RHS_K ist immer 0, siehe fem.cu) wird mit
-            // -1 multipliziert, um das Vorzeichenmuster der Kopplungsbloecke zu
-            // vereinheitlichen (vorher -T oben rechts vs. +0.5T unten links --
-            // gegensaetzliche Vorzeichen sind ein klassischer Grund fuer
-            // komplexe Eigenwerte in Sattelpunkt-aehnlichen Systemen). Aendert
-            // NICHTS an der Loesung (f(x)=0 <=> -f(x)=0), siehe apply_physical()
-            // fuer die dazu konsistenten G_BEM/H_BEM-Vorzeichen.
-            // (nur Spaltenvorzeichen, siehe Herleitung oben)
-            val_K -= 0.5 * T_loc[r][c] * static_cast<double>(sgn[c]) * x_A[g_idx[c]];
+            // Unterer linker Block, "1/2 T"-Anteil der K-Zeile (nur Spalten-
+            // vorzeichen, siehe Herleitung oben). Die K-Zeile ist die Calderon-
+            // Beziehung fuer das AUSSENgebiet (Luft) mit nach aussen zeigender
+            // Normale (siehe unten):
+            //     (+1/2 T - D) a + mu_0 G k = 0     mit  mu_0 k = du/dn.
+            // Das Vorzeichen des 1/2-T-Terms ist also POSITIV (frueher negativ:
+            // das war die Innenraumform (1/2 + D) u = G du/dn, Befund d in
+            // docs/design/bem-row-check.md). D und G wirken unveraendert mit
+            // -D_BEM und +mu_0 G_BEM (apply_bem_blocks).
+            val_K += 0.5 * T_loc[r][c] * static_cast<double>(sgn[c]) * x_A[g_idx[c]];
         }
 
         bf::atomic_add(&y_A[g_idx[r]], val_A);

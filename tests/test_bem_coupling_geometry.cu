@@ -40,7 +40,7 @@ static double rel(const std::vector<double>& a, const std::vector<double>& b) {
 
 // Referenz: je Position pos Geometrie des Quads perm[pos], explizit aus mesh.boundary_faces.
 //   Zeile 1: yA[g_r] -= s_r sum_c T[r][c] k[pos*4+c]          (nur Zeilenvorzeichen)
-//   Zeile 2: yK[pos*4+r] -= 0.5 sum_c T[r][c] s_c a[g_c]      (nur Spaltenvorzeichen)
+//   Zeile 2: yK[pos*4+r] += 0.5 sum_c T[r][c] s_c a[g_c]      (nur Spaltenvorzeichen, Aussenraum-K-Zeile)
 static void reference(const Mesh& mesh, const BemCouplingMap& map, const std::vector<double>& nodes_xyz,
                       const std::vector<double>& a, const std::vector<double>& k,
                       std::vector<double>& yA, std::vector<double>& yK) {
@@ -58,7 +58,7 @@ static void reference(const Mesh& mesh, const BemCouplingMap& map, const std::ve
             for (int c = 0; c < 4; ++c) {
                 const int gc = map.bem_to_fem[pos * 4 + c];
                 yA[static_cast<size_t>(gr)] -= static_cast<double>(map.bem_sign[pos * 4 + r]) * T[r][c] * k[pos * 4 + c];
-                yK[pos * 4 + r] -= 0.5 * T[r][c] * static_cast<double>(map.bem_sign[pos * 4 + c]) * a[static_cast<size_t>(gc)];
+                yK[pos * 4 + r] += 0.5 * T[r][c] * static_cast<double>(map.bem_sign[pos * 4 + c]) * a[static_cast<size_t>(gc)];
             }
         }
     }
@@ -138,11 +138,18 @@ int main(int argc, char** argv) {
             for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
                 const double Trc = static_cast<double>(map.bem_sign[pos * 4 + r] * map.bem_sign[pos * 4 + c]) * T[r][c];
                 alt_A[static_cast<size_t>(map.bem_to_fem[pos * 4 + r])] -= Trc * k[pos * 4 + c];
-                alt_K[pos * 4 + r] -= 0.5 * Trc * a[static_cast<size_t>(map.bem_to_fem[pos * 4 + c])];
+                alt_K[pos * 4 + r] += 0.5 * Trc * a[static_cast<size_t>(map.bem_to_fem[pos * 4 + c])];
             }
         }
         check(rel(alt_A, rA) > 0.1, "Gegenprobe: altes Vorzeichenmuster sign[r]*sign[c], Zeile 1, wird erkannt", rel(alt_A, rA), 0.1, true);
         check(rel(alt_K, rK) > 0.1, "Gegenprobe: altes Vorzeichenmuster sign[r]*sign[c], Zeile 2, wird erkannt", rel(alt_K, rK), 0.1, true);
+    }
+
+    // Gegenprobe Vorzeichen des 1/2-T-Terms: die Innenraumform (-0.5) wird erkannt
+    {
+        std::vector<double> neg(rK.size());
+        for (size_t i = 0; i < rK.size(); ++i) neg[i] = -rK[i];
+        check(rel(neg, rK) > 0.1, "Gegenprobe: altes Vorzeichen des 1/2-T-Terms (Innenraumform), Zeile 2, wird erkannt", rel(neg, rK), 0.1, true);
     }
 
     std::printf("\n%s (%d Fehler)\n", g_fail ? "FEHLER" : "ALLE PRUEFUNGEN BESTANDEN", g_fail);

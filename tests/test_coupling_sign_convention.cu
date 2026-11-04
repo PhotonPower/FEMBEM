@@ -222,6 +222,25 @@ int main() {
         for (size_t i = 0; i < yb.size(); ++i) nb[i] = -yb[i];
         check(max_abs_diff(ya, nb) <= 1e-14 * std::fmax(max_abs(ya), 1.0),
               "Zeile 2: globale Umkehr aller sign[] kehrt y_K genau um (EIN Vorzeichen)");
+
+        // Vorzeichen des 1/2-T-Terms: die K-Zeile ist die Aussenraum-Calderon-Beziehung
+        // (+1/2 T - D) a + mu_0 G k = 0, der T-Anteil also +0.5 T S a. Handrechnung.
+        std::vector<double> ref(Fixture::num_bem_dofs, 0.0);
+        for (int i = 0; i < Fixture::num_faces; ++i) {
+            double3 q[4];
+            for (int kk = 0; kk < 4; ++kk) q[kk] = f.nodes[f.faces[i].v[kk]];
+            double T_loc[4][4];
+            integrate_boundary_mass_matrix(q, T_loc);
+            for (int r = 0; r < 4; ++r)
+                for (int c = 0; c < 4; ++c)
+                    ref[i * 4 + r] += 0.5 * T_loc[r][c] * f.sign[i * 4 + c] * xA[f.map[i * 4 + c]];
+        }
+        check(max_abs_diff(ya, ref) <= 1e-14 * std::fmax(max_abs(ref), 1.0),
+              "Zeile 2: y_K = +0.5 T S a (Aussenraumform, positives Vorzeichen)");
+        std::vector<double> neg_ref(ref.size());
+        for (size_t i = 0; i < ref.size(); ++i) neg_ref[i] = -ref[i];
+        check(max_abs_diff(ya, neg_ref) > 1e-6 * std::fmax(max_abs(ref), 1.0),
+              "Gegenprobe: die Innenraumform (-0.5 T S a) wird erkannt");
     }
 
     // (3) T selbst ist symmetrisch -- die Unsymmetrie der Kopplung stammt

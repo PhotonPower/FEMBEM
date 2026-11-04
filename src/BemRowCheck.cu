@@ -5,7 +5,8 @@
 // Setzt das exakte Biot-Savart-Paar (a_ex, K) in beide Blockzeilen ein:
 //
 //   Zeile 1 (FEM auf Randkanten):  K a_ex - T k - b           (K = W - omega*C)
-//   Zeile 2 (BEM):                 (-0.5 T - D_BEM) a_ex + mu0 G_BEM k
+//   Zeile 2 (BEM):                 (+0.5 T - D_BEM) a_ex + mu0 G_BEM k   (Aussenraumform; vor
+//                                  docs/design/bem-coupling-fixes.md: -0.5 T)
 //
 // mit k aus K1 (mu0 K1 = (dA/dn)_tan) und K2 (mu0 K2 = -n x B), je mit beiden
 // Vorzeichen. Operatoren: die bestehenden, ueber CoupledMVOperator::
@@ -39,6 +40,7 @@ namespace {
 
 // Zustand des Operators, den die Host-Nachrechnung V0 abbildet (je Korrekturschritt nachgezogen)
 constexpr bool kOpPermGeom = true;     // Schritt 1: T-Geometrie in BEM-Reihenfolge
+constexpr double kOpHalfSign = +1.0;   // Schritt 4: Vorzeichen des 1/2-T-Terms in Zeile 2
 constexpr bool kOpConsistent = true;   // Schritt 2: konsistente Vorzeichen
 
 constexpr int kNumBodies = 3;                       // 1 Platte, 2 Innen-, 3 Aussenspule
@@ -68,7 +70,7 @@ double rel_diff(const std::vector<double>& a, const std::vector<double>& b) {
     return d > 0 ? std::sqrt(n / d) : std::sqrt(n);
 }
 
-// Host-Nachrechnung der T-Anwendung: yA = -T k (Laenge E), yK = -0.5 T a (Laenge nb).
+// Host-Nachrechnung der T-Anwendung: yA = -T k (Laenge E), yK = kOpHalfSign * 0.5 T a (Laenge nb).
 //   perm_geom : Geometrie des Quads perm[pos] statt faces[pos]
 //   consistent: Vorzeichen so, dass x_K roher Rooftop-Koeffizient ist und die Testfunktion
 //               in Zeile 2 roh (Zeile 1: sign[r], Zeile 2: nur Gather-Vorzeichen sign[c])
@@ -95,10 +97,10 @@ void host_T_apply(const Prepared& P, bool perm_geom, bool consistent,
                 if (!consistent) {
                     const double Trc = static_cast<double>(s[r] * s[c]) * T[r][c];
                     va -= Trc * k[static_cast<size_t>(pos * 4 + c)];
-                    vk -= 0.5 * Trc * a[static_cast<size_t>(g[c])];
+                    vk += kOpHalfSign * 0.5 * Trc * a[static_cast<size_t>(g[c])];
                 } else {
                     va -= static_cast<double>(s[r]) * T[r][c] * k[static_cast<size_t>(pos * 4 + c)];
-                    vk -= 0.5 * T[r][c] * static_cast<double>(s[c]) * a[static_cast<size_t>(g[c])];
+                    vk += kOpHalfSign * 0.5 * T[r][c] * static_cast<double>(s[c]) * a[static_cast<size_t>(g[c])];
                 }
             }
             yA[static_cast<size_t>(g[r])] += va;
@@ -430,7 +432,7 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
         char title[160];
         std::snprintf(title, sizeof title, "Zeile 1 (FEM auf Randkanten), %s: ||K a - T k - b|| / ||K a - b||", vname[var]);
         print_table(title, r1);
-        std::snprintf(title, sizeof title, "Zeile 2 (BEM), %s: ||(-0.5 T - D) a + mu0 G k|| / ||(-0.5 T - D) a||", vname[var]);
+        std::snprintf(title, sizeof title, "Zeile 2 (BEM), %s: ||(+0.5 T - D) a + mu0 G k|| / ||(+0.5 T - D) a||", vname[var]);
         print_table(title, r2);
 
         if (var == 0) {
@@ -447,7 +449,7 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
             std::printf("\n[RowCheck] Normen (V0, nur Randkanten): ||K a - b|| = %.4e, ||T k1|| = %.4e, "
                         "||T k2|| = %.4e, ||W a - b|| = %.4e\n",
                         std::sqrt(nKab), std::sqrt(nTk1), std::sqrt(nTk2), std::sqrt(nW));
-            std::printf("[RowCheck]                Zeile 2: ||(-0.5 T - D) a|| = %.4e, ||mu0 G k1|| = %.4e, "
+            std::printf("[RowCheck]                Zeile 2: ||(+0.5 T - D) a|| = %.4e, ||mu0 G k1|| = %.4e, "
                         "||mu0 G k2|| = %.4e, ||D a|| = %.4e, ||0.5 T a|| = %.4e\n",
                         vnorm(t2), vnorm(Gk[0]), vnorm(Gk[1]), vnorm(DaK), vnorm(TAK));
             // W-Form (omega*C a_ex mitgerechnet) je Koerper
@@ -571,7 +573,7 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
             if (project_to_rooftop(P.geom[pos], FA, c))
                 for (int i = 0; i < 4; ++i) cA[pos * 4 + static_cast<size_t>(i)] = c[i];
         });
-        // T-Term (Zeile 2): -0.5 * T_loc * cA, Geometrie perm[pos], Testfunktion roh
+        // T-Term (Zeile 2): kOpHalfSign * 0.5 * T_loc * cA, Geometrie perm[pos], Testfunktion roh
         std::vector<double> TAc(static_cast<size_t>(P.nb), 0.0);
         for (int pos = 0; pos < P.nq; ++pos) {
             const Mesh::QuadFace& f = P.faces[static_cast<size_t>(P.perm[static_cast<size_t>(pos)])];
@@ -582,7 +584,7 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
             for (int r = 0; r < 4; ++r) {
                 double v = 0.0;
                 for (int c = 0; c < 4; ++c) v += T[r][c] * cA[static_cast<size_t>(pos * 4 + c)];
-                TAc[static_cast<size_t>(pos * 4 + r)] = -0.5 * v;
+                TAc[static_cast<size_t>(pos * 4 + r)] = kOpHalfSign * 0.5 * v;
             }
         }
         // D_BEM cA und mu0 G k_v ueber den Operator (xbem-Eingabe)
@@ -612,22 +614,22 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
             for (int sgn = +1; sgn >= -1; sgn -= 2, ++col)
                 r4[col] = by_body_and_class(axpy(t2, static_cast<double>(sgn), Gk2[v]), t2, lab2);
         print_table("Zeile 2 mit konsistenter Darstellung (Galerkin-Projektion von P_t A_ex und K, T mit "
-                    "Geometrie perm[pos]): ||(-0.5 T - D) cA + mu0 G k|| / ||(-0.5 T - D) cA||", r4);
-        std::printf("\n[RowCheck] Normen (konsistent): ||(-0.5 T - D) cA|| = %.4e, ||mu0 G k1|| = %.4e, ||mu0 G k2|| = %.4e\n",
+                    "Geometrie perm[pos]): ||(+0.5 T - D) cA + mu0 G k|| / ||(+0.5 T - D) cA||", r4);
+        std::printf("\n[RowCheck] Normen (konsistent): ||(+0.5 T - D) cA|| = %.4e, ||mu0 G k1|| = %.4e, ||mu0 G k2|| = %.4e\n",
                     vnorm(t2), vnorm(Gk2[0]), vnorm(Gk2[1]));
-        // Vorzeichen des D-Terms umgekehrt: (-0.5 T + D) cA + mu0 G k. (Die Gleichungen mit
-        // umgekehrtem Vorzeichen von 0.5 T sind bis auf das Vorzeichen von k gleich diesen beiden;
-        // beide Vorzeichen von k stehen in den Tabellen.)
+        // Vorzeichen des 1/2-T-Terms umgekehrt (Messung): (-0.5 T - D) cA + mu0 G k = die
+        // Innenraumform, die der Operator vor Schritt 4 hatte. Beide Vorzeichen von k stehen
+        // in den Tabellen.
         std::vector<double> t2f(static_cast<size_t>(P.nb));
-        for (int i = 0; i < P.nb; ++i) t2f[static_cast<size_t>(i)] = TAc[static_cast<size_t>(i)] - DcA[static_cast<size_t>(i)];
+        for (int i = 0; i < P.nb; ++i) t2f[static_cast<size_t>(i)] = -TAc[static_cast<size_t>(i)] + DcA[static_cast<size_t>(i)];
         std::vector<Residual> r5[4];
         col = 0;
         for (int v = 0; v < 2; ++v)
             for (int sgn = +1; sgn >= -1; sgn -= 2, ++col)
                 r5[col] = by_body_and_class(axpy(t2f, static_cast<double>(sgn), Gk2[v]), t2f, lab2);
-        print_table("Zeile 2, konsistente Darstellung, Vorzeichen des D-Terms UMGEKEHRT (Messung): "
-                    "||(-0.5 T + D) cA + mu0 G k|| / ||(-0.5 T + D) cA||", r5);
-        std::printf("\n[RowCheck] Normen (D umgekehrt): ||(-0.5 T + D) cA|| = %.4e\n", vnorm(t2f));
+        print_table("Zeile 2, konsistente Darstellung, Vorzeichen des 1/2-T-Terms UMGEKEHRT (Messung, Innenraumform): "
+                    "||(-0.5 T - D) cA + mu0 G k|| / ||(-0.5 T - D) cA||", r5);
+        std::printf("\n[RowCheck] Normen (1/2 T umgekehrt): ||(-0.5 T - D) cA|| = %.4e\n", vnorm(t2f));
         std::cout.flush();
     }
 
