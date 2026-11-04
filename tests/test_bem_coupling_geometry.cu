@@ -8,7 +8,7 @@
 // perm[pos] aufgebaut ist. Gegenprobe: mit mesh.boundary_faces in Netzreihenfolge
 // (die alte Indexierung) weicht das Ergebnis stark ab.
 //
-// Reiner Host-Code; braucht einen CUDA-Kontext nur fuer DeviceArray.
+// Reiner Host-Code (CPU-Backend, kein CUDA-Kontext noetig).
 // =============================================================================
 
 #include <cmath>
@@ -76,6 +76,9 @@ static void run_kernel(const std::vector<Mesh::QuadFace>& faces, const std::vect
 }
 
 int main(int argc, char** argv) {
+    // Host-Test: im CPU-Modus laufen, damit DeviceArray keinen CUDA-Kontext braucht
+    // (die CI hat keine GPU; wie die uebrigen Tests mit Marke "host").
+    bf::g_backend = bf::Backend::CPU;
     const char* path = argc > 1 ? argv[1] : "team28.vtk";
     std::printf("=== test_bem_coupling_geometry (%s) ===\n", path);
     Mesh mesh;
