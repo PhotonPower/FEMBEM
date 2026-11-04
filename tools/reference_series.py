@@ -542,10 +542,14 @@ def f_table_a(recs, ref_name):
     head = (f"| Lauf | F_z / F_z({ref_name}) − 1 | Platte ΔA_r | Platte ΔA_i | Innenspule ΔA_r | "
             "Innenspule ΔA_i | Außenspule ΔA_r | Außenspule ΔA_i | Phase Platte [°] | "
             "max. Knotenabw. Platte (Ort) |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---|\n")
-    ref = next((r for r in recs if r["name"] == ref_name and r.get("fz3") is not None), None)
+    by = {r["name"]: r for r in recs if r.get("fz3") is not None}
     rows = []
     for r in recs:
         c = r.get("cmp")
+        # Bezug: B0 des eigenen Netzes, ausser bei den Abschneidenetzen (dort B0 auf t3)
+        own = f"{r['mesh']}_B0"
+        is_trunc = r["mesh"].startswith("air_s1_t") and "_z" not in r["mesh"]
+        ref = by.get(ref_name if is_trunc else own)
         rel = (f"{100 * (r['fz3'] / ref['fz3'] - 1):+.3f} %"
                if ref and r.get("fz3") is not None else "–")
         if not c:

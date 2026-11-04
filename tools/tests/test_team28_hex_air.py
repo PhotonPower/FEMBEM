@@ -104,18 +104,16 @@ def test_zone_geometry():
 
 
 def test_conductor_nodes_independent_of_truncation():
-    a, _ = make(("--truncation-radial", "2", "--truncation-axial", "2"))
-    b, _ = make(("--truncation-radial", "3", "--truncation-axial", "4"))
-    ma, mb = mc.read_vtk(a), mc.read_vtk(b)
-
-    def nodes(m):
-        cond = np.flatnonzero((m.comp > 0))
-        gap = np.flatnonzero(np.isin(mc.read_zones(
-            os.path.join(os.path.dirname(a if m is ma else b), "m.zones.json")), (10,)))
-        idx = np.concatenate([cond, gap])
-        n = np.unique(np.concatenate([m.cells[i] for i in idx]))
-        return {tuple(p) for p in m.points[n]}
-    assert nodes(ma) == nodes(mb), "Leiter- und Spaltknoten haengen vom Abschneidefaktor ab"
+    """Leiter- und Spaltknoten bitgleich fuer sehr verschiedene Abschneidefaktoren."""
+    sets = []
+    for tr, tz in (("1.5", "1.5"), ("3", "4"), ("5", "10")):
+        out, _ = make(("--truncation-radial", tr, "--truncation-axial", tz))
+        m = mc.read_vtk(out)
+        z = mc.read_zones(os.path.splitext(out)[0] + ".zones.json", len(m.comp))
+        sel = np.flatnonzero((m.comp > 0) | (z == 10))
+        n = np.unique(np.concatenate([m.cells[i] for i in sel]))
+        sets.append({tuple(p) for p in m.points[n]})
+    assert sets[0] == sets[1] == sets[2], "Leiter- und Spaltknoten haengen vom Abschneidefaktor ab"
 
 
 def test_counterprobe_wrong_zone_length_rejected():

@@ -158,22 +158,32 @@ class Layout:
         h_plate = PLATE_T / a.plate_nz
         below = graded(Z_COIL0 - self.z_bot, h_coil * a.air_growth, a.air_growth)
         above = graded(self.z_top - zc_hi, h_plate * a.air_growth, a.air_growth)
-        self.z_edges, self.z_class, self.z_iz = [self.z_bot], [], []
-        for i, w in enumerate(below[::-1]):
-            self.z_edges.append(self.z_edges[-1] + w)
+        # Ebenen von den Leitern nach aussen aufgebaut: die Koordinaten der Spulen-,
+        # Spalt- und Plattenebenen sind exakte Formeln der festen Grenzen und
+        # damit fuer jeden Abschneidefaktor bitgleich.
+        edges_below, cum = [], Z_COIL0
+        for w in below:
+            cum -= w
+            edges_below.append(cum)
+        self.z_edges, self.z_class, self.z_iz = list(reversed(edges_below)) + [Z_COIL0], [], []
+        self.z_bot = self.z_edges[0]
+        for i in range(len(below)):
             self.z_class.append(ZBELOW)
             self.z_iz.append(len(below) - i)
-        for cls, z1, n in ((ZCOIL, Z_COIL1, a.coil_nz), (ZGAP, a.plate_z0, a.gap_nz),
-                           (ZPLATE, zc_hi, a.plate_nz)):
-            z0 = self.z_edges[-1]
+        for cls, za, zb, n in ((ZCOIL, Z_COIL0, Z_COIL1, a.coil_nz),
+                               (ZGAP, Z_COIL1, a.plate_z0, a.gap_nz),
+                               (ZPLATE, a.plate_z0, zc_hi, a.plate_nz)):
             for i in range(n):
-                self.z_edges.append(z0 + (z1 - z0) * (i + 1) / n)
+                self.z_edges.append(zb if i == n - 1 else za + (zb - za) * (i + 1) / n)
                 self.z_class.append(cls)
                 self.z_iz.append(0)
+        cum = zc_hi
         for i, w in enumerate(above):
-            self.z_edges.append(self.z_edges[-1] + w)
+            cum += w
+            self.z_edges.append(cum)
             self.z_class.append(ZABOVE)
             self.z_iz.append(i + 1)
+        self.z_top = self.z_edges[-1]
         self.n_below, self.n_above = len(below), len(above)
         self.D = max(self.n_air_r, self.n_below, self.n_above)
 

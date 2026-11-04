@@ -100,6 +100,60 @@ Beanstandung und den eingestellten Abschneidefaktor. Am Schwebegleichgewicht
 (`--plate-z0 11.3`) liefert der Lauf F_z = 1,037 N bei ausgeschöpftem
 Luftgebiet und `--scale 0.75`, Sollwert 1,0497 N.
 
+## `team28_hex_air.py`: Hexaedernetz mit Luft und Zonenkennung
+
+    python3 tools/gmsh/team28_hex_air.py --scale 1 --plate-z0 11.3 -o air_s1_t3.vtk
+
+Für den harmonischen Referenzlöser (`--reference --harmonic`), dessen
+Kopplungsfläche vom äußeren Rand eines mitvernetzten Luftgebiets schrittweise
+auf die Leiteroberflächen verlegt wird
+([Bericht](../../docs/design/reference-harmonic-air.md)). **Braucht kein Gmsh**:
+das strukturierte, rotationssymmetrische Netz (O-Gitter, Kernquadrat mit Ecken
+bei 0,8 · 27 mm, Ringe, geometrisch wachsende Luftschalen) wird direkt mit numpy
+gebaut, deterministisch. Nur Hexaeder, Platte als Vollscheibe.
+
+Ausgabe: `NAME.vtk` (ein `SCALARS component_id`: 1 Außenspule, 2 Innenspule,
+3 Platte, 0 Luft; Einheiten mm) und `NAME.zones.json` mit einer Zone je Zelle in
+der Reihenfolge der VTK (0 für Leiter). Zonen der Luft: 1 bis S Schalengruppen
+außerhalb des Leiterzylinders (1 innen, S außen), 10 Spalt, 11 Kern
+(r < 27 mm), 12 zwischen den Spulen, 13 neben der Platte.
+
+| Option | Vorgabe | Bedeutung |
+|---|---|---|
+| `--scale` | 1.0 | Faktor auf alle Teilungen (`--gap-nz` mindestens 3) |
+| `--n-quarter`, `--coil-nr`, `--coil-nz`, `--plate-nr`, `--plate-nz` | 12, 4, 8, 10, 3 | Teilungen wie bei `team28_hex.py` |
+| `--gap-nz` | 3 | Zellen im Spalt Spule–Platte |
+| `--plate-z0` | 3.8 | Unterkante der Platte in mm |
+| `--truncation-radial`, `--truncation-axial` | 3, 3 | Ausdehnung der Luft / Ausdehnung der Leiter je Achse (Definition wie bei `team28_fem_air.py`) |
+| `--air-growth` | 1.3 | Wachstum der Luftschichten (höchstens 1,35, sonst Sprungfaktor > 2) |
+| `--shells` | 4 | Zahl S der Schalengruppen |
+
+Die Schichten nahe den Leitern hängen nicht vom Abschneidefaktor ab: ein
+größerer Kasten hängt nur äußere Luftschichten an, Leiter- und Spaltknoten sind
+für alle Abschneidefaktoren identisch. Nach dem Schreiben prüft das Werkzeug
+`meshcheck` (nur Hexaeder, konform, Orientierung, Luft umschließt alles, Volumen
+je Leiter gegen das exakte N-Eck), `check_map`, die Zonen, den Sprungfaktor
+benachbarter radialer Zellkanten (höchstens 2), die Abschneidefaktoren, die
+Randknoten und die Schätzung der dichten Algebra; Exit-Code 1 bei Fehler. Mit den
+Vorgaben bei `--scale 1 --plate-z0 11.3`: 47 520 Hexaeder, 4 610 Randknoten,
+kleinste skalierte Jacobi-Determinante 0,707 (Platte und Luft an den Ecken des
+Kernquadrats).
+
+## `tools/strip_air.py`: Luftzonen entfernen
+
+    python3 tools/strip_air.py air_s1_t3.vtk --remove-zones 1-4,12 -o stufe.vtk
+    python3 tools/strip_air.py air_s1_t3.vtk --check-only      # volles Netz
+
+Löscht die Zellen der genannten Zonen, entfernt verwaiste Knoten
+(`solver_vtk.compact_nodes`) und schreibt `stufe.vtk` und `stufe.zones.json`.
+Koordinaten der übrigen Knoten bitgleich, Zellreihenfolge erhalten, nie neu
+vernetzt. Prüft jede Stufe: Rand geschlossen und mannigfaltig (jede Randkante in
+genau zwei Randflächen, um jeden Randknoten ein Fächer), Orientierung, keine
+Kaverne (Flutfüllung gegen die Außenfläche des Elternnetzes), bei einem
+Leiter-only-Netz zusätzlich getrennte Körper; Kennzahlen: Randkomponenten,
+Randknoten, Randflächen, Euler-Charakteristik und Fläche je Komponente, dichte
+Algebra in GiB. Exit-Code 1 bei Fehler.
+
 ## `import_msh.py`: eigene `.msh`- und `.geo`-Dateien
 
     ~/venv-gmsh/bin/python tools/gmsh/import_msh.py netz.msh -o netz.vtk
