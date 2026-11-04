@@ -6,6 +6,16 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `--bem-row-check[=MM]` (nur `--harmonic`, BEM-FEM-Pfad): Gegenprobe 2. Setzt das exakte
+  Biot-Savart-Paar (A_ex als Kantenintegrale, K1 = (dA/dn)_tan, K2 = -n x B / mu0) in beide
+  Blockzeilen des produktiven Pfads ein und druckt Residuentabellen je Körper und Quadklasse;
+  endet vor dem Lösen. Nur lesend (neu: `CoupledMVOperator::row_check_parts`, ohne Änderung an
+  einem bestehenden Operator); ohne die Option bleibt der Pfad bitgleich. Befund
+  (`docs/design/bem-row-check.md`): Die Operatoren erfüllen mit dem exakten Paar keine der beiden
+  Zeilen, auch nicht auf ebenen Quads (K1 = K2); gemessen sind vier Umsetzungsbefunde (Rooftop-
+  Rekonstruktion der Randspur, Quadreihenfolge im T-Kernel, Vorzeichen von T, D-Zeile als
+  Innenraumidentität). Mit exakten Randintegralen erfüllt K2 die FEM-Zeile, mit konsistenter
+  Darstellung und umgekehrtem D-Vorzeichen K1 die BEM-Zeile. Nichts repariert.
 - BEM-Kopplung am Knoten-Referenzlöser mit Luftgebiet
   (`docs/design/reference-harmonic-air.md`): `tools/gmsh/team28_hex_air.py`
   (Hexaedernetz mit zonenmarkierter Luft), `tools/strip_air.py` (Luftzellen
