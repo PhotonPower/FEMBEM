@@ -17,6 +17,22 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
   der nach innen rückenden Kopplungsfläche driftet bis B_S um −0,76 % und
   fällt mit feinerem Netz (−2,56 / −0,76 / −0,39 % bei Skalierung
   0,5 / 1,0 / 1,5). Bestehende Pfade unverändert (Gegenprobe 0,85333 N).
+- Feldvergleich Referenzpfad gegen BEM-FEM harmonisch
+  (`docs/design/field-comparison-reference-vs-bemfem.md`). Neu:
+  `--reference --harmonic --fixed-plate --harmonic-field-dump=DATEI`
+  schreibt A und B = rot A (Q1-Felder, Schwerpunkt) je Hexaeder im Format des
+  BEM-FEM-Dumps (eigener Schreiber `src/ReferenceFieldDump.cu`, Host-Test
+  `test_reference_field_dump` mit Gegenproben), und `tools/compare_fields.py`
+  vergleicht zwei Dumps je Körper, Phase und Randtiefe (Projektion, L2-Fehler,
+  Betragsverhältnis, B_φ-Anteil; optional Biot-Savart und Ringmodell; Test
+  `tools/tests/test_compare_fields.py`). Befund auf `--scale 1.0`, 2 Hz:
+  BEM-FEM-Feld in der Platte praktisch unkorreliert zur Referenz (Projektion
+  +0,035, 3,7-facher Betrag), Spulen +0,87 / +0,52 bei 3-fachem Betrag; der
+  Fehler sitzt schon im Spuleninneren, wächst im Betrag zum Rand, ist
+  frequenzabhängig (Referenz nicht) und hat im Spulenkörper einen um zwei bis
+  drei Größenordnungen zu großen Imaginärteil. `--scale 1.5` passt nicht in
+  den GPU-Speicher (59,7 GiB gegen 48 GiB). Produktiver Pfad und Löser
+  unverändert.
 - `tools/reference_series.py`: Netzserie für den harmonischen
   Referenzlöser. Erzeugt Netze mit `team28_hex.py`, schätzt vor jedem Lauf
   Randknoten und Speicher der dichten BEM, rechnet, tabelliert und endet
@@ -119,6 +135,16 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Geändert
 
+- Standardnetz ist jetzt `data/team28/team28_hex.vtk` (Gmsh-Hexaeder,
+  `tools/gmsh/team28_hex.py --scale 1.0`, 4944 Zellen) statt `team28.vtk`
+  (4805 Zellen, bleibt unverändert als Legacy-Netz, `--mesh=team28.vtk`).
+  Betroffen: Vorgabe von `--mesh`, CMake kopiert beide Netze ins
+  Build-Verzeichnis, Hilfetext, CI (`check_map` und `meshcheck` für beide
+  Dateien, ohne Byte-Vergleich mit Gmsh-Ausgabe). Referenzpfad bei 11,3 mm:
+  0,96649 N statt 0,94356 N (Ringmodell 1,0068 N). Tests: `test_determinism_fingerprint`
+  bleibt ausdrücklich auf `team28.vtk` (Prüfsummen), `test_bem_index_mapping`,
+  `test_cohomology_gauge` und `test_tree_cotree_gauge` laufen auf dem neuen
+  Standard. Löser unverändert. Siehe `docs/design/standard-mesh-switch.md`.
 - Bericht `docs/design/gmsh-phase9-report.md`: Der Rand des Luftgebiets
   trägt −0,77 % (unabhängig von der Spulenauflösung); FEM-direkt liegt
   hochgerechnet +0,8 … +1,0 % (11,3 mm) und +0,5 … +0,6 % (3,8 mm) über dem

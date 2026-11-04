@@ -69,8 +69,9 @@ Kombination voraussichtlich nicht passt.
 ## Ausführen
 
 Aus dem **Build-Verzeichnis** starten (`cd build`). CMake kopiert das
-Standardnetz `data/team28/team28.vtk` beim Konfigurieren dorthin; `src/fem.cu`
-öffnet es über den relativen Namen `team28.vtk`, und die Ausgabedateien
+Standardnetz `data/team28/team28_hex.vtk` (und das Legacy-Netz `team28.vtk`)
+beim Konfigurieren dorthin; das Programm öffnet das Standardnetz über den
+relativen Namen `team28_hex.vtk` (anderes Netz: `--mesh=`), und die Ausgabedateien
 `team28_out_NNNN.vtk` landen ebenfalls im Arbeitsverzeichnis. Von einem
 anderen Verzeichnis aus: `--mesh=PFAD`. Unter Windows liegt die Datei
 `fembem.exe` in `build\Release\`, das Netz aber in `build\`; dort aus `build\`

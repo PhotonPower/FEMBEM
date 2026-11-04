@@ -189,6 +189,7 @@ set(SOURCES
     src/DenseLinalg.cu          # dichte LU (cuSOLVER / eigene)
     src/ReferenceSolver.cu      # Baseline Knoten-FEM + vollbesetzte BEM
     src/ReferenceHarmonic.cu    # Referenzloeser im Frequenzbereich (FGMRES)
+    src/ReferenceFieldDump.cu   # Felddump des harmonischen Referenzpfads
     src/MeshRefinement.cu       # uniforme Verfeinerung (--refine=N)
     src/BiotSavart.cpp          # analytische Referenz (--verify-field)
     src/FieldVerification.cpp   # gemeinsamer Vergleich beider Loeserpfade
@@ -286,8 +287,15 @@ endif()
 # Daten und Tests
 # =============================================================================
 # Das Standardnetz liegt unter data/team28/. Programm und Tests oeffnen es ueber
-# den relativen Namen "team28.vtk", also wird es ins Build-Verzeichnis kopiert
-# (CTest startet die Tests dort).
+# den relativen Namen "team28_hex.vtk" (Gmsh-Hexaeder, team28_hex.py --scale 1.0,
+# 4944 Zellen), also wird es ins Build-Verzeichnis kopiert (CTest startet die
+# Tests dort). Das alte Netz team28.vtk (4805 Zellen) bleibt als Legacy-Netz
+# erhalten und wird mitkopiert: Tests mit festen Erwartungen daran (Pruefsummen)
+# und Vergleichslaeufe mit --mesh=team28.vtk brauchen es.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28_hex.vtk"
+    "${CMAKE_CURRENT_BINARY_DIR}/team28_hex.vtk"
+    COPYONLY)
 configure_file(
     "${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk"
     "${CMAKE_CURRENT_BINARY_DIR}/team28.vtk"
@@ -834,6 +842,14 @@ if (FEMBEM_OPENMP_AVAILABLE)
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${FEMBEM_OMP_NVCC_FLAGS}>)
 endif()
 
+# Felddump des harmonischen Referenzpfads: Rundlauf (host)
+add_executable(test_reference_field_dump
+    tests/test_reference_field_dump.cu
+    src/ReferenceFieldDump.cu
+)
+target_include_directories(test_reference_field_dump PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_reference_field_dump PRIVATE CUDA::cudart)
+
 # Unsymmetrie-Schaetzer
 add_executable(test_asymmetry_estimator tests/test_asymmetry_estimator.cu)
 target_include_directories(test_asymmetry_estimator PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -956,8 +972,8 @@ endif()
 # Die Marke "host" kennzeichnet Tests, die OHNE GPU auskommen. Sie bauen ihre
 # Netze und Matrizen selbst und lesen keine Datei von der Platte, laufen also
 # auch in einem leeren Arbeitsverzeichnis und in einer CI ohne Grafikkarte.
-# Die uebrigen Tests brauchen teils eine GPU, teils das Netz team28.vtk
-# (liegt im Build-Verzeichnis); sie laufen mit "ctest" ohne -L.
+# Die uebrigen Tests brauchen teils eine GPU, teils ein Netz (team28_hex.vtk
+# und team28.vtk liegen im Build-Verzeichnis); sie laufen mit "ctest" ohne -L.
 if (FEMBEM_BUILD_TESTS)
 enable_testing()
 
@@ -999,6 +1015,8 @@ set_tests_properties(test_dense_direct PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_harmonic_phase_average COMMAND test_harmonic_phase_average)
 add_test(NAME test_reference_harmonic COMMAND test_reference_harmonic)
 set_tests_properties(test_reference_harmonic PROPERTIES LABELS "host" TIMEOUT 120)
+add_test(NAME test_reference_field_dump COMMAND test_reference_field_dump)
+set_tests_properties(test_reference_field_dump PROPERTIES LABELS "host" TIMEOUT 120)
 set_tests_properties(test_harmonic_phase_average PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_block_preconditioner_study COMMAND test_block_preconditioner_study)
 set_tests_properties(test_block_preconditioner_study PROPERTIES LABELS "host" TIMEOUT 600)
@@ -1037,15 +1055,20 @@ set_tests_properties(test_fem_direct_preflight PROPERTIES LABELS "host" TIMEOUT 
 # Die uebrigen Tests: teils GPU-abhaengig, teils auf Netzdateien im
 # Arbeitsverzeichnis angewiesen. Registriert, aber ohne die Marke "host" --
 # wer sie laufen lassen will, ruft ctest ohne -L auf.
-add_test(NAME test_bem_index_mapping COMMAND test_bem_index_mapping)
+# Netzdatei je Test ausdruecklich (Argument 1), nicht ueber die Vorgabe im Test.
+# Pruefsummen und feste Zaehlwerte haengen an team28.vtk (Legacy-Netz); die
+# strukturellen Tests (Abbildung, Eichung) gelten fuer jedes Netz und laufen auf
+# dem Standardnetz.
+add_test(NAME test_bem_index_mapping COMMAND test_bem_index_mapping team28_hex.vtk)
 set_tests_properties(test_bem_index_mapping PROPERTIES TIMEOUT 900)
 add_test(NAME test_free_motion_gate COMMAND test_free_motion_gate)
 set_tests_properties(test_free_motion_gate PROPERTIES TIMEOUT 900)
-add_test(NAME test_tree_cotree_gauge COMMAND test_tree_cotree_gauge)
+add_test(NAME test_tree_cotree_gauge COMMAND test_tree_cotree_gauge team28_hex.vtk)
 set_tests_properties(test_tree_cotree_gauge PROPERTIES TIMEOUT 900)
-add_test(NAME test_cohomology_gauge COMMAND test_cohomology_gauge)
+add_test(NAME test_cohomology_gauge COMMAND test_cohomology_gauge team28_hex.vtk)
 set_tests_properties(test_cohomology_gauge PROPERTIES TIMEOUT 900)
-add_test(NAME test_determinism_fingerprint COMMAND test_determinism_fingerprint)
+# Die Pruefsummen in tests/README.md gehoeren zu team28.vtk.
+add_test(NAME test_determinism_fingerprint COMMAND test_determinism_fingerprint team28.vtk)
 set_tests_properties(test_determinism_fingerprint PROPERTIES TIMEOUT 900)
 add_test(NAME test_cpu_backend COMMAND test_cpu_backend)
 set_tests_properties(test_cpu_backend PROPERTIES TIMEOUT 900)
@@ -1094,6 +1117,7 @@ add_custom_target(host_tests DEPENDS
     test_dense_direct
     test_harmonic_phase_average
     test_reference_harmonic
+    test_reference_field_dump
     test_block_preconditioner_study
     test_nedelec_prism
     test_nedelec_tet
@@ -1136,10 +1160,23 @@ if (_fembem_py_numpy EQUAL 0)
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_meshcheck.py)
     add_test(NAME tools_check_map_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_check_map.py)
+    # Beide Dateien: Standardnetz (Gmsh) und Legacy-Netz. Nur meshcheck und
+    # check_map, kein Byte-Vergleich mit einer frischen Gmsh-Ausgabe (die
+    # Gmsh-Version kann abweichen).
     add_test(NAME tools_standard_mesh
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/meshcheck.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28_hex.vtk
+                     --require-hex --separate-bodies)
+    add_test(NAME tools_legacy_mesh
              COMMAND ${Python3_EXECUTABLE} ${_tools}/meshcheck.py
                      ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk
                      --require-hex --separate-bodies)
+    add_test(NAME tools_standard_mesh_map
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/check_map.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28_hex.vtk)
+    add_test(NAME tools_legacy_mesh_map
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/check_map.py
+                     ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk)
     add_test(NAME tools_team28_axisymmetric_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_axisymmetric.py)
     add_test(NAME tools_team28_hex_air_tests
@@ -1148,9 +1185,13 @@ if (_fembem_py_numpy EQUAL 0)
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_strip_air.py)
     add_test(NAME tools_compare_a_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_compare_a.py)
+    add_test(NAME tools_compare_fields_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_compare_fields.py)
     set_tests_properties(tools_meshcheck_tests tools_check_map_tests tools_standard_mesh
+                         tools_legacy_mesh tools_standard_mesh_map tools_legacy_mesh_map
                          tools_team28_axisymmetric_tests tools_team28_hex_air_tests
                          tools_strip_air_tests tools_compare_a_tests
+                         tools_compare_fields_tests
                          PROPERTIES LABELS "tools" TIMEOUT 120)
     # Ketten-Rauchtest (ohne Marke, braucht fembem und eine GPU): D, B0 und B_end
     # auf dem Luftnetz scale 0.5 bei 11,3 mm laufen, konvergieren, Exit-Code 0.
