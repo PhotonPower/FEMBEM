@@ -108,6 +108,13 @@ extern bool g_no_conductor_penalty;
 /// "Dirichlet" der Abschneidestudie (docs/design/reference-harmonic-air.md).
 extern bool g_reference_dirichlet;
 
+/// --bem-row-check[=ABSTAND_MM]. Nur mit --harmonic (BEM-FEM-Pfad, nicht
+/// --reference): Gegenprobe 2, setzt das exakte Biot-Savart-Paar (a_ex, K) in
+/// beide Blockzeilen ein, gibt die Residuentabellen aus und endet vor dem
+/// Loesen. Wert = Fadenabstand der Spulenquelle in mm (Standard 0.5);
+/// negativ = aus. Siehe docs/design/bem-row-check.md.
+extern double g_bem_row_check_mm;
+
 /// --reference-dump-a=DATEI. Nur im harmonischen Referenzpfad: A_r und A_i an
 /// allen Leiterknoten als CSV (x_m,y_m,z_m,comp,Ar_x,..,Ai_z), Werte mit %.17g.
 /// Auswertung mit tools/compare_a.py. Leer = keine Ausgabe.
@@ -476,6 +483,7 @@ inline bool verify_field()          { return g_verify_field; }
 inline bool no_conductor_penalty()  { return g_no_conductor_penalty; }
 inline bool   fixed_plate()         { return g_fixed_plate; }
 inline bool   reference_dirichlet() { return g_reference_dirichlet; }
+inline double bem_row_check_mm()   { return g_bem_row_check_mm; }
 inline const std::string& reference_dump_a() { return g_reference_dump_a; }
 inline double plate_z_mm()          { return g_plate_z_mm; }
 // --fem-direct zaehlt hier mit: dieser Pfad entfernt den Curl-Curl-Nullraum

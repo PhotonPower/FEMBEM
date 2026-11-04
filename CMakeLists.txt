@@ -190,6 +190,7 @@ set(SOURCES
     src/ReferenceSolver.cu      # Baseline Knoten-FEM + vollbesetzte BEM
     src/ReferenceHarmonic.cu    # Referenzloeser im Frequenzbereich (FGMRES)
     src/ReferenceFieldDump.cu   # Felddump des harmonischen Referenzpfads
+    src/BemRowCheck.cu          # Gegenprobe 2 (--bem-row-check)
     src/MeshRefinement.cu       # uniforme Verfeinerung (--refine=N)
     src/BiotSavart.cpp          # analytische Referenz (--verify-field)
     src/FieldVerification.cpp   # gemeinsamer Vergleich beider Loeserpfade

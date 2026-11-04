@@ -1270,6 +1270,42 @@ void CoupledMVOperator::apply_physical(const double* d_x, double* d_y) {
     }
 }
 
+// Nur lesende Diagnose, siehe CoupledSolver.cuh (row_check_parts): dieselben
+// Kernel und Bloecke wie apply_physical(), einzeln auf (a, k) angewandt.
+void CoupledMVOperator::row_check_parts(const double* d_a, const double* d_k,
+                                        double* d_TK_A, double* d_TA_K,
+                                        double* d_Da_K, double* d_Gk_K,
+                                        const double* d_xbem_in) {
+    if (num_bem_dofs <= 0 || m_num_boundary_faces <= 0 || d_mesh_faces == nullptr ||
+        d_mesh_nodes == nullptr) {
+        throw std::runtime_error(
+            "row_check_parts: BEM-Kopplung oder setup_bem_mesh() fehlt.");
+    }
+    const size_t nb = static_cast<size_t>(num_bem_dofs);
+    bf::memset_d(d_TK_A, 0, static_cast<size_t>(total_dofs) * sizeof(double));
+    bf::memset_d(d_TA_K, 0, nb * sizeof(double));
+    bf::memset_d(d_Da_K, 0, nb * sizeof(double));
+    bf::memset_d(d_Gk_K, 0, nb * sizeof(double));
+
+    // y_A = -T k, y_K = -0.5 T a (apply_T_matrix_kernel: y_A -= T x_K, y_K -= 0.5 T x_A)
+    BF_LAUNCH_1D(apply_T_matrix_kernel, m_num_boundary_faces,
+        m_num_boundary_faces, d_mesh_faces, d_mesh_nodes,
+        d_bem_to_fem, d_bem_sign, d_a, d_k, d_TK_A, d_TA_K);
+
+    // -D_BEM a und +mu0 G k getrennt: einmal mit x_k = 0, einmal mit x_bem = 0
+    DeviceArray<double> d_xbem(nb), d_zero(nb);
+    bf::memset_d(d_zero.data(), 0, nb * sizeof(double));
+    if (d_xbem_in != nullptr) {
+        bf::memcpy_d(d_xbem.data(), d_xbem_in, nb * sizeof(double), cudaMemcpyDeviceToDevice);
+    } else {
+        BF_LAUNCH_1D_PAR(k_gather_bem, num_bem_dofs,
+            d_a, d_bem_to_fem, d_bem_sign, d_xbem.data(), num_bem_dofs);
+    }
+    apply_bem_blocks(d_xbem.data(), d_zero.data(), d_Da_K);
+    apply_bem_blocks(d_zero.data(), d_k, d_Gk_K);
+    bf::sync();
+}
+
 // y_K += -D_BEM x_bem + mu0 G x_K, je Block ein bis zwei Matrix-Vektor-Produkte
 // (aus apply_physical() herausgezogen, damit apply_many() die Bloecke
 // gesammelt rechnen kann, siehe apply_bem_blocks_many()).
