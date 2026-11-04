@@ -4,6 +4,21 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unveröffentlicht]
 
+### Geändert
+
+- BEM-Kopplung: vier Umsetzungsfehler behoben (`docs/design/bem-coupling-fixes.md`; Befunde aus
+  `bem-row-check.md`). (b) T-Geometrie in BEM-Reihenfolge (`bem_ordered_boundary_faces`); (c)
+  Vorzeichen der T-Anwendung: Zeile 1 nur `sign[r]`, Zeile 2 nur `sign[c]`; (a) kovariante
+  Spurfunktionen statt Rooftop-Flussfunktionen in `evaluate_rooftop_basis` (Kantenintegral 1 statt
+  2a/b, gilt für G, D, T und alle Sauter-Schwab-Pfade); (d) K-Zeile als Außenraum-Calderón-Beziehung
+  `(+½T − D) a + µ0 G k = 0` (Vorzeichen des ½T-Terms). **Das Verhalten des produktiven Pfads
+  ändert sich, auch im transienten Lauf** (gleicher Operator). Gemessen bei 50 Hz, 11,3 mm, hex_s1:
+  F_z −25,2 N → +0,545 N (Referenzpfad 0,9665 N), äußere Iterationen 24 → 19; die Projektion der
+  Plattenfelder auf Biot-Savart 0,02 → 1,08. Das Feld ist damit **noch nicht richtig** (F_z −44 %,
+  Imaginärteile der Spulen zu groß); die K1/K2-Formulierungsfrage ist unverändert offen.
+  Tests: `test_bem_coupling_geometry`, `test_bem_calderon` neu; `test_coupling_sign_convention` und
+  `test_singular_quadrature` angepasst (Erwartungen hingen an der alten Konvention bzw. Basis).
+
 ### Hinzugefügt
 
 - `--bem-row-check[=MM]` (nur `--harmonic`, BEM-FEM-Pfad): Gegenprobe 2. Setzt das exakte
