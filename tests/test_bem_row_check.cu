@@ -204,12 +204,29 @@ static void test_projection() {
     check(worst < 1e-10, "Rundlauf: Koeffizienten -> Feld -> Projektion", worst, 1e-10);
     check(worst_bad > 1e-3, "Gegenprobe: Projektion ohne Massenmatrix wird erkannt", worst_bad, 1e-3);
 
-    // Kantenintegral eines konstanten Feldes gegen den Rooftop-Koeffizienten.
-    // Konstantes A = (1,0,0): Kantenintegral der Kante {0,1} (in +x) = 2a. Das
-    // Rooftop-Feld sum a_i W_i hat im Zentrum die Tangentialkomponente
-    // (a_0 W_0 + a_2 W_2).x. Das Verhaeltnis zu A_x ist gemessen und wird mit der
-    // Vorhersage 2 a / b (u-Kanten) verglichen.
-    double worst_ratio = 0;
+    // Kantenintegral eines konstanten Feldes gegen den Koeffizienten. Konstantes
+    // A = (1,0,0): Kantenintegral der lokalen Kante i ist A . (p_{i+1} - p_i). Die
+    // Rekonstruktion sum a_i W_i muss im Zentrum A_x = 1 liefern, fuer JEDES
+    // Seitenverhaeltnis a/b (kovariante Spurfunktionen). Gegenprobe: die fruehere
+    // kontravariante Fluss-Funktion (0.5 (1-v)/detJ dr_du usw.) liefert 2a/b.
+    auto old_value = [](const QuadGeom& q, const double c[4]) {
+        // fruehere Rooftop-Funktion, nur fuer die Gegenprobe
+        const double u = 0.0, v = 0.0;
+        const double3* nd = q.n;
+        const V3 dru{0.25 * (-(1 - v) * nd[0].x + (1 - v) * nd[1].x + (1 + v) * nd[2].x - (1 + v) * nd[3].x),
+                     0.25 * (-(1 - v) * nd[0].y + (1 - v) * nd[1].y + (1 + v) * nd[2].y - (1 + v) * nd[3].y),
+                     0.25 * (-(1 - v) * nd[0].z + (1 - v) * nd[1].z + (1 + v) * nd[2].z - (1 + v) * nd[3].z)};
+        const V3 drv{0.25 * (-(1 - u) * nd[0].x - (1 + u) * nd[1].x + (1 + u) * nd[2].x + (1 - u) * nd[3].x),
+                     0.25 * (-(1 - u) * nd[0].y - (1 + u) * nd[1].y + (1 + u) * nd[2].y + (1 - u) * nd[3].y),
+                     0.25 * (-(1 - u) * nd[0].z - (1 + u) * nd[1].z + (1 + u) * nd[2].z + (1 - u) * nd[3].z)};
+        const double detJ = norm(cross(dru, drv));
+        const V3 W[4] = {(0.5 * (1 - v) / detJ) * dru, (0.5 * (1 + u) / detJ) * drv,
+                         (-0.5 * (1 + v) / detJ) * dru, (-0.5 * (1 - u) / detJ) * drv};
+        V3 s;
+        for (int i = 0; i < 4; ++i) s = s + c[i] * W[i];
+        return s;
+    };
+    double worst_ratio = 0, worst_old = 1e300;
     for (double ab : {1.0, 2.0, 0.5}) {
         QuadGeom q = make_quad(0.01 * ab, 0.01, 0.0);
         const V3 A{1.0, 0.0, 0.0};
@@ -219,14 +236,49 @@ static void test_projection() {
             c[i] = dot(A, p1 - p0);   // Kantenintegral in lokaler Richtung
         }
         const V3 rec = rooftop_value(q, c, 0.0, 0.0);
-        const double measured = rec.x;               // Soll bei richtiger Skalierung: 1
-        const double predicted = 2.0 * ab;           // 2 * (a/b)
-        std::printf("      a/b = %.1f: Rooftop-Rekonstruktion von A_x = 1 ergibt %.6f "
-                    "(Vorhersage 2a/b = %.6f)\n", ab, measured, predicted);
-        worst_ratio = std::max(worst_ratio, std::fabs(measured - predicted));
+        const double old = old_value(q, c).x;
+        std::printf("      a/b = %.1f: Rekonstruktion von A_x = 1: kovariant %.6f, alte Fluss-Funktion %.6f (2a/b = %.6f)\n",
+                    ab, rec.x, old, 2.0 * ab);
+        worst_ratio = std::max(worst_ratio, std::fabs(rec.x - 1.0));
+        worst_old = std::min(worst_old, std::fabs(old - 2.0 * ab));
     }
-    check(worst_ratio < 1e-10, "Rekonstruktion aus Kantenintegralen = 2a/b (Messung = Vorhersage)",
-          worst_ratio, 1e-10);
+    check(worst_ratio < 1e-12, "kovariante Basis: Rekonstruktion aus Kantenintegralen = 1 fuer a/b = 1, 2, 0.5",
+          worst_ratio, 1e-12);
+    check(worst_old < 1e-10, "Gegenprobe: die alte Fluss-Funktion liefert 2a/b (Messung = Vorhersage)",
+          worst_old, 1e-10);
+
+    // Kantenintegral der Basisfunktion selbst: int W_i . dr = 1 auf der eigenen Kante, 0 auf
+    // den anderen (schiefes, verzerrtes Quad)
+    {
+        QuadGeom q = make_quad(0.013, 0.007, 0.003);
+        double detJ; double3 W[4];
+        double worst = 0;
+        double x[4], w[4];
+        gauss4(x, w);
+        for (int e = 0; e < 4; ++e) {
+            double sum[4] = {0, 0, 0, 0};
+            for (int g = 0; g < 4; ++g) {
+                // Kante e als Parameterlinie: e=0: v=-1, u in [-1,1]; e=1: u=1, v; e=2: v=1, u von 1 nach -1;
+                // e=3: u=-1, v von 1 nach -1
+                double uu, vv, du, dv;
+                const double t = x[g];
+                if (e == 0) { uu = t; vv = -1; du = 1; dv = 0; }
+                else if (e == 1) { uu = 1; vv = t; du = 0; dv = 1; }
+                else if (e == 2) { uu = -t; vv = 1; du = -1; dv = 0; }
+                else { uu = -1; vv = -t; du = 0; dv = -1; }
+                evaluate_rooftop_basis(uu, vv, q.n, W, detJ);
+                // dr/dt = dr_du * du + dr_dv * dv (an der Stelle)
+                const double h = 1e-7;
+                const V3 pa = quad_point(q.n, uu + h * du, vv + h * dv), pb = quad_point(q.n, uu - h * du, vv - h * dv);
+                const V3 dr = (1.0 / (2 * h)) * (pa - pb);
+                for (int i = 0; i < 4; ++i) sum[i] += w[g] * dot(to_v3(W[i]), dr);
+            }
+            for (int i = 0; i < 4; ++i)
+                worst = std::max(worst, std::fabs(sum[i] - (i == e ? 1.0 : 0.0)));
+        }
+        check(worst < 1e-6, "Kantenintegral der Basisfunktion i auf Kante j = Kronecker-Delta (verzerrtes Quad)",
+              worst, 1e-6);
+    }
 }
 
 // ---------------------------------------------------------------------------

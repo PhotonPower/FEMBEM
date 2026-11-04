@@ -55,28 +55,45 @@ __host__ __device__ inline void evaluate_rooftop_basis(double u, double v, const
     double3 normal = cross3(dr_du, dr_dv);
     detJ = norm3(normal); // Flächenelement dS = detJ * du * dv
 
-    // Kovariante Basis für Rooftop (Tangentialkomponente)
-    // Division durch detJ stellt Piola-Transformation für 2D sicher (Erhalt des Normalenflusses)
+    // KOVARIANTE Spurfunktionen (Nédélec-Spur der Hexaederfunktionen auf der
+    // Randflaeche), nicht die kontravariante Fluss-Abbildung.
     //
-    // ORIENTIERUNG (FIX): Die Basisfunktion muss entlang der Kantenrichtung der
-    // Topologietabelle zeigen. TopologyExtractor::extract_boundary_faces
-    // verwendet zyklisch {0,1}, {1,2}, {2,3}, {3,0}, und
-    // mesh.boundary_edge_signs korrigiert nur lokale gegen globale Orientierung
-    // (v_min -> v_max), nicht lokale Kante gegen Referenzachse.
+    // Frueher: W_0 = 0.5 (1-v) / detJ * dr_du usw. -- das ist die kontravariante
+    // (Fluss-)Piola-Abbildung. Ihr Kantenintegral ist 2a/b statt 1 (a, b die
+    // Halbseiten in u und v einer Rechteckzelle): fuer a = b der Faktor 2, bei
+    // anisotropen Panels bis 6 (docs/design/bem-row-check.md). Die Identifikation
+    // "Koeffizient = Kantenintegral von A" (Gather in fem.cu) setzt aber die
+    // kovariante, tangential stetige Spur voraus.
     //
-    // Mit dem bilinearen Mapping (Knoten 0..3 auf (-1,-1),(+1,-1),(+1,+1),(-1,+1))
-    // gilt:
-    //   +dr_du bei v=-1  ->  n0 -> n1   passt zu Kante 0 = {0,1}
-    //   +dr_dv bei u=+1  ->  n1 -> n2   passt zu Kante 1 = {1,2}
-    //   +dr_du bei v=+1  ->  n3 -> n2   Kante 2 = {2,3} laeuft aber n2 -> n3
-    //   +dr_dv bei u=-1  ->  n0 -> n3   Kante 3 = {3,0} laeuft aber n3 -> n0
+    // Jetzt: mit der reziproken Basis der Flaeche
+    //     g^u = (dr_dv x N) / |N|^2,   g^v = (N x dr_du) / |N|^2,   N = dr_du x dr_dv
+    // (g^u . dr_du = 1, g^u . dr_dv = 0, g^v . dr_dv = 1, g^v . dr_du = 0) ist
+    //     W_0 =  1/4 (1-v) g^u     Kante {0,1}, n0 -> n1
+    //     W_1 =  1/4 (1+u) g^v     Kante {1,2}, n1 -> n2
+    //     W_2 = -1/4 (1+v) g^u     Kante {2,3}, n2 -> n3
+    //     W_3 = -1/4 (1-u) g^v     Kante {3,0}, n3 -> n0
+    // Das ist genau die Einschraenkung von evaluate_nedelec_basis (NedelecHexahedron
+    // .cuh, Faktor 1/8 (1-eta)(1-zeta) bei zeta = -1: 1/4 (1-eta)) auf die Flaeche.
+    // Das Kantenintegral entlang der lokalen Kante ist exakt 1, die Tangentialkomponente
+    // ist ueber Quadgrenzen stetig.
     //
-    // Die Kanten 2 und 3 brauchen daher ein Minuszeichen. Vorher fehlte es, was
-    // in der Kopplung nicht auffangbar war.
-    W[0] = scale3( 0.5 * (1.0 - v) / detJ, dr_du); // Kante {0,1}, n0 -> n1
-    W[1] = scale3( 0.5 * (1.0 + u) / detJ, dr_dv); // Kante {1,2}, n1 -> n2
-    W[2] = scale3(-0.5 * (1.0 + v) / detJ, dr_du); // Kante {2,3}, n2 -> n3
-    W[3] = scale3(-0.5 * (1.0 - u) / detJ, dr_dv); // Kante {3,0}, n3 -> n0
+    // ORIENTIERUNG: die Basisfunktion zeigt entlang der Kantenrichtung der
+    // Topologietabelle {0,1}, {1,2}, {2,3}, {3,0}
+    // (TopologyExtractor::extract_boundary_faces). mesh.boundary_edge_signs
+    // korrigiert nur lokale gegen globale Orientierung (v_min -> v_max). Mit dem
+    // bilinearen Mapping (Knoten 0..3 auf (-1,-1),(+1,-1),(+1,+1),(-1,+1)) laufen
+    // die Kanten 2 und 3 gegen +u bzw. +v; daher das Minuszeichen dort.
+    if (!(detJ > 0.0)) {   // entartetes Quad: keine Basis (frueher Division durch null)
+        for (int i = 0; i < 4; ++i) W[i] = make_double3(0.0, 0.0, 0.0);
+        return;
+    }
+    const double inv_n2 = 1.0 / (detJ * detJ);
+    const double3 gu = scale3(inv_n2, cross3(dr_dv, normal));
+    const double3 gv = scale3(inv_n2, cross3(normal, dr_du));
+    W[0] = scale3( 0.25 * (1.0 - v), gu);
+    W[1] = scale3( 0.25 * (1.0 + u), gv);
+    W[2] = scale3(-0.25 * (1.0 + v), gu);
+    W[3] = scale3(-0.25 * (1.0 - u), gv);
 }
 
 
