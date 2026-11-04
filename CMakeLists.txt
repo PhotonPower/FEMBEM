@@ -343,6 +343,18 @@ add_executable(test_coupling_sign_convention
 target_include_directories(test_coupling_sign_convention PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_coupling_sign_convention PRIVATE CUDA::cudart)
 
+# 🧪 T-Kopplung gegen dichte Host-Referenz auf einem Netz mit perm != id
+add_executable(test_bem_coupling_geometry
+    tests/test_bem_coupling_geometry.cu
+    src/Backend.cu              # bf::-Symbole fuer DeviceArray
+    src/VtkReader.cpp
+    src/TopologyExtractor.cpp
+    src/ClusterTree.cpp
+    src/BemCoupling.cpp
+)
+target_include_directories(test_bem_coupling_geometry PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_bem_coupling_geometry PRIVATE CUDA::cudart)
+
 # 🧪 Gegenprobe 2 (--bem-row-check): Feldauswertung, Projektion, Residuen
 # Reiner Host-Code (include/BemRowCheck.h), ohne GPU und ohne Netz.
 add_executable(test_bem_row_check
@@ -994,6 +1006,8 @@ endforeach()
 
 add_test(NAME test_coupling_sign_convention COMMAND test_coupling_sign_convention)
 set_tests_properties(test_coupling_sign_convention PROPERTIES LABELS "host" TIMEOUT 600)
+add_test(NAME test_bem_coupling_geometry COMMAND test_bem_coupling_geometry ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk)
+set_tests_properties(test_bem_coupling_geometry PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_bem_row_check COMMAND test_bem_row_check)
 set_tests_properties(test_bem_row_check PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_block_triangular_consistency COMMAND test_block_triangular_consistency)
@@ -1114,6 +1128,7 @@ add_custom_target(host_tests DEPENDS
     test_curl_gradient_nullspace
     test_coupling_sign_convention
     test_bem_row_check
+    test_bem_coupling_geometry
     test_block_triangular_consistency
     test_norm_nan_propagation
     test_dgemv_beta_zero

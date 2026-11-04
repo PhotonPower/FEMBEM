@@ -37,6 +37,10 @@ using namespace bem_row_check;
 
 namespace {
 
+// Zustand des Operators, den die Host-Nachrechnung V0 abbildet (je Korrekturschritt nachgezogen)
+constexpr bool kOpPermGeom = true;     // Schritt 1: T-Geometrie in BEM-Reihenfolge
+constexpr bool kOpConsistent = false;  // Schritt 2: konsistente Vorzeichen
+
 constexpr int kNumBodies = 3;                       // 1 Platte, 2 Innen-, 3 Aussenspule
 const char* kBodyName[kNumBodies] = {"Platte", "Innenspule", "Aussenspule"};
 constexpr int kNumLabels = kNumBodies * kNumClasses;
@@ -380,7 +384,7 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
 
     // -- T-Kontrolle: Operator gegen Host-Nachrechnung ---------------------------------
     std::vector<double> yA0, yK0, yA1, yK1, yA2, yK2;
-    host_T_apply(P, false, false, a_ex, k1, yA0, yK0);   // V0: wie der Operator indexiert
+    host_T_apply(P, kOpPermGeom, kOpConsistent, a_ex, k1, yA0, yK0);   // V0: wie der Operator rechnet
     host_T_apply(P, true, false, a_ex, k1, yA1, yK1);    // V1: Geometrie des Quads perm[pos]
     host_T_apply(P, true, true, a_ex, k1, yA2, yK2);     // V2: V1 plus konsistente Vorzeichen
     std::printf("[RowCheck] T-Kontrolle (Operator gegen Host, k = k1): "

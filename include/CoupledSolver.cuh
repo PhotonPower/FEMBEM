@@ -518,7 +518,9 @@ public:
     void setup_bem_coupling(int num_bem_dofs_in, const int* d_map, const int* d_sign);
 
     // Geometrie fuer die T-Massenmatrix-Anwendung (siehe
-    // apply_T_matrix_kernel). Muss zusammen mit setup_bem_coupling() vor
+    // apply_T_matrix_kernel). d_faces MUSS in BEM-Reihenfolge liegen:
+    // d_faces[pos] ist das Quad perm[pos], zu dem die Freiheitsgrade pos*4+e
+    // gehoeren (bem_ordered_boundary_faces in BemCoupling.h). Muss zusammen mit setup_bem_coupling() vor
     // apply() aufgerufen werden, sobald BEM-Kopplung aktiv ist. d_faces/d_nodes
     // bleiben im Eigentum des Aufrufers; d_nodes darf sich zwischen
     // Zeitschritten aendern (bewegte Geometrie), der Zeiger selbst aber nicht.
