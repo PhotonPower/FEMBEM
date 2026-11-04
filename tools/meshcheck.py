@@ -31,6 +31,7 @@ tools/import_bdf.py (Prismen-Affinitaet, Einheiten) und laesst beide
 Importeure dieses Modul benutzen.
 """
 import argparse
+import json
 import sys
 from collections import namedtuple
 
@@ -100,6 +101,25 @@ def read_vtk(path):
             raise ValueError(f"{path}: SCALARS ohne LOOKUP_TABLE wird nicht unterstuetzt")
         comp = np.array(tokens[k + 2:k + 2 + n_cells], dtype=float).astype(int)
     return Mesh(pts, cells, types, comp)
+
+
+def read_zones(path, n_cells=None):
+    """Zonenkennung je Zelle aus NAME.zones.json (tools/gmsh/team28_hex_air.py).
+
+    Wirft ValueError, wenn das Format nicht stimmt oder die Zahl der Zonen
+    nicht zu n_cells passt: eine Zonendatei, die nicht zur VTK gehoert,
+    wuerde Zellen der falschen Zone loeschen.
+    """
+    with open(path) as f:
+        data = json.load(f)
+    if data.get("version") != 1 or "zone" not in data:
+        raise ValueError(f"{path}: keine zones.json der Version 1")
+    zone = np.array(data["zone"], dtype=np.int64)
+    if data.get("n_cells") != len(zone):
+        raise ValueError(f"{path}: n_cells = {data.get('n_cells')}, aber {len(zone)} Zonen")
+    if n_cells is not None and len(zone) != n_cells:
+        raise ValueError(f"{path}: {len(zone)} Zonen fuer {n_cells} Zellen")
+    return zone
 
 
 def _by_type(mesh, t):
@@ -282,6 +302,215 @@ def check_volumes(mesh, expected, rel_tol=1e-9, names=None):
         label = (names or {}).get(cid, f"component_id {cid}")
         out.append(Result(f"Volumen {label}", rel <= rel_tol,
                           f"{have:.4f} mm^3, Soll {want:.4f}, rel. {rel:.1e}"))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Kopplungsflaeche (Rand des FEM-Gebiets) fuer die Knoten-BEM des Referenzloesers
+# ---------------------------------------------------------------------------
+class _UnionFind:
+    def __init__(self, n):
+        self.p = np.arange(n)
+
+    def find(self, x):
+        p = self.p
+        while p[x] != x:
+            p[x] = p[p[x]]
+            x = p[x]
+        return x
+
+    def union(self, a, b):
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self.p[max(ra, rb)] = min(ra, rb)
+
+
+def dense_gib_estimate(n_bem):
+    """Dichte Algebra wie im Loeser (build_reference_boundary): 3,2 * N^2 * 8 Byte."""
+    return 3.2 * n_bem * n_bem * 8.0 / 1024 ** 3
+
+
+def boundary_surface(mesh):
+    """Randflaechen des Hexaedernetzes, geometrisch nach aussen orientiert.
+
+    Wie build_reference_boundary: die aus dem Umlaufsinn gebildete Normale muss
+    von der Mitte des Elternhexaeders WEG zeigen. Liefert ein Dictionary mit
+    faces (F,4 Knoten, umlauforientiert), parent (F), area_vec (F,3).
+    """
+    idx, conn = _by_type(mesh, VTK_HEX)
+    if len(idx) != len(mesh.cells):
+        raise ValueError("Randflaechenpruefung braucht ein reines Hexaedernetz")
+    P = mesh.points
+    local = np.array(FACES[VTK_HEX])                     # (6,4)
+    faces = conn[:, local].reshape(-1, 4)                # (6n,4)
+    parent = np.repeat(np.arange(len(conn)), 6)
+    key = np.sort(faces, axis=1)
+    _, inv, counts = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    bnd = counts[inv] == 1
+    faces, parent = faces[bnd], parent[bnd]
+    ctr = P[conn].mean(axis=1)[parent]
+    q = P[faces]                                         # (F,4,3)
+    # Newell-Normale (Flaechenvektor, Betrag = Flaeche)
+    nrm = 0.5 * np.cross(q[:, 2] - q[:, 0], q[:, 3] - q[:, 1])
+    out = np.einsum("ij,ij->i", nrm, q.mean(axis=1) - ctr)
+    flip = out < 0
+    faces[flip] = faces[flip][:, ::-1]
+    nrm[flip] *= -1.0
+    return dict(faces=faces, parent=parent, area_vec=nrm, flipped=int(flip.sum()))
+
+
+def check_surface(mesh):
+    """Geschlossen, mannigfaltig, orientiert; liefert (Ergebnisse, Kennzahlen).
+
+    * Jede Randkante gehoert zu genau zwei Randflaechen und wird von beiden in
+      entgegengesetzter Richtung durchlaufen (orientierbar, geschlossen).
+    * Um jeden Randknoten bilden die Randflaechen genau einen Faecher
+      (Knoten-Mannigfaltigkeit): eine Beruehrung zweier Koerper nur an einer
+      Kante oder Ecke ist damit ausgeschlossen.
+    * Je Randkomponente: Summe der orientierten Flaechenvektoren null, das
+      eingeschlossene Volumen (nach aussen aus dem FEM-Gebiet) positiv. Eine
+      Kaverne liefert eine Komponente mit negativem Volumen.
+    """
+    S = boundary_surface(mesh)
+    faces, A = S["faces"], S["area_vec"]
+    nf = len(faces)
+    res, info = [], dict(n_faces=nf)
+    if nf == 0:
+        return [Result("Rand geschlossen und mannigfaltig", False, "keine Randflaechen")], info
+
+    # Kanten (gerichtet, in Umlaufrichtung der Flaeche)
+    a = faces
+    b = np.roll(faces, -1, axis=1)
+    de = np.stack([a.ravel(), b.ravel()], axis=1)
+    face_of = np.repeat(np.arange(nf), 4)
+    ue = np.sort(de, axis=1)
+    ukey, uinv, ucnt = np.unique(ue, axis=0, return_inverse=True, return_counts=True)
+    uinv = uinv.ravel()
+    n_not2 = int((ucnt != 2).sum())
+    n_dir = len(np.unique(de, axis=0))
+    same_dir = len(de) - n_dir                           # gleiche gerichtete Kante zweimal
+    res.append(Result("Randkanten: je zwei Randflaechen", n_not2 == 0,
+                      f"{len(ukey)} Kanten, {n_not2} mit anderer Zahl als 2"))
+    res.append(Result("Randflaechen konsistent orientiert", same_dir == 0,
+                      f"{same_dir} Kanten in beiden Flaechen gleich durchlaufen"))
+
+    # Komponenten ueber gemeinsame Kanten
+    uf = _UnionFind(nf)
+    order = np.argsort(uinv, kind="stable")
+    ge = face_of[order]
+    gk = uinv[order]
+    start = np.flatnonzero(np.r_[True, gk[1:] != gk[:-1]])
+    for s0 in start:
+        grp = ge[s0:s0 + 2] if s0 + 1 < len(ge) and gk[s0 + 1] == gk[s0] else ge[s0:s0 + 1]
+        if len(grp) == 2:
+            uf.union(int(grp[0]), int(grp[1]))
+    root = np.array([uf.find(i) for i in range(nf)])
+    comps = np.unique(root)
+    info["n_components"] = len(comps)
+
+    # Knotenfaecher: Wedges (Flaeche, Ecke) ueber Kanten verbinden
+    wuf = _UnionFind(nf * 4)
+    for s0 in start:
+        if s0 + 1 < len(ge) and gk[s0 + 1] == gk[s0]:
+            e = int(order[s0]), int(order[s0 + 1])       # Indizes in de
+            f1, f2 = int(face_of[e[0]]), int(face_of[e[1]])
+            c1, c2 = e[0] % 4, e[1] % 4                  # de[e] = (Ecke c, Ecke c+1)
+            # gleiche Knoten in beiden Flaechen verbinden
+            n1 = {int(de[e[0], 0]): (f1, c1), int(de[e[0], 1]): (f1, (c1 + 1) % 4)}
+            n2 = {int(de[e[1], 0]): (f2, c2), int(de[e[1], 1]): (f2, (c2 + 1) % 4)}
+            for node, (fa, ca) in n1.items():
+                fb, cb = n2[node]
+                wuf.union(fa * 4 + ca, fb * 4 + cb)
+    wedge_node = faces.ravel()
+    wroot = np.array([wuf.find(i) for i in range(nf * 4)])
+    pairs = np.unique(np.stack([wedge_node, wroot], axis=1), axis=0)
+    fans = np.bincount(pairs[:, 0].astype(np.int64))
+    fans = fans[fans > 0]
+    bad_nodes = int((fans != 1).sum())
+    res.append(Result("Randknoten: ein Faecher je Knoten", bad_nodes == 0,
+                      f"{len(fans)} Randknoten, {bad_nodes} mit mehreren Faechern "
+                      "(Beruehrung nur an Kante oder Ecke)"))
+
+    # je Komponente
+    P = mesh.points
+    comp_info = []
+    worst_closure, neg_vol = 0.0, 0
+    for r in comps:
+        m = root == r
+        fa = faces[m]
+        nodes = np.unique(fa)
+        ev = np.unique(np.sort(np.stack([fa.ravel(), np.roll(fa, -1, axis=1).ravel()], axis=1), axis=1),
+                       axis=0)
+        area = float(np.linalg.norm(A[m], axis=1).sum())
+        closure = float(np.linalg.norm(A[m].sum(axis=0)) / area)
+        c = P[fa].mean(axis=1)
+        vol = float(np.einsum("ij,ij->i", c, A[m]).sum() / 3.0)
+        chi = len(nodes) - len(ev) + len(fa)
+        comp_info.append(dict(nodes=len(nodes), edges=len(ev), faces=int(m.sum()),
+                              area=area, chi=int(chi), volume=vol, closure=closure))
+        worst_closure = max(worst_closure, closure)
+        neg_vol += vol <= 0
+    res.append(Result("Orientierung: Flaechenvektoren je Komponente summieren sich zu null",
+                      worst_closure < 1e-9, f"groesste Abweichung {worst_closure:.1e} (relativ)"))
+    res.append(Result("Orientierung: eingeschlossenes Volumen positiv (keine Kaverne)",
+                      neg_vol == 0,
+                      f"{neg_vol} von {len(comps)} Randkomponenten mit Volumen <= 0"))
+    info["components"] = sorted(comp_info, key=lambda c: -c["area"])
+    info["n_nodes"] = int(sum(c["nodes"] for c in comp_info))
+    info["dense_gib"] = dense_gib_estimate(info["n_nodes"])
+    info["flipped"] = S["flipped"]
+    return res, info
+
+
+def check_cavities(parent, removed):
+    """Keine Kaverne: das Komplement des FEM-Gebiets reicht bis ins Unendliche.
+
+    parent: Netz VOR dem Entfernen, removed: Bool je Zelle des Elternnetzes.
+    Von allen geloeschten Zellen mit einer Aussenflaeche des Elternnetzes
+    (= Nachbar ist die virtuelle Zellschicht ausserhalb) wird ueber gemeinsame
+    Flaechen geflutet; jede geloeschte Zelle muss erreicht werden.
+    """
+    idx, conn = _by_type(parent, VTK_HEX)
+    n = len(conn)
+    removed = np.asarray(removed, dtype=bool)
+    if not removed.any():
+        return Result("Keine Kaverne", True, "nichts entfernt")
+    local = np.array(FACES[VTK_HEX])
+    faces = conn[:, local].reshape(-1, 4)
+    cell = np.repeat(np.arange(n), 6)
+    key = np.sort(faces, axis=1)
+    _, inv, counts = np.unique(key, axis=0, return_inverse=True, return_counts=True)
+    inv = inv.ravel()
+    uf = _UnionFind(n + 1)                                # n = "Unendlich"
+    order = np.argsort(inv, kind="stable")
+    gk = inv[order]
+    gc = cell[order]
+    start = np.flatnonzero(np.r_[True, gk[1:] != gk[:-1]])
+    for s0 in start:
+        if s0 + 1 < len(gk) and gk[s0 + 1] == gk[s0]:
+            a, b = int(gc[s0]), int(gc[s0 + 1])
+            if removed[a] and removed[b]:
+                uf.union(a, b)
+        else:
+            a = int(gc[s0])                               # Aussenflaeche des Elternnetzes
+            if removed[a]:
+                uf.union(a, n)
+    inf = uf.find(n)
+    lost = [i for i in np.flatnonzero(removed) if uf.find(int(i)) != inf]
+    return Result("Keine Kaverne", not lost,
+                  f"{int(removed.sum())} geloeschte Zellen, {len(lost)} nicht mit dem "
+                  "Aussenraum verbunden")
+
+
+def surface_lines(info):
+    """Kennzahlen der Kopplungsflaeche als Textzeilen."""
+    out = [f"  Randkomponenten {info['n_components']}, Randknoten {info['n_nodes']}, "
+           f"Randflaechen {info['n_faces']}, dichte Algebra ca. {info['dense_gib']:.2f} GiB"]
+    for i, c in enumerate(info["components"], 1):
+        out.append(f"    Komponente {i}: {c['faces']} Flaechen, {c['nodes']} Knoten, "
+                   f"Flaeche {c['area']:.1f} mm^2, Euler-Charakteristik {c['chi']}, "
+                   f"Volumen {c['volume']:.1f} mm^3")
     return out
 
 

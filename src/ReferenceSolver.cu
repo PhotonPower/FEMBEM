@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <fstream>
 #include <iomanip>
@@ -55,7 +56,7 @@ double3 hex_center(const Mesh& mesh, int hex_id) {
 
 } // namespace
 
-ReferenceBoundary build_reference_boundary(const Mesh& mesh) {
+ReferenceBoundary build_reference_boundary(const Mesh& mesh, bool check_memory) {
     ReferenceBoundary rb;
 
     mesh.boundary_faces.prefetch_to_host();
@@ -96,6 +97,8 @@ ReferenceBoundary build_reference_boundary(const Mesh& mesh) {
     std::cout << "[Referenz] Rand: " << rb.bnode_ids.size() << " Knoten, "
               << mesh.num_boundary_faces << " Panels ("
               << flipped << " Panels umorientiert)\n";
+    // Ohne dichte BEM (--reference-dirichlet) entfaellt der Speicherbedarf.
+    if (!check_memory) return rb;
     const double gib = 2.0 * static_cast<double>(rb.bnode_ids.size())
                      * static_cast<double>(rb.bnode_ids.size()) * 8.0 / (1024.0*1024.0*1024.0);
     std::cout << "[Referenz] Vollbesetzte BEM: V und K je "
@@ -788,6 +791,12 @@ int run_reference_solver(Mesh& mesh,
     std::cout << "\n========================================================\n"
               << " REFERENZLOESER: Q1-Knoten-FEM + vollbesetzte BEM        \n"
               << "========================================================\n";
+
+    if (!mesh.is_pure_hex()) {
+        throw std::runtime_error(
+            "Referenzloeser braucht ein reines Hexaedernetz (Q1-Hexaeder, "
+            "Vierecks-Panels am Rand). Das Netz enthaelt andere Elementtypen.");
+    }
 
     // --- Voraussetzung pruefen: mu_r == 1 ueberall
     d_materials.prefetch_to_host();
@@ -1553,6 +1562,49 @@ int run_reference_solver(Mesh& mesh,
 // Netz, Randtopologie, BEM, LU von V und ILU(0) sind dieselben Bausteine wie
 // in der Zeitschleife oben; sie werden hier genau einmal gebaut, weil die
 // Platte fest steht (--fixed-plate ist Pflicht).
+namespace {
+
+/// --reference-dump-a: eine Zeile je Knoten, der zu mindestens einem Element mit
+/// component_id 1, 2 oder 3 gehoert. comp = kleinste Leiter-ID der angrenzenden
+/// Elemente. Koordinaten aus nodes_current (SI). Werte mit %.17g.
+bool write_reference_a_dump(const std::string& path, const Mesh& mesh,
+                            const double* Ar, const double* Ai)
+{
+    mesh.hex_component_ids.prefetch_to_host();
+    mesh.hex_nodes.prefetch_to_host();
+    mesh.nodes_current.prefetch_to_host();
+    bf::sync();
+    std::vector<int> comp(mesh.num_nodes, 0);
+    for (size_t h = 0; h < mesh.num_hexes; ++h) {
+        const int id = mesh.hex_component_ids[h];
+        if (id < 1 || id > 3) continue;
+        const Hexahedron H = mesh.hex_nodes[h];
+        for (int n = 0; n < 8; ++n) {
+            int& c = comp[H.v[n]];
+            if (c == 0 || id < c) c = id;
+        }
+    }
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) return false;
+    std::fprintf(f, "x_m,y_m,z_m,comp,Ar_x,Ar_y,Ar_z,Ai_x,Ai_y,Ai_z\n");
+    size_t rows = 0;
+    for (size_t i = 0; i < mesh.num_nodes; ++i) {
+        if (comp[i] == 0) continue;
+        const double3 p = mesh.nodes_current[i];
+        std::fprintf(f, "%.17g,%.17g,%.17g,%d,%.17g,%.17g,%.17g,%.17g,%.17g,%.17g\n",
+                     p.x, p.y, p.z, comp[i],
+                     Ar[3 * i + 0], Ar[3 * i + 1], Ar[3 * i + 2],
+                     Ai[3 * i + 0], Ai[3 * i + 1], Ai[3 * i + 2]);
+        ++rows;
+    }
+    std::fclose(f);
+    std::cout << "[Ref-Harm] A an " << rows << " Leiterknoten nach " << path
+              << " geschrieben" << std::endl;
+    return true;
+}
+
+} // namespace
+
 int run_reference_harmonic(Mesh& mesh,
                            DeviceArray<MaterialProperties>& d_materials,
                            PhysicalObject& plate,
@@ -1574,6 +1626,11 @@ int run_reference_harmonic(Mesh& mesh,
               << " REFERENZLOESER HARMONISCH: Q1-Knoten-FEM + dichte BEM   \n"
               << "========================================================\n";
 
+    if (!mesh.is_pure_hex()) {
+        throw std::runtime_error(
+            "Referenzloeser braucht ein reines Hexaedernetz (Q1-Hexaeder, "
+            "Vierecks-Panels am Rand). Das Netz enthaelt andere Elementtypen.");
+    }
     if (!bf::fixed_plate()) {
         throw std::runtime_error(
             "Referenzloeser harmonisch: --fixed-plate fehlt. Der eingeschwungene "
@@ -1583,6 +1640,7 @@ int run_reference_harmonic(Mesh& mesh,
         throw std::runtime_error("Referenzloeser harmonisch: omega muss positiv sein.");
     }
     const bool sigma_zero = bf::verify_field();
+    const bool dirichlet  = bf::reference_dirichlet();
     std::cout << std::fixed << std::setprecision(4)
               << "[Ref-Harm] f = " << omega / (2.0 * M_PI) << " Hz, omega = "
               << omega << " 1/s\n" << std::defaultfloat;
@@ -1669,7 +1727,9 @@ int run_reference_harmonic(Mesh& mesh,
     const int nn   = static_cast<int>(mesh.num_nodes);
     const int ndof = 3 * nn;
 
-    ReferenceBoundary rb = build_reference_boundary(mesh);
+    // Bei --reference-dirichlet gibt es keine BEM: der Rand bestimmt nur die
+    // Dirichlet-Maske, die Speicherpruefung der dichten Algebra entfaellt.
+    ReferenceBoundary rb = build_reference_boundary(mesh, /*check_memory=*/!dirichlet);
     const int nb = static_cast<int>(rb.num_bnodes());
 
     NodalCsr csr;
@@ -1730,6 +1790,38 @@ int run_reference_harmonic(Mesh& mesh,
     csr.row_offsets.prefetch_to_host();
     csr.col_indices.prefetch_to_host();
     bf::sync();
+    std::vector<unsigned char> is_dirichlet;
+    if (dirichlet) {
+        // A = 0 in allen drei Komponenten an allen Randknoten. Zeilen UND
+        // Spalten werden eliminiert (Muster bleibt), beide Matrizen mit derselben
+        // Diagonale: dem Mittel der Diagonale von K ueber die freien Zeilen, damit
+        // die Skalierung zu den uebrigen Zeilen passt. Damit ist C = (W - K)/w in
+        // den Dirichlet-Zeilen exakt null.
+        is_dirichlet.assign(static_cast<size_t>(ndof), 0);
+        for (int i = 0; i < nn; ++i) {
+            if (rb.node_to_bnode[i] >= 0) {
+                for (int c = 0; c < 3; ++c) is_dirichlet[3 * i + c] = 1;
+            }
+        }
+        double dsum = 0.0;
+        long long dcount = 0;
+        for (int row = 0; row < csr.num_rows; ++row) {
+            if (is_dirichlet[row]) continue;
+            for (int k = csr.row_offsets[row]; k < csr.row_offsets[row + 1]; ++k) {
+                if (csr.col_indices[k] == row) { dsum += csr.values[k]; ++dcount; break; }
+            }
+        }
+        const double diag_value = (dcount > 0) ? dsum / static_cast<double>(dcount) : 1.0;
+        reference_apply_dirichlet(csr.num_rows, csr.row_offsets.data(), csr.col_indices.data(),
+                                  csr.values.data(), is_dirichlet.data(), diag_value);
+        reference_apply_dirichlet(csr.num_rows, csr.row_offsets.data(), csr.col_indices.data(),
+                                  values_w.data(), is_dirichlet.data(), diag_value);
+        for (int i = 0; i < ndof; ++i) {
+            if (is_dirichlet[i]) { d_rhs[i] = 0.0; d_rhs_w[i] = 0.0; }
+        }
+        std::cout << "[Ref-Harm] Dirichlet: A = 0 an " << rb.num_bnodes() << " Randknoten ("
+                  << 3 * rb.num_bnodes() << " Zeilen), BEM nicht aufgebaut" << std::endl;
+    }
     {
         // C = (W - K) / w. Kontrolle: die rechten Seiten beider Assemblierungen
         // muessen uebereinstimmen (A_prev = 0, die Quelle haengt nicht von dt
@@ -1794,10 +1886,14 @@ int run_reference_harmonic(Mesh& mesh,
     const double t_fem = lap();
 
     // --- BEM einmal: V, K_BEM, T, dann D = V^-1 (K_BEM - 1/2 I)
-    const size_t nb2 = static_cast<size_t>(nb) * static_cast<size_t>(nb);
+    // Bei --reference-dirichlet bleiben die Felder leer (nb_bem = 0).
+    const int nb_bem = dirichlet ? 0 : nb;
+    const size_t nb2 = static_cast<size_t>(nb_bem) * static_cast<size_t>(nb_bem);
     DeviceArray<double> d_V(nb2), d_K(nb2), d_T(nb2);
-    DeviceArray<double> d_dtn_diag(static_cast<size_t>(nb));
+    DeviceArray<double> d_dtn_diag(static_cast<size_t>(nb_bem));
 
+    double t_bem = 0.0;
+    if (!dirichlet) {
     BF_LAUNCH_1D_PAR(reference_bem_row, nb,
         nb, static_cast<int>(mesh.num_boundary_faces),
         d_bnode_ids.data(), d_node_to_bnode.data(),
@@ -1810,7 +1906,7 @@ int run_reference_harmonic(Mesh& mesh,
         mesh.boundary_faces.data(), d_node_to_bnode.data(),
         mesh.nodes_current.data(), d_T.data());
     bf::sync();
-    const double t_bem = lap();
+    t_bem = lap();
 
     // Zeilen-major -> column-major fuer V und C = K_BEM - 1/2 I, wie oben.
     d_K.prefetch_to_host();
@@ -1830,10 +1926,13 @@ int run_reference_harmonic(Mesh& mesh,
         lu.factorize(d_V.data(), nb);
         lu.solve(d_K.data(), nb);      // d_K := D = V^-1 C  (column-major)
     }
+    }  // !dirichlet
     const double t_lu = lap();
 
     // --- ILU(0) fuer M = W + diag(G), Begruendung in der Zeitschleife
-    BF_LAUNCH_1D_PAR(ref_dtn_diag, nb, nb, d_T.data(), d_K.data(), d_dtn_diag.data());
+    if (!dirichlet) {
+        BF_LAUNCH_1D_PAR(ref_dtn_diag, nb, nb, d_T.data(), d_K.data(), d_dtn_diag.data());
+    }
     bf::sync();
     values_w.prefetch_to_host();
     csr.row_offsets.prefetch_to_host();
@@ -1842,7 +1941,7 @@ int run_reference_harmonic(Mesh& mesh,
     bf::sync();
     std::vector<double> ilu_values(values_w.data(), values_w.data() + csr.nnz);
     std::vector<int>    ilu_diag;
-    for (int i = 0; i < nb; ++i) {
+    for (int i = 0; i < nb_bem; ++i) {
         const double d = -d_dtn_diag[i] / MU_0;
         for (int c = 0; c < 3; ++c) {
             const int row = rb.bnode_ids[i] * 3 + c;
@@ -1876,7 +1975,7 @@ int run_reference_harmonic(Mesh& mesh,
 
     auto make_op = [&](ReferenceOperator& op, const double* values) {
         op.num_rows    = csr.num_rows;
-        op.nb          = nb;
+        op.nb          = nb_bem;
         op.row_offsets = csr.row_offsets.data();
         op.col_indices = csr.col_indices.data();
         op.values      = values;
@@ -1949,6 +2048,13 @@ int run_reference_harmonic(Mesh& mesh,
     bf::dcopy(cublas, ndof, d_rhs.data(), d_b2.data());
 
     ReferenceFgmresOptions fopt;
+    // Debugschalter fuer den Abnahmetest "nicht konvergiert -> Exit-Code 1":
+    // begrenzt die aeusseren Iterationen kuenstlich. Ohne die Variable
+    // aendert sich nichts.
+    if (const char* mi = std::getenv("FEMBEM_REF_FGMRES_MAXIT")) {
+        const int v = std::atoi(mi);
+        if (v > 0) fopt.max_iter = v;
+    }
     std::cout << "[Ref-Harm] FGMRES(" << fopt.restart << "), Toleranz " << fopt.tol
               << ", hoechstens " << fopt.max_iter << " Iterationen; Vorkonditionierer "
                  "diag(M, M), M = K + G + wC, innen Referenz-GMRES mit ILU(0) bis "
@@ -1979,6 +2085,30 @@ int run_reference_harmonic(Mesh& mesh,
                   << "[Ref-Harm] ||A_r|| = " << nr << ", ||A_i|| = " << ni
                   << ", ||A_i||/||A_r|| = " << (nr > 0.0 ? ni / nr : 0.0)
                   << std::defaultfloat << "\n";
+    }
+    if (dirichlet) {
+        d_x2.prefetch_to_host();
+        bf::sync();
+        double amax_dir = 0.0, amax_free = 0.0;
+        for (int i = 0; i < ndof; ++i) {
+            const double m = std::fmax(std::fabs(d_Ar[i]), std::fabs(d_Ai[i]));
+            if (is_dirichlet[i]) amax_dir = std::fmax(amax_dir, m);
+            else                 amax_free = std::fmax(amax_free, m);
+        }
+        std::cout << std::scientific << std::setprecision(4)
+                  << "[Ref-Harm] Dirichlet: max|A| auf den Dirichlet-Zeilen = " << amax_dir
+                  << (amax_dir == 0.0 ? "  (exakt null)" : "  ABWEICHUNG VON NULL")
+                  << ", max|A| auf den freien Zeilen = " << amax_free
+                  << std::defaultfloat << std::endl;
+    }
+
+    if (!bf::reference_dump_a().empty()) {
+        d_x2.prefetch_to_host();
+        bf::sync();
+        if (!write_reference_a_dump(bf::reference_dump_a(), mesh, d_Ar, d_Ai)) {
+            throw std::runtime_error("--reference-dump-a: Datei " + bf::reference_dump_a() +
+                                     " laesst sich nicht schreiben.");
+        }
     }
 
     // --- Felddump (--harmonic-field-dump=DATEI), Format des BEM-FEM-Dumps.

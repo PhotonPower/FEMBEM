@@ -6,6 +6,17 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- BEM-Kopplung am Knoten-Referenzlöser mit Luftgebiet
+  (`docs/design/reference-harmonic-air.md`): `tools/gmsh/team28_hex_air.py`
+  (Hexaedernetz mit zonenmarkierter Luft), `tools/strip_air.py` (Luftzellen
+  löschen, Randprüfung der Kopplungsfläche in `tools/meshcheck.py`),
+  `--reference-dirichlet` (A = 0 an allen Randknoten, keine BEM),
+  `--reference-dump-a=DATEI` mit `tools/compare_a.py` und Gruppe F in
+  `tools/reference_series.py`. Befund bei 11,3 mm: BEM am Außenrand
+  hängt kaum von der Kastengröße ab (Streuung 0,33 % in F_z), die Kette
+  der nach innen rückenden Kopplungsfläche driftet bis B_S um −0,76 % und
+  fällt mit feinerem Netz (−2,56 / −0,76 / −0,39 % bei Skalierung
+  0,5 / 1,0 / 1,5). Bestehende Pfade unverändert (Gegenprobe 0,85333 N).
 - Feldvergleich Referenzpfad gegen BEM-FEM harmonisch
   (`docs/design/field-comparison-reference-vs-bemfem.md`). Neu:
   `--reference --harmonic --fixed-plate --harmonic-field-dump=DATEI`

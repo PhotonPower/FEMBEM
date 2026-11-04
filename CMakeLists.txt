@@ -1179,12 +1179,26 @@ if (_fembem_py_numpy EQUAL 0)
                      ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28.vtk)
     add_test(NAME tools_team28_axisymmetric_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_axisymmetric.py)
+    add_test(NAME tools_team28_hex_air_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_team28_hex_air.py)
+    add_test(NAME tools_strip_air_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_strip_air.py)
+    add_test(NAME tools_compare_a_tests
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_compare_a.py)
     add_test(NAME tools_compare_fields_tests
              COMMAND ${Python3_EXECUTABLE} ${_tools}/tests/test_compare_fields.py)
     set_tests_properties(tools_meshcheck_tests tools_check_map_tests tools_standard_mesh
                          tools_legacy_mesh tools_standard_mesh_map tools_legacy_mesh_map
-                         tools_team28_axisymmetric_tests tools_compare_fields_tests
+                         tools_team28_axisymmetric_tests tools_team28_hex_air_tests
+                         tools_strip_air_tests tools_compare_a_tests
+                         tools_compare_fields_tests
                          PROPERTIES LABELS "tools" TIMEOUT 120)
+    # Ketten-Rauchtest (ohne Marke, braucht fembem und eine GPU): D, B0 und B_end
+    # auf dem Luftnetz scale 0.5 bei 11,3 mm laufen, konvergieren, Exit-Code 0.
+    add_test(NAME reference_series_air_smoke
+             COMMAND ${Python3_EXECUTABLE} ${_tools}/reference_series.py --groups F --smoke
+                     --build ${CMAKE_BINARY_DIR} --fembem $<TARGET_FILE:fembem>)
+    set_tests_properties(reference_series_air_smoke PROPERTIES TIMEOUT 900)
     message(STATUS "FEMBEM: Tests tools  aktiv (${Python3_EXECUTABLE})")
 else()
     message(STATUS "FEMBEM: Tests tools  aus (Python mit numpy nicht gefunden)")
