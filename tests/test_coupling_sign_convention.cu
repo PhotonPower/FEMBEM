@@ -23,7 +23,8 @@
 //
 // Der Operator braucht also -T, der Vorkonditionierer +T -- und zwar mit
 // EXAKT derselben Matrix T, inklusive derselben Vorzeichenbehandlung der
-// Kantenorientierung (sign[r]*sign[c]*T_loc[r][c], einmal angewendet).
+// Kantenorientierung (Zeile 1: sign[r]*T_loc[r][c]; Zeile 2: T_loc[r][c]*sign[c]; je EIN
+// Vorzeichen, Herleitung im Kommentar von apply_T_matrix_kernel_body).
 //
 // Sind die beiden nicht exakt entgegengesetzt, ist der Vorkonditionierer
 // stillschweigend falsch: er konvergiert dann nicht schlechter mit einer
@@ -38,8 +39,9 @@
 //   (1) T tatsächlich nur über y_A wirkt, wenn x_A = 0 ist (der K-Block darf
 //       dann keinen Beitrag bekommen -- sonst wäre die Blockstruktur anders
 //       als der Vorkonditionierer annimmt),
-//   (2) die Orientierungsvorzeichen konsistent durchschlagen: dreht man ALLE
-//       sign[] um, ändert sich nichts (sign[r]*sign[c] ist invariant),
+//   (2) die Orientierungsvorzeichen genau EINMAL durchschlagen: dreht man ALLE
+//       sign[] um, kehrt sich y_A (Zeilenvorzeichen) um, und y_K ebenso
+//       (Spaltenvorzeichen); mit zwei Vorzeichen waere es invariant,
 //   (3) T symmetrisch ist -- der Rand-Massenmatrix-Anteil muss es sein, und
 //       genau deshalb ist die verbleibende Unsymmetrie der Kopplung (-T gegen
 //       -0.5*T) eine Eigenschaft der FORMULIERUNG und kein Assemblierfehler.
@@ -187,16 +189,39 @@ int main() {
               "x_A = 0 erzeugt keinen Beitrag im K-Block (Blockstruktur wie angenommen)");
     }
 
-    // (2) Globale Vorzeichenumkehr aller Kantenorientierungen darf nichts
-    //     aendern: der Faktor ist sign[r]*sign[c], nicht sign[r].
+    // (2) Globale Vorzeichenumkehr aller Kantenorientierungen: jede Zeile traegt
+    //     genau EIN sign (Zeile 1 das der Zeile, Zeile 2 das der Spalte), die
+    //     Umkehr aller sign[] kehrt daher y_A und y_K genau um. Mit zwei sign
+    //     (frueher sign[r]*sign[c]) waere sie wirkungslos. Gegenprobe unten.
     {
         std::vector<int> flipped = f.sign;
         for (int& s : flipped) s = -s;
 
         const std::vector<double> a = precond_yA(f, probes.back(), f.sign);
         const std::vector<double> b = precond_yA(f, probes.back(), flipped);
-        check(max_abs_diff(a, b) <= 1e-14 * std::fmax(max_abs(a), 1.0),
-              "sign[r]*sign[c] wird EINMAL angewendet (globale Umkehr ist wirkungslos)");
+        std::vector<double> neg(b.size());
+        for (size_t i = 0; i < b.size(); ++i) neg[i] = -b[i];
+        check(max_abs_diff(a, neg) <= 1e-14 * std::fmax(max_abs(a), 1.0),
+              "Zeile 1: globale Umkehr aller sign[] kehrt y_A genau um (EIN Vorzeichen)");
+        check(max_abs_diff(a, b) > 1e-6 * std::fmax(max_abs(a), 1.0),
+              "Gegenprobe: mit zwei Vorzeichen waere die Umkehr wirkungslos, hier nicht");
+
+        // Zeile 2: x_A = a, y_K[r] -= 0.5 T_rc sign[c] a[g_c]
+        std::vector<double> xA = {0.7, -0.3, 1.1, 0.4, -0.9, 0.2, 0.6};
+        auto yk = [&](const std::vector<int>& sg) {
+            std::vector<double> x_K(Fixture::num_bem_dofs, 0.0), y_A(Fixture::num_fem_dofs, 0.0),
+                                y_K(Fixture::num_bem_dofs, 0.0);
+            for (int i = 0; i < Fixture::num_faces; ++i)
+                apply_T_matrix_kernel_body(i, Fixture::num_faces, f.faces.data(), f.nodes.data(),
+                                           f.map.data(), sg.data(), xA.data(), x_K.data(),
+                                           y_A.data(), y_K.data());
+            return y_K;
+        };
+        const std::vector<double> ya = yk(f.sign), yb = yk(flipped);
+        std::vector<double> nb(yb.size());
+        for (size_t i = 0; i < yb.size(); ++i) nb[i] = -yb[i];
+        check(max_abs_diff(ya, nb) <= 1e-14 * std::fmax(max_abs(ya), 1.0),
+              "Zeile 2: globale Umkehr aller sign[] kehrt y_K genau um (EIN Vorzeichen)");
     }
 
     // (3) T selbst ist symmetrisch -- die Unsymmetrie der Kopplung stammt

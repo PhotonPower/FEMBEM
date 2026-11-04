@@ -38,23 +38,33 @@
 // der Matrix-Vektor-Anwendung ausgewertet.
 //
 // Herleitung der Vorzeichen-Konvention (WICHTIG, nicht geraten):
-// x_A ist ein globaler FEM-Vektor; sein "Gather" in den BEM-Elementraum
-// erfolgt exakt wie in k_gather_bem: x_A_bem[c] = sign[c] * x_A[map[c]].
-// x_K (die BEM-Unbekannte) ist in DERSELBEN signierten Konvention definiert
-// wie d_x_bem -- konsistent mit allen bestehenden G-Bloecken
-// (dense_blocks/aca_blocks), die ja ebenfalls auf d_x_bem wirken.
-// Damit folgt fuer die Bilinearform (Testfunktion W_r, lokal/roh):
-//   - Beitrag zu y_K (blockdiagonal, keine Kopplung ueber Quad-Grenzen, daher
-//     kein atomicAdd noetig): da y_K in derselben signierten Konvention wie
-//     x_K gespeichert wird, muss die Testfunktion W_r ebenfalls signiert
-//     werden (y_K_signed[r] = sign[r] * (rohe Zeile r)). Zusammen mit dem
-//     Gather-Vorzeichen von x_A_bem[c] = sign[c]*x_A[map[c]] ergibt sich der
-//     Faktor sign[r]*sign[c] -- ein einziges Mal, nicht doppelt.
-//   - Beitrag zu y_A (globaler FEM-Vektor, additiv ueber geteilte Kanten,
-//     daher atomicAdd wie in k_scatter_add_bem): dieselbe Rechnung mit
-//     vertauschten Rollen liefert denselben Faktor sign[r]*sign[c].
-// In beiden Faellen also: T_signed[r][c] = sign[r] * sign[c] * T_loc[r][c],
-// und zwar EINMAL angewendet, nicht pro Auftreten von x_A_bem/x_K erneut.
+//
+// Bezeichnungen. Eine FEM-Kante g tragt den Freiheitsgrad a_g (Kantenintegral,
+// global orientiert v_min -> v_max). Ein BEM-Freiheitsgrad i = pos*4 + e gehoert
+// zur lokalen Kante e des Quads perm[pos], zeigt entlang der LOKALEN Richtung
+// (Rooftop-/Spurfunktion W_e, siehe evaluate_rooftop_basis), und sign[i] = +1,
+// wenn die lokale Richtung mit der globalen uebereinstimmt, sonst -1.
+//
+//   Gather von a (k_gather_bem):  a_bem[i] = sign[i] * a[g_i]
+//       Der Koeffizient vor W_e ist das Kantenintegral entlang der lokalen
+//       Richtung, also sign * (globales Kantenintegral).
+//   K (x_K) ist der ROHE Koeffizient vor W_e, ohne Vorzeichen: so benutzen ihn
+//       die G- und D-Bloecke (sie wirken ohne sign auf x_K bzw. auf a_bem).
+//
+// Zeile 1 (FEM-Kante g): Testfunktion ist die globale Kantenfunktion phi_g. Auf
+//   dem Quad ist ihre Spur sign[r] * W_r (lokale Kante r -> g). Der Randterm
+//   ist int phi_g . K dS = sign[r] * sum_c T_rc * x_K[c]. NUR das Zeilen-
+//   vorzeichen: x_K ist schon roh. Ein zusaetzliches sign[c] (wie frueher) waere
+//   eine zweite Vorzeichenumkehr fuer jede Kante mit sign = -1.
+//
+// Zeile 2 (BEM-Zeile r): Testfunktion ist die rohe W_r, wie bei G und D, also
+//   OHNE sign[r]. Die A-Spalte ist a_bem[c] = sign[c] * a[g_c]. Der Beitrag ist
+//   sum_c T_rc * sign[c] * a[g_c]. NUR das Spaltenvorzeichen.
+//
+// Beide Bloecke tragen damit jeweils EIN sign, und die Kopplungsbloecke bleiben
+// zueinander transponiert (Zeile 1: -S T, Zeile 2: -0.5 T S, S = diag(sign)).
+// Beitrag zu y_K: kein atomicAdd noetig (blockdiagonal pro Quad); zu y_A:
+// additiv ueber geteilte Kanten, daher atomicAdd.
 //
 // Streut per bf::atomic_add nach y_A (benachbarte Rand-Quads teilen sich
 // Kanten) -- auf der CPU deshalb SERIELL starten, also BF_LAUNCH_1D und nicht
@@ -88,10 +98,8 @@ BF_HD inline void apply_T_matrix_kernel_body(
         double val_K = 0.0; // Beitrag zu y_K[face_idx*4+r], lokal (kein atomicAdd noetig)
 
         for (int c = 0; c < 4; ++c) {
-            double T_rc = static_cast<double>(sgn[r]) * static_cast<double>(sgn[c]) * T_loc[r][c];
-
-            // Oberer rechter Block (Gl. 11): y_A -= T * x_K
-            val_A -= T_rc * x_K[face_idx * 4 + c];
+            // Oberer rechter Block (Gl. 11): y_A -= S T * x_K (nur Zeilenvorzeichen)
+            val_A -= static_cast<double>(sgn[r]) * T_loc[r][c] * x_K[face_idx * 4 + c];
 
             // Unterer linker Block, "1/2 T"-Anteil von H (Gl. 12), SYMMETRISIERT:
             // die gesamte K-Gleichung (RHS_K ist immer 0, siehe fem.cu) wird mit
@@ -101,7 +109,8 @@ BF_HD inline void apply_T_matrix_kernel_body(
             // komplexe Eigenwerte in Sattelpunkt-aehnlichen Systemen). Aendert
             // NICHTS an der Loesung (f(x)=0 <=> -f(x)=0), siehe apply_physical()
             // fuer die dazu konsistenten G_BEM/H_BEM-Vorzeichen.
-            val_K -= 0.5 * T_rc * x_A[g_idx[c]];
+            // (nur Spaltenvorzeichen, siehe Herleitung oben)
+            val_K -= 0.5 * T_loc[r][c] * static_cast<double>(sgn[c]) * x_A[g_idx[c]];
         }
 
         bf::atomic_add(&y_A[g_idx[r]], val_A);
@@ -117,8 +126,8 @@ BF_HD inline void apply_T_matrix_kernel_body(
 // jedes Mal einen Nullvektor der Laenge total_dofs verlangen und den (dann
 // nutzlosen) 0.5*T-Anteil mitrechnen.
 //
-// Die Vorzeichenkonvention ist Zeile fuer Zeile dieselbe wie oben --
-// T_signed[r][c] = sign[r]*sign[c]*T_loc[r][c], EINMAL angewendet -- nur das
+// Die Vorzeichenkonvention ist Zeile fuer Zeile dieselbe wie in Zeile 1 oben --
+// nur das Zeilenvorzeichen sign[r], EINMAL angewendet -- nur das
 // Vorzeichen des Beitrags ist umgekehrt. Grund: der Operator hat oben rechts
 // den Block -T; die Rueckwaertssubstitution des blocktriangulaeren
 // Vorkonditionierers lautet
@@ -156,8 +165,8 @@ BF_HD inline void apply_T_to_A_kernel_body(
     for (int r = 0; r < 4; ++r) {
         double val_A = 0.0;
         for (int c = 0; c < 4; ++c) {
-            const double T_rc = static_cast<double>(sgn[r]) * static_cast<double>(sgn[c]) * T_loc[r][c];
-            val_A += T_rc * x_K[face_idx * 4 + c];
+            // wie Zeile 1 des Operators: nur das Zeilenvorzeichen
+            val_A += static_cast<double>(sgn[r]) * T_loc[r][c] * x_K[face_idx * 4 + c];
         }
         bf::atomic_add(&y_A[g_idx[r]], val_A);
     }

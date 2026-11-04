@@ -39,7 +39,7 @@ namespace {
 
 // Zustand des Operators, den die Host-Nachrechnung V0 abbildet (je Korrekturschritt nachgezogen)
 constexpr bool kOpPermGeom = true;     // Schritt 1: T-Geometrie in BEM-Reihenfolge
-constexpr bool kOpConsistent = false;  // Schritt 2: konsistente Vorzeichen
+constexpr bool kOpConsistent = true;   // Schritt 2: konsistente Vorzeichen
 
 constexpr int kNumBodies = 3;                       // 1 Platte, 2 Innen-, 3 Aussenspule
 const char* kBodyName[kNumBodies] = {"Platte", "Innenspule", "Aussenspule"};

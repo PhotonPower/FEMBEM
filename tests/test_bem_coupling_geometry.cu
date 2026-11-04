@@ -39,8 +39,8 @@ static double rel(const std::vector<double>& a, const std::vector<double>& b) {
 }
 
 // Referenz: je Position pos Geometrie des Quads perm[pos], explizit aus mesh.boundary_faces.
-//   Zeile 1: yA[g_r] -= sum_c s_r s_c T[r][c] k[pos*4+c]
-//   Zeile 2: yK[pos*4+r] -= 0.5 sum_c s_r s_c T[r][c] a[g_c]
+//   Zeile 1: yA[g_r] -= s_r sum_c T[r][c] k[pos*4+c]          (nur Zeilenvorzeichen)
+//   Zeile 2: yK[pos*4+r] -= 0.5 sum_c T[r][c] s_c a[g_c]      (nur Spaltenvorzeichen)
 static void reference(const Mesh& mesh, const BemCouplingMap& map, const std::vector<double>& nodes_xyz,
                       const std::vector<double>& a, const std::vector<double>& k,
                       std::vector<double>& yA, std::vector<double>& yK) {
@@ -57,9 +57,8 @@ static void reference(const Mesh& mesh, const BemCouplingMap& map, const std::ve
             const int gr = map.bem_to_fem[pos * 4 + r];
             for (int c = 0; c < 4; ++c) {
                 const int gc = map.bem_to_fem[pos * 4 + c];
-                const double Trc = static_cast<double>(map.bem_sign[pos * 4 + r] * map.bem_sign[pos * 4 + c]) * T[r][c];
-                yA[static_cast<size_t>(gr)] -= Trc * k[pos * 4 + c];
-                yK[pos * 4 + r] -= 0.5 * Trc * a[static_cast<size_t>(gc)];
+                yA[static_cast<size_t>(gr)] -= static_cast<double>(map.bem_sign[pos * 4 + r]) * T[r][c] * k[pos * 4 + c];
+                yK[pos * 4 + r] -= 0.5 * T[r][c] * static_cast<double>(map.bem_sign[pos * 4 + c]) * a[static_cast<size_t>(gc)];
             }
         }
     }
@@ -126,6 +125,25 @@ int main(int argc, char** argv) {
     check(rel(yK, rK) < 1e-13, "Zeile 2: Kernel mit Quads in BEM-Reihenfolge = Host-Referenz", rel(yK, rK), 1e-13);
     check(rel(oA, rA) > 0.1, "Gegenprobe: alte Indexierung (Netzreihenfolge), Zeile 1, wird erkannt", rel(oA, rA), 0.1, true);
     check(rel(oK, rK) > 0.1, "Gegenprobe: alte Indexierung (Netzreihenfolge), Zeile 2, wird erkannt", rel(oK, rK), 0.1, true);
+
+    // Gegenprobe Vorzeichen: das alte Muster sign[r]*sign[c] in beiden Zeilen
+    {
+        std::vector<double> alt_A(a.size(), 0.0), alt_K(k.size(), 0.0);
+        for (size_t pos = 0; pos < map.perm.size(); ++pos) {
+            const Mesh::QuadFace& f = faces_bem[pos];
+            double3 nd[4];
+            for (int i = 0; i < 4; ++i) nd[i] = nodes[static_cast<size_t>(f.v[i])];
+            double T[4][4];
+            integrate_boundary_mass_matrix(nd, T);
+            for (int r = 0; r < 4; ++r) for (int c = 0; c < 4; ++c) {
+                const double Trc = static_cast<double>(map.bem_sign[pos * 4 + r] * map.bem_sign[pos * 4 + c]) * T[r][c];
+                alt_A[static_cast<size_t>(map.bem_to_fem[pos * 4 + r])] -= Trc * k[pos * 4 + c];
+                alt_K[pos * 4 + r] -= 0.5 * Trc * a[static_cast<size_t>(map.bem_to_fem[pos * 4 + c])];
+            }
+        }
+        check(rel(alt_A, rA) > 0.1, "Gegenprobe: altes Vorzeichenmuster sign[r]*sign[c], Zeile 1, wird erkannt", rel(alt_A, rA), 0.1, true);
+        check(rel(alt_K, rK) > 0.1, "Gegenprobe: altes Vorzeichenmuster sign[r]*sign[c], Zeile 2, wird erkannt", rel(alt_K, rK), 0.1, true);
+    }
 
     std::printf("\n%s (%d Fehler)\n", g_fail ? "FEHLER" : "ALLE PRUEFUNGEN BESTANDEN", g_fail);
     return g_fail ? 1 : 0;
