@@ -21,6 +21,15 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `--bem-near-subdiv[=N]` (BEM-FEM-Pfad, Prototyp, Default aus): disjunkte Quadpaare in den dichten
+  Blöcken werden bei geringem Abstand (d/s < 2) gleichmäßig unterteilt (`near_subdivision_level`,
+  höchstens N × N Zellen je Quad, Standard 8). Ohne die Option bitgleich. Untersuchung in
+  `docs/design/bem-near-field.md`: Die 2×2-Gauss-Regel ist bei d/s < 1 tatsächlich ungenau (d/s = 0,5:
+  G 6 %, D 36 %), die Unterteilung ändert das Plattenresiduum von Zeile 2 und das F_z-Defizit aber
+  nicht (Skalierung 1,0: 19,59 % → 19,58 %, F_z 0,545 → 0,519 N gegen 0,9665 N): die Nahfeldquadratur
+  disjunkter Paare ist **nicht** die Ursache des Plattenfehlers. Konvergenztrend des BEM-FEM-Pfads
+  (Skalierung 0,5 bis 1,25): F_z / F_ref 0,09 / 0,06 / 0,56 / 0,49, nicht monoton. Neu:
+  `tests/test_bem_near_field.cu`, `tools/bem_panel_sizes.py`, `tools/bem_trend_tables.py`.
 - `--bem-row-check[=MM]` (nur `--harmonic`, BEM-FEM-Pfad): Gegenprobe 2. Setzt das exakte
   Biot-Savart-Paar (A_ex als Kantenintegrale, K1 = (dA/dn)_tan, K2 = -n x B / mu0) in beide
   Blockzeilen des produktiven Pfads ein und druckt Residuentabellen je Körper und Quadklasse;
