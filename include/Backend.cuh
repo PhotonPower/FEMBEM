@@ -115,6 +115,12 @@ extern bool g_reference_dirichlet;
 /// negativ = aus. Siehe docs/design/bem-row-check.md.
 extern double g_bem_row_check_mm;
 
+/// --bem-near-subdiv[=N]. BEM-FEM-Pfad: disjunkte Quadpaare in den DICHTEN Bloecken
+/// (nicht ACA) werden bei geringem Abstand gleichmaessig unterteilt, hoechstens N x N
+/// Zellen je Quad (Standard 8). 0 = aus (bitgleich zum bisherigen Verhalten). Prototyp,
+/// siehe docs/design/bem-near-field.md.
+extern int g_bem_near_subdiv;
+
 /// --reference-dump-a=DATEI. Nur im harmonischen Referenzpfad: A_r und A_i an
 /// allen Leiterknoten als CSV (x_m,y_m,z_m,comp,Ar_x,..,Ai_z), Werte mit %.17g.
 /// Auswertung mit tools/compare_a.py. Leer = keine Ausgabe.
@@ -484,6 +490,7 @@ inline bool no_conductor_penalty()  { return g_no_conductor_penalty; }
 inline bool   fixed_plate()         { return g_fixed_plate; }
 inline bool   reference_dirichlet() { return g_reference_dirichlet; }
 inline double bem_row_check_mm()   { return g_bem_row_check_mm; }
+inline int    bem_near_subdiv()    { return g_bem_near_subdiv; }
 inline const std::string& reference_dump_a() { return g_reference_dump_a; }
 inline double plate_z_mm()          { return g_plate_z_mm; }
 // --fem-direct zaehlt hier mit: dieser Pfad entfernt den Curl-Curl-Nullraum

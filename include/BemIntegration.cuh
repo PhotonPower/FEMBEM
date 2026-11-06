@@ -478,4 +478,59 @@ __host__ __device__ inline void integrate_adjacent_quad_pair_dlp(
     }}
 }
 
+// =============================================================================
+// Abstandsabhaengige Unterteilung DISJUNKTER Paare (Prototyp, --bem-near-subdiv)
+// =============================================================================
+//
+// Anlass: integrate_regular_quad_pair(_dlp) ist eine 2x2-Gauss-Regel je Quad ohne
+// Abstandskriterium. Zwei Quads ohne gemeinsamen Knoten koennen trotzdem nahezu
+// aneinanderliegen (Ober- und Unterseite der Platte, 3 mm Abstand). Gemessen an
+// parallelen Quads (tests/test_bem_near_field.cu, docs/design/bem-near-field.md):
+// Fehler der 4x4-Bloecke gegen eine konvergierte Referenz, Maximum ueber vier
+// Lagen, d = Abstand der Ebenen, s = Kantenlaenge:
+//     d/s     0.05    0.1    0.2    0.5    1     2      4
+//     G       218 %   93 %   34 %   6.1 %  1.5 % 0.31 % 0.04 %
+//     D       3770 %  1020 % 266 %  36 %   6.2 % 1.3 %  0.16 %
+//
+// Level n >= 2: gleichmaessige Unterteilung beider Parametergebiete in n x n Zellen mit
+// 2x2 Gauss je Zelle (integrate_adjacent_quad_pair, nur Abstand statt Normalenwinkel).
+// Level 0: Produktionsregel (disjunkt und weit genug: ratio = d_min / s >= 2).
+// n = ceil(2 / ratio), mindestens 2, hoechstens nmax.
+//
+// d_min ist der kleinste Abstand ueber je 9 Stuetzpunkte (Ecken, Kantenmitten, Mitte)
+// beider Quads, s die groessere Wurzel der Flaeche (Diagonalenkreuzprodukt / 2).
+__host__ __device__ inline int near_subdivision_level(
+    const double3 nodes_p[4], const double3 nodes_q[4], int nmax)
+{
+    if (nmax < 2) return 0;
+    double3 sp[9], sq[9];
+    int k = 0;
+    for (int a = -1; a <= 1; ++a) {
+        for (int b = -1; b <= 1; ++b) {
+            sp[k] = evaluate_quad_position(static_cast<double>(a), static_cast<double>(b), nodes_p);
+            sq[k] = evaluate_quad_position(static_cast<double>(a), static_cast<double>(b), nodes_q);
+            ++k;
+        }
+    }
+    double d2min = 1e300;
+    for (int i = 0; i < 9; ++i) {
+        for (int j = 0; j < 9; ++j) {
+            const double dx = sp[i].x - sq[j].x, dy = sp[i].y - sq[j].y, dz = sp[i].z - sq[j].z;
+            const double d2 = dx * dx + dy * dy + dz * dz;
+            if (d2 < d2min) d2min = d2;
+        }
+    }
+    const double3 dp1 = sub3(nodes_p[2], nodes_p[0]), dp2 = sub3(nodes_p[3], nodes_p[1]);
+    const double3 dq1 = sub3(nodes_q[2], nodes_q[0]), dq2 = sub3(nodes_q[3], nodes_q[1]);
+    const double ap = 0.5 * norm3(cross3(dp1, dp2)), aq = 0.5 * norm3(cross3(dq1, dq2));
+    const double s = sqrt(ap > aq ? ap : aq);
+    const double dmin = sqrt(d2min);
+    if (!(s > 0.0) || dmin >= 2.0 * s) return 0;
+    const double ratio = dmin / s;
+    int n = (ratio > 0.0) ? static_cast<int>(ceil(2.0 / ratio)) : nmax;
+    if (n < 2) n = 2;
+    if (n > nmax) n = nmax;
+    return n;
+}
+
 #endif // BEM_INTEGRATION_CUH
