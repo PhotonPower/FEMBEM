@@ -6,6 +6,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Eingrenzung des Kraftüberschusses (`docs/design/force-excess-localization.md`): Wirbelstromdiagnose
+  für Kantenelemente (`harmonic_eddy_diag`, reine Konsolenausgabe im BEM-FEM-Pfad, ohne Einfluss auf Lösung
+  und Kraft); Werkzeuge `bem_eddy_table.py`, `bem_lowfreq_profile.py`, `bem_stokes_check.py`. Befund: der
+  Überschuss entsteht im Quellfeld (Erregung/Kopplung an die Spulen), schon bei 0,01 Hz gegen Biot-Savart
+  (B_z der Platte 1,28 / 1,29 / 0,86 / 0,79 gegen 0,97 bis 1,01 im Referenzpfad); nicht in D, G oder der
+  Plattenreaktion. Es wurde nichts repariert.
+
 - Kraftvergleich mit gleichem Schätzer (`docs/design/force-estimator-check.md`): Test
   `test_lorentz_kernel_agreement` (beide Lorentz-Kernel auf demselben Phasorfeld, mit Gegenproben);
   `tools/bem_trend_tables.py` zeigt Maxwell- und Lorentz-Kraft; Werkzeuge `bem_quad_quality.py` und
