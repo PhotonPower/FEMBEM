@@ -13,7 +13,8 @@ Referenzpfad `--reference --harmonic=50`), Zeilenmessung `--bem-row-check` bei 2
 1. **Die beiden Lorentz-Kernel sind vergleichbar.** Gleiche Formel, gleiche Elementmenge (nur die
    Platte), auf demselben Phasorfeld stimmen sie auf Rundungsniveau überein (A1).
 2. **Das F_z-Defizit gibt es mit dem Lorentz-Schätzer nicht; es ist ein Überschuss.** Lorentz BEM-FEM /
-   Lorentz Referenz = 1,75 / 1,78 / 1,78 / 1,98 für die Skalierungen 0,5 / 0,75 / 1,0 / 1,25. Der
+   Lorentz Referenz = 1,75 / 1,78 / 1,78 / 1,98 für die Skalierungen 0,5 / 0,75 / 1,0 / 1,25 (dichter
+   Aufbau: 1,68 / – / 1,74 / 1,77). Der
    Maxwell-Wert (0,09 / 0,06 / 0,56 / 0,49 des Referenzwerts) schwankt dagegen stark und ist als
    Vergleichsgröße nicht brauchbar (A2, A3).
 3. **Der Einbruch bei 1,25 ist Kompression.** Zeile 2 fällt bei 1,25 mit dichtem Aufbau der
@@ -22,8 +23,9 @@ Referenzpfad `--reference --harmonic=50`), Zeilenmessung `--bem-row-check` bei 2
 4. **Die Kompression verfälscht auch die Skalierungen davor.** Bei 1,0 fällt Zeile 2 gesamt von 4,89 %
    auf 0,77 %, die Platte von 19,6 % auf 2,2 %. Das in `bem-near-field.md` ausgewiesene
    Plattenresiduum von 20 % (und 45 % bei 0,5) war überwiegend ACA-Fehler.
-5. **Das ändert F_z kaum.** Mit dichtem Aufbau: Lorentz 1,68 N (1,0) bzw. 1,43 N (0,5) gegen 1,72 N
-   bzw. 1,49 N komprimiert. Der Überschuss bleibt (A3, B).
+5. **Das ändert F_z (Lorentz) bei 0,5 und 1,0 kaum, bei 1,25 spürbar.** Mit dichtem Aufbau: 1,43 N
+   (0,5), 1,68 N (1,0), 1,74 N (1,25) gegen 1,49 / 1,72 / 1,94 N komprimiert. Der Maxwell-Wert
+   schwankt auch dicht (0,009 / 0,584 / 0,884 N). Der Überschuss bleibt (A3, B).
 
 **Nicht geklärt:** warum der Lorentz-Wert des BEM-FEM-Pfads rund das 1,7-fache des Referenzpfads
 beträgt, und warum das Oberflächenintegral des BEM-FEM-Pfads (Maxwell) davon so weit abweicht.
@@ -81,7 +83,7 @@ Zusätzlich neu gerechnet, dichter Aufbau der BEM-Blöcke (`--bem-eta=1e-9`, 50 
 |---|---:|---:|---:|---:|
 | 0,5 | 0,0092 | 1,43 | 1,676 | 1,746 |
 | 1,0 | 0,584 | 1,68 | 1,738 | 1,780 |
-| 1,25 | @@1,25_MAXWELL@@ | @@1,25_LORENTZ@@ | @@1,25_RATIO@@ | 1,978 |
+| 1,25 | 0,884 | 1,74 | 1,774 | 1,978 |
 
 Die Maxwell-Werte sind 3-stellig aus dem Log gelesen (8-Phasen-Mittel, `ZEITGEMITTELTE KRAFT`).
 
@@ -100,7 +102,8 @@ Die Maxwell-Werte sind 3-stellig aus dem Log gelesen (8-Phasen-Mittel, `ZEITGEMI
   zweier verschiedener Schätzer.
 - **Konvergenz von Lorentz / Ref (ohne 1,25):** nein. 1,746 → 1,776 → 1,780 für 0,5 / 0,75 / 1,0,
   also praktisch konstant (und leicht steigend), nicht auf 1 zulaufend. Mit dichtem Operator
-  1,676 → 1,738 (0,5 → 1,0), ebenfalls nicht auf 1 zulaufend. Das spricht für einen systematischen
+  1,676 → 1,738 → 1,774 (0,5 → 1,0 → 1,25), ebenfalls nicht auf 1 zulaufend; der Ausreißer 1,978 bei 1,25
+  ist damit ebenfalls Kompression (dicht 1,774), die Lorentz-Kraft ist dicht über 0,5 bis 1,25 glatt. Das spricht für einen systematischen
   Unterschied zwischen den Pfaden, nicht für einen Diskretisierungsfehler, der mit der Verfeinerung
   verschwindet.
 - Die Felder der Platte im BEM-FEM-Pfad sind gegen den Referenzpfad größer, auch mit dichtem Operator
@@ -214,7 +217,7 @@ nicht klein gegen die gesuchte Differenz ist.
   gesamt 0,77 % → 0,72 % (`row_dense_subdiv_s1.0.log`). Die Unterteilung wirkt dann also auf die
   Platte, in einer Größenordnung von einem Prozentpunkt; der ACA-Fehler von 17 Prozentpunkten hatte
   sie zuvor überdeckt.
-- F_z ändert sich mit dichtem Aufbau kaum (A2); der Überschuss gegenüber dem Referenzpfad bleibt.
+- F_z (Lorentz) ändert sich mit dichtem Aufbau bei 0,5 und 1,0 um 4 % bzw. 2 %, bei 1,25 um 10 % (A2); der Überschuss gegenüber dem Referenzpfad bleibt (1,68 bis 1,77).
 
 ## Optional: Test, der eine Änderung wie in #23 bemerkt (nur Vorschlag, nicht umgesetzt)
 
@@ -235,7 +238,7 @@ Die Fingerprint-Tests auf `team28.vtk` blieben über #23 grün, obwohl sich F_z 
 ## Tests
 
 - `CUDA_VISIBLE_DEVICES="" ctest -L host`: **41 von 41** (vorher 40; neu `test_lorentz_kernel_agreement`).
-- Vollständiges `ctest` (mit GPU): @@CTEST_FULL@@
+- Vollständiges `ctest` (mit GPU): **74 von 74** grün (vorher 73). Die Fingerprint-Tests sind unverändert.
 
 ## Offene Punkte
 
