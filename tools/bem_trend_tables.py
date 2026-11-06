@@ -8,7 +8,9 @@ Liest aus einem Verzeichnis je Skalierung SC (0.5, 0.75, 1.0, ...):
     hex_sSC.vtk                 das Netz (Panelkanten werden gemessen)
 und schreibt Markdown-Tabellen: F_z je Phase und Mittel, Iterationen, F_z / F_ref,
 Projektion auf Biot-Savart und Vergleich gegen den Referenzpfad (compare_fields.py),
-Zeilenresiduen, Plattenresiduum ueber Panelkante / Plattendicke.
+Zeilenresiduen, Plattenresiduum ueber Panelkante / Plattendicke, F_z nach beiden Schaetzern
+(Maxwell-Spannungstensor und Lorentz-Volumenkraft; letztere ist der maßgebliche Schaetzer,
+siehe docs/design/force-estimator-check.md). Mit c_bf_sSC.log (--bem-near-subdiv) als zusaetzliche Zeilen.
 
     python3 tools/bem_trend_tables.py DIR [--prefix-bf bf] [SC ...]
 """
@@ -34,6 +36,39 @@ def parse_force(log):
     inner = re.search(r"innere \(W\+T\)-Loesungen: (\d+) mit zusammen (\d+) Iterationen", log)
     f_mean = float(mg.group(1)) * 1.0497 if mg else float("nan")   # m g = 1.0497 N
     return ph[:4], f_mean, (int(it.group(1)), it.group(2)) if it else None, inner.groups() if inner else None
+
+
+def parse_lorentz_z(log):
+    """F_z der Zeile 'LORENTZ (Volumen)' (Volumenintegral <J x B>, nur Platte)."""
+    m = re.search(r"LORENTZ \(Volumen\)\s*: \(([-+0-9.eE]+), ([-+0-9.eE]+), ([-+0-9.eE]+)\) N", log)
+    return float(m.group(3)) if m else float("nan")
+
+
+def parse_maxwell_z(log):
+    """F_z der Zeile 'ZEITGEMITTELTE KRAFT' (8-Phasen-Mittel des Maxwell-Spannungstensors)."""
+    m = re.search(r"ZEITGEMITTELTE KRAFT\s*: \(([-+0-9.eE]+), ([-+0-9.eE]+), ([-+0-9.eE]+)\) N", log)
+    return float(m.group(3)) if m else float("nan")
+
+
+def estimator_table(d, scs, prefixes):
+    """Tabelle: beide Kraftschaetzer des BEM-FEM-Pfads gegen den Referenzpfad (Lorentz).
+
+    prefixes: Liste (Praefix, Beschriftung), z. B. [("bf", ""), ("c_bf", " (--bem-near-subdiv)")].
+    Der Referenzpfad gibt nur die Lorentzkraft aus; eine Spalte Maxwell-Referenz gibt es nicht.
+    """
+    print("### F_z nach Schaetzer (50 Hz, 11,3 mm)\n")
+    print("| Skalierung | F_z Maxwell BEM-FEM [N] | F_z Lorentz BEM-FEM [N] | F_z Lorentz Referenz [N] | Maxwell / Ref | Lorentz / Ref |")
+    print("|---|---:|---:|---:|---:|---:|")
+    for pre, label in prefixes:
+        for s in scs:
+            f = os.path.join(d, f"{pre}_s{s}.log")
+            r = os.path.join(d, f"ref_s{s}.log")
+            if not (os.path.exists(f) and os.path.exists(r)):
+                continue
+            log = read(f)
+            mx, lo, rf = parse_maxwell_z(log), parse_lorentz_z(log), parse_ref_force(read(r))
+            print(f"| {s}{label} | {mx:.4g} | {lo:.4g} | {rf:.5g} | {mx / rf:.3f} | {lo / rf:.3f} |")
+    print()
 
 
 def parse_ref_force(log):
@@ -95,6 +130,7 @@ def main():
     d = sys.argv[1]
     scs = sys.argv[2:] or ["0.5", "0.75", "1.0", "1.25"]
     scs = [s for s in scs if os.path.exists(os.path.join(d, f"bf_s{s}.log"))]
+    estimator_table(d, scs, [("bf", ""), ("c_bf", " (--bem-near-subdiv)")])
     print("### F_z und Iterationen (50 Hz, 11,3 mm)\n")
     print("| Skalierung | F_z Phasen 0/45/90/135 [N] | F_z Mittel [N] | F_z Referenzpfad [N] | F_z / F_ref | aeussere / innere Iterationen |")
     print("|---|---|---:|---:|---:|---|")
