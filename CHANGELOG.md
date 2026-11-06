@@ -4,6 +4,15 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+
+- Kraftvergleich mit gleichem Schätzer (`docs/design/force-estimator-check.md`): Test
+  `test_lorentz_kernel_agreement` (beide Lorentz-Kernel auf demselben Phasorfeld, mit Gegenproben);
+  `tools/bem_trend_tables.py` zeigt Maxwell- und Lorentz-Kraft; Werkzeuge `bem_quad_quality.py` und
+  `bem_row_compare.py`; Diagnose-Optionen `--bem-aca-tol=X` und `--bem-eta=X` (Standardwerte 1e-4 und 1,0
+  unverändert, ohne die Optionen bitgleich). Befund: der Einbruch bei Skalierung 1,25 ist ACA-Kompression
+  (Zeile 2 gesamt 9,67 % → 0,33 % dicht); Lorentz BEM-FEM / Referenz ≈ 1,7 bis 2,0.
+
 ### Geändert
 
 - BEM-Kopplung: vier Umsetzungsfehler behoben (`docs/design/bem-coupling-fixes.md`; Befunde aus
