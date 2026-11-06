@@ -884,6 +884,14 @@ if (FEMBEM_OPENMP_AVAILABLE)
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=${FEMBEM_OMP_NVCC_FLAGS}>)
 endif()
 
+# Beide Lorentz-Kernel (Kantenelemente / Q1-Knoten) auf demselben Phasorfeld (host)
+add_executable(test_lorentz_kernel_agreement
+    tests/test_lorentz_kernel_agreement.cu
+    src/Backend.cu
+)
+target_include_directories(test_lorentz_kernel_agreement PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_lorentz_kernel_agreement PRIVATE CUDA::cudart)
+
 # Felddump des harmonischen Referenzpfads: Rundlauf (host)
 add_executable(test_reference_field_dump
     tests/test_reference_field_dump.cu
@@ -1063,6 +1071,8 @@ set_tests_properties(test_apply_many PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_dense_direct COMMAND test_dense_direct)
 set_tests_properties(test_dense_direct PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_harmonic_phase_average COMMAND test_harmonic_phase_average)
+add_test(NAME test_lorentz_kernel_agreement COMMAND test_lorentz_kernel_agreement)
+set_tests_properties(test_lorentz_kernel_agreement PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_reference_harmonic COMMAND test_reference_harmonic)
 set_tests_properties(test_reference_harmonic PROPERTIES LABELS "host" TIMEOUT 120)
 add_test(NAME test_reference_field_dump COMMAND test_reference_field_dump)
@@ -1171,6 +1181,7 @@ add_custom_target(host_tests DEPENDS
     test_dense_direct
     test_harmonic_phase_average
     test_reference_harmonic
+    test_lorentz_kernel_agreement
     test_reference_field_dump
     test_block_preconditioner_study
     test_nedelec_prism
