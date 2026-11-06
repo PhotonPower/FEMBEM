@@ -27,6 +27,8 @@ bool    g_no_conductor_penalty = false;
 bool    g_fixed_plate = false;
 bool    g_reference_dirichlet = false;
 int     g_bem_near_subdiv = 0;       // --bem-near-subdiv[=N]; 0 = aus
+double  g_bem_aca_tol = 1e-4;        // --bem-aca-tol=X (nur Diagnose)
+double  g_bem_eta = 1.0;             // --bem-eta=X (nur Diagnose)
 double  g_bem_row_check_mm = -1.0;   // --bem-row-check[=mm]; negativ = aus
 std::string g_reference_dump_a;       // leer = keine Ausgabe
 double  g_plate_z_mm = -1.0;
@@ -187,6 +189,10 @@ void print_usage(const char* exe_name) {
         << "                 dichten Bloecken bei geringem Abstand (d/s < 2) gleichmaessig in\n"
         << "                 hoechstens N x N Zellen je Quad unterteilen (Standard 8). Ohne die\n"
         << "                 Option bleibt alles bitgleich. Siehe docs/design/bem-near-field.md.\n"
+        << "  --bem-aca-tol=X, --bem-eta=X  Nur Diagnose (BEM-FEM-Pfad): ACA+-Toleranz der\n"
+        << "                 Fernfeldbloecke (Standard 1e-4) und Zulaessigkeitsparameter eta\n"
+        << "                 (Standard 1; sehr klein = alle Bloecke dicht). Ohne die Optionen\n"
+        << "                 bitgleich. Siehe docs/design/force-estimator-check.md.\n"
         << "  --bem-row-check[=MM]  Nur mit --harmonic (BEM-FEM-Pfad): Gegenprobe 2. Setzt\n"
         << "                 das exakte Biot-Savart-Paar (A_ex als Kantenintegrale, K1 =\n"
         << "                 dA/dn tangential, K2 = -n x B / mu0) in beide Blockzeilen ein,\n"
@@ -585,6 +591,14 @@ bool select_backend_from_args(int argc, char** argv) {
                 if (v >= 2 && v <= 64) g_bem_near_subdiv = v;
                 else std::cerr << "[Backend] Warnung: --bem-near-subdiv=N erwartet 2 bis 64, bleibe bei 8.\n";
             }
+        } else if (arg.rfind("--bem-aca-tol=", 0) == 0) {
+            const double v = std::atof(arg.c_str() + 14);
+            if (std::isfinite(v) && v > 0.0 && v < 1.0) g_bem_aca_tol = v;
+            else std::cerr << "[Backend] Warnung: --bem-aca-tol=X erwartet 0 < X < 1, bleibe bei 1e-4.\n";
+        } else if (arg.rfind("--bem-eta=", 0) == 0) {
+            const double v = std::atof(arg.c_str() + 10);
+            if (std::isfinite(v) && v > 0.0) g_bem_eta = v;
+            else std::cerr << "[Backend] Warnung: --bem-eta=X erwartet X > 0, bleibe bei 1.\n";
         } else if (arg == "--bem-row-check" || arg.rfind("--bem-row-check=", 0) == 0) {
             g_bem_row_check_mm = 0.5;
             if (arg.size() > 15) {

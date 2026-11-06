@@ -1198,7 +1198,7 @@ int mainloop(int argc, char** argv) {
         // uebersprungenem BEM-Aufbau bleibt die Liste leer.
         const std::vector<BemBlockPair> block_pairs =
             skip_bem_setup ? std::vector<BemBlockPair>{}
-                           : build_block_pairs(tree, 1.0);
+                           : build_block_pairs(tree, bf::bem_eta());
         if (!skip_bem_setup) {
             size_t n_aca = 0;
             for (const BemBlockPair& bp : block_pairs) if (bp.admissible) ++n_aca;
@@ -2066,7 +2066,7 @@ int mainloop(int argc, char** argv) {
                                                       me.d_U, me.d_V);
                             ++n_mirrored_aca;
                         } else {
-                            CompressedBlock aca = AcaPlus::compress(m, n, evaluator, 1e-4);
+                            CompressedBlock aca = AcaPlus::compress(m, n, evaluator, bf::bem_aca_tol());
 
                             // Reines Device-Memory (Vermeidet Unified Memory Page-Faults)
                             double* d_U, * d_V;
@@ -2112,7 +2112,7 @@ int mainloop(int argc, char** argv) {
                             return matrix_block[local_e_i][local_e_j];
                             };
 
-                        CompressedBlock aca_H = AcaPlus::compress(m, n, evaluator_H, 1e-4);
+                        CompressedBlock aca_H = AcaPlus::compress(m, n, evaluator_H, bf::bem_aca_tol());
 
                         double* d_U_H, * d_V_H;
                         bf::malloc_d(&d_U_H, aca_H.U.size() * sizeof(double));
