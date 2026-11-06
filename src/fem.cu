@@ -5641,6 +5641,40 @@ int mainloop(int argc, char** argv) {
                         Lvol.torque = make_double3(h6[3], h6[4], h6[5]);
                     }
 
+                    // Wirbelstromdiagnose (reine Ausgabe, wie [Ref-Harm] des Referenzpfads):
+                    //   m_z(A_i) = Strommaximum, m_z(A_r) = Nulldurchgang, P = (P_r + P_i)/2.
+                    {
+                        double ed[2][3] = {{0, 0, 0}, {0, 0, 0}};
+                        for (int part = 0; part < 2; ++part) {
+                            DeviceArray<double> dA(static_cast<size_t>(total_dofs));
+                            bf::memcpy_d(dA.data(), part == 0 ? h_ar.data() : h_ai.data(),
+                                         static_cast<size_t>(total_dofs) * sizeof(double),
+                                         cudaMemcpyHostToDevice);
+                            DeviceArray<double> acc(3);
+                            bf::memset_d(acc.data(), 0, 3 * sizeof(double));
+                            bf::sync();
+                            BF_LAUNCH_1D(harmonic_eddy_diag, mesh.num_hexes,
+                                static_cast<int>(mesh.num_hexes),
+                                mesh.hex_nodes.data(), mesh.nodes_current.data(),
+                                mesh.hex_edges.data(), mesh.hex_edge_signs.data(),
+                                mesh.elem_types.data(), d_materials.data(),
+                                dA.data(), omega,
+                                acc.data() + 0, acc.data() + 1, acc.data() + 2);
+                            bf::sync();
+                            bf::memcpy_d(ed[part], acc.data(), 3 * sizeof(double),
+                                         cudaMemcpyDeviceToHost);
+                        }
+                        const double mz_r = ed[0][0], mz_i = ed[1][0];
+                        std::cout << std::scientific << std::setprecision(4)
+                                  << "[Harmonisch] Wirbelstrom: |m_z| im Strommaximum " << std::fabs(mz_i)
+                                  << " A m^2, im Nulldurchgang " << std::fabs(mz_r) << " A m^2\n"
+                                  << "[Harmonisch] Verlustleistung (Zyklusmittel) = "
+                                  << 0.5 * (ed[0][1] + ed[1][1]) << " W\n"
+                                  << "[Harmonisch] Q_eff = |m_z(Max)|/|m_z(Null)| = "
+                                  << std::fabs(mz_i) / std::fmax(std::fabs(mz_r), 1e-300) << "\n"
+                                  << std::defaultfloat;
+                    }
+
                     std::cout << "\n[Harmonisch] Zeitgemittelte Kraft aus " << n_phases
                               << " Phasen:\n";
                     for (int k = 0; k < n_phases; ++k) {

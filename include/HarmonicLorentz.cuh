@@ -227,4 +227,83 @@ static __global__ void harmonic_lorentz(
                           out_fx, out_fy, out_fz, out_mx, out_my, out_mz);
 }
 
+// =============================================================================
+// Wirbelstromdiagnose fuer Kantenelemente (Gegenstueck zu nodal_eddy_diag)
+// =============================================================================
+//
+// J = -sigma*omega*A (A_prev = 0, dt = 1/omega wie im Referenzpfad):
+//   J(t=0)   = sigma*omega*A_i  (Strommaximum)   -> eddy_diag(A_i)
+//   J(t=T/4) = sigma*omega*A_r  (Nulldurchgang)  -> eddy_diag(A_r)
+//   m_z = 1/2 Int (x J_y - y J_x) dV,  P = Int |J|^2/sigma dV,  absJ = Int |J| dV
+// Reine Diagnose (docs/design/force-excess-localization.md): kein Einfluss auf Loesung
+// oder Kraft. Quadratur wie harmonic_lorentz_body.
+BF_HD inline void harmonic_eddy_diag_body(
+    int h, int num_hexes,
+    const Hexahedron* hex_nodes, const double3* nodes,
+    const int* hex_edges, const int* hex_edge_signs,
+    const int* elem_types,
+    const MaterialProperties* materials,
+    const double* A, double omega,
+    double* out_mz, double* out_power, double* out_absJ)
+{
+    if (h >= num_hexes) return;
+    const double sigma = materials[h].kappa;
+    if (!(sigma > 0.0)) return;
+    const int etype   = element_type_or_hex(elem_types, h);
+    const int n_nodes = element_num_nodes(etype);
+    const int n_edges = element_num_edges(etype);
+    const Hexahedron hex = hex_nodes[h];
+    double3 h_nodes[8];
+    for (int i = 0; i < n_nodes; ++i) h_nodes[i] = nodes[hex.v[i]];
+    for (int i = n_nodes; i < 8; ++i) h_nodes[i] = make_double3(0.0, 0.0, 0.0);
+    double a[12];
+    for (int i = 0; i < 12; ++i) {
+        const int g = hex_edges[h * 12 + i];
+        a[i] = (g < 0) ? 0.0 : A[g] * hex_edge_signs[h * 12 + i];
+    }
+    double mz = 0.0, pw = 0.0, aj = 0.0;
+    const int n_quad = element_num_quad_points(etype);
+    for (int g = 0; g < n_quad; ++g) {
+        double xi, eta, zeta, quad_w;
+        element_quadrature_point(etype, g, xi, eta, zeta, quad_w);
+        double J[3][3], invJ[3][3], detJ;
+        compute_element_jacobian(etype, h_nodes, xi, eta, zeta, J, invJ, detJ);
+        double3 W[12];
+        evaluate_element_basis(etype, xi, eta, zeta, W);
+        double3 Av = make_double3(0, 0, 0);
+        for (int i = 0; i < n_edges; ++i) {
+            const double3 w = piola_covariant(invJ, W[i]);
+            Av.x += a[i]*w.x; Av.y += a[i]*w.y; Av.z += a[i]*w.z;
+        }
+        const double sc = -sigma * omega;
+        const double3 Jc = make_double3(sc*Av.x, sc*Av.y, sc*Av.z);
+        double3 r = make_double3(0, 0, 0);
+        double Nsh[8];
+        element_shape_functions(etype, xi, eta, zeta, Nsh);
+        for (int n = 0; n < n_nodes; ++n) {
+            r.x += Nsh[n]*h_nodes[n].x; r.y += Nsh[n]*h_nodes[n].y; r.z += Nsh[n]*h_nodes[n].z;
+        }
+        const double dV = quad_w * fabs(detJ);
+        mz += 0.5 * (r.x * Jc.y - r.y * Jc.x) * dV;
+        const double j2 = Jc.x*Jc.x + Jc.y*Jc.y + Jc.z*Jc.z;
+        pw += j2 / sigma * dV;
+        aj += sqrt(j2) * dV;
+    }
+    bf::atomic_add(out_mz, mz); bf::atomic_add(out_power, pw); bf::atomic_add(out_absJ, aj);
+}
+
+static __global__ void harmonic_eddy_diag(
+    int num_hexes,
+    const Hexahedron* hex_nodes, const double3* nodes,
+    const int* hex_edges, const int* hex_edge_signs,
+    const int* elem_types,
+    const MaterialProperties* materials,
+    const double* A, double omega,
+    double* out_mz, double* out_power, double* out_absJ)
+{
+    const int h = blockIdx.x * blockDim.x + threadIdx.x;
+    harmonic_eddy_diag_body(h, num_hexes, hex_nodes, nodes, hex_edges, hex_edge_signs,
+                            elem_types, materials, A, omega, out_mz, out_power, out_absJ);
+}
+
 #endif // HARMONIC_LORENTZ_CUH

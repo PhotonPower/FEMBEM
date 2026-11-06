@@ -198,6 +198,33 @@ int main() {
         check_control("Kontrolle falsches Vorzeichen A_i: Knoten gegen Original", rel(ng.nodal3, r.nodal3), 0.1);
     }
 
+    // --- Fall 1b: Wirbelstromdiagnose (m_z, P) beider Pfade auf demselben Feld
+    std::puts("\n[1b] Wirbelstromdiagnose: harmonic_eddy_diag_body gegen nodal_eddy_diag_body (affin)");
+    {
+        MaterialProperties mat; mat.kappa = sigma;
+        int edges[12], signs[12];
+        for (int i = 0; i < 12; ++i) { edges[i] = i; signs[i] = 1; }
+        const int etype = ELEM_HEX;
+        for (int part = 0; part < 2; ++part) {
+            const Field& f = part == 0 ? fr_aff : fi_aff;
+            const std::vector<double> ed = edge_dofs(par, f), nd = node_dofs(par, f);
+            double e[3] = {0, 0, 0};
+            harmonic_eddy_diag_body(0, 1, &par.hex, par.nodes, edges, signs, &etype, &mat,
+                                    ed.data(), omega, &e[0], &e[1], &e[2]);
+            double n[3] = {0, 0, 0};
+            const std::vector<double> zero(24, 0.0);
+            nodal_eddy_diag_body(0, 1, &par.hex, par.nodes, &mat, nd.data(), zero.data(),
+                                 1.0 / omega, &n[0], &n[1], &n[2]);
+            char buf[96];
+            std::snprintf(buf, sizeof buf, "m_z Kante gegen Knoten (%s)", part == 0 ? "A_r" : "A_i");
+            check(buf, std::fabs(e[0] - n[0]) / std::fabs(n[0]), 1e-12);
+            std::snprintf(buf, sizeof buf, "P Kante gegen Knoten (%s)", part == 0 ? "A_r" : "A_i");
+            check(buf, std::fabs(e[1] - n[1]) / std::fabs(n[1]), 1e-12);
+            // Int|J| wird nicht verglichen: sqrt ist nicht polynomial, die Quadraturordnungen (2^3 / 3^3)
+            // unterscheiden sich dort, ohne dass die Kernel verschieden waeren; die Groesse wird nicht verwendet.
+        }
+    }
+
     // --- Fall 2: verzerrtes Hexaeder, quadratisches Feld
     std::puts("\n[2] verzerrtes Hexaeder, quadratische Felder: Diskretisierungsabweichung");
     Hex dis;
