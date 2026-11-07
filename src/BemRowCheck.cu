@@ -322,6 +322,60 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
                 P.nq, std::chrono::duration<double>(clk::now() - t0).count(), n_bad);
     std::cout.flush();
 
+    // -- Spurdifferenz d = mu0 (K2 - K1) und ihre Zerlegung (bem-trace-consistency, Schritt 1) ------
+    // Nur Ausgabe: k1, k2 und alles Folgende bleiben unveraendert.
+    {
+        std::vector<double> kd(static_cast<size_t>(P.nb), 0.0), kp(static_cast<size_t>(P.nb), 0.0),
+                            kg(static_cast<size_t>(P.nb), 0.0), kc(static_cast<size_t>(P.nb), 0.0),
+                            k1m(static_cast<size_t>(P.nb), 0.0), k2m(static_cast<size_t>(P.nb), 0.0);
+        parallel_for(static_cast<size_t>(P.nq), [&](size_t pos) {
+            QuadTrace tr, tg, tc;
+            if (!quad_trace_projection(P.geom[pos], fil, 1.0, 1.0, tr)) return;
+            quad_trace_projection(P.geom[pos], fil, 1.0, 0.0, tg);   // nur grad-Term
+            quad_trace_projection(P.geom[pos], fil, 0.0, 1.0, tc);   // nur Kruemmungsterm
+            for (int i = 0; i < 4; ++i) {
+                kd[pos * 4 + i] = tr.d[i];  kp[pos * 4 + i] = tr.pred[i];
+                kg[pos * 4 + i] = tg.pred[i]; kc[pos * 4 + i] = tc.pred[i];
+                k1m[pos * 4 + i] = tr.k1[i]; k2m[pos * 4 + i] = tr.k2[i];
+            }
+        });
+        std::vector<int> lab(static_cast<size_t>(P.nb));
+        for (int i = 0; i < P.nb; ++i) lab[static_cast<size_t>(i)] = P.pos_label[static_cast<size_t>(i / 4)];
+        // k1m, k2m, kd, kp sind hier alle mit mu0 skaliert (die k1, k2 oben tragen 1/mu0)
+        std::vector<double> kd_r = axpy(kd, -1.0, kp);
+        std::vector<double> kp_nc = axpy(kd, -1.0, kg);     // d - nur grad
+        std::vector<double> kp_ng = axpy(kd, -1.0, kc);     // d - nur Kruemmung
+        const auto r_d_k2 = by_body_and_class(kd, k2m, lab);
+        const auto r_d_k1 = by_body_and_class(kd, k1m, lab);
+        const auto r_id   = by_body_and_class(kd_r, kd, lab);
+        const auto r_ng   = by_body_and_class(kp_ng, kd, lab);
+        const auto r_nc   = by_body_and_class(kp_nc, kd, lab);
+        std::printf("\n[RowCheck] Spurdifferenz d = mu0 (K2 - K1), Rooftop-Koeffizienten (Schritt 1)\n\n");
+        std::printf("| Koerper | Klasse | n | ||d||/||K2|| | ||d||/||K1|| | ||d - Vorhersage||/||d|| | "
+                    "ohne Kruemmungsterm | ohne grad-Term |\n|---|---|---:|---:|---:|---:|---:|---:|\n");
+        auto row = [&](const char* b, const char* c, size_t idx) {
+            if (r_d_k2[idx].n == 0) return;
+            const double dk2 = std::sqrt(r_d_k2[idx].num2 / r_d_k2[idx].ref2);
+            if (dk2 < 1e-10) {   // d ist Rundungsrauschen (ebene Quads): Verhaeltnisse waeren bedeutungslos
+                std::printf("| %s | %s | %ld | %.1e | %.1e | (|d| ~ 0) | - | - |\n", b, c, r_d_k2[idx].n, dk2,
+                            std::sqrt(r_d_k1[idx].num2 / r_d_k1[idx].ref2));
+                return;
+            }
+            std::printf("| %s | %s | %ld | %.2f %% | %.2f %% | %.2e | %.2f %% | %.2f %% |\n", b, c, r_d_k2[idx].n,
+                        100.0 * dk2,
+                        100.0 * std::sqrt(r_d_k1[idx].num2 / r_d_k1[idx].ref2), r_id[idx].rel(),
+                        100.0 * r_nc[idx].rel(), 100.0 * r_ng[idx].rel());
+        };
+        for (int b = 0; b < kNumBodies; ++b)
+            for (int c = 0; c <= kNumClasses; ++c)
+                row(kBodyName[b], c < kNumClasses ? class_name(c) : "alle",
+                    static_cast<size_t>(c < kNumClasses ? b * kNumClasses + c : kNumLabels + b));
+        row("alle", "alle", static_cast<size_t>(kNumLabels + kNumBodies));
+        std::printf("(||d||/||K|| bezieht sich auf mu0 K, Zaehler ||d|| bzw. Residuum; "
+                    "\"ohne ...\": ||d - Teilterm||/||d||)\n");
+        std::cout.flush();
+    }
+
     // -- Operatoren anwenden ----------------------------------------------------------
     DeviceArray<double> d_a(static_cast<size_t>(P.E)), d_k(static_cast<size_t>(P.nb));
     DeviceArray<double> d_TK(static_cast<size_t>(P.E)), d_TA(static_cast<size_t>(P.nb)),
@@ -460,6 +514,198 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
                     w1[col2] = by_body_and_class(axpy(Wa_b, static_cast<double>(sgn), TK[v]), Wa_b, P.edge_label);
             print_table("Zeile 1 mit W statt K (omega*C a_ex mitgerechnet; nur fuer die Platte relevant), V0", w1);
         }
+    }
+
+    // -- Schritte 2 und 3 (bem-trace-consistency) ---------------------------------------------------
+    // Nur Messung, Operator und Loesungspfad unveraendert. Faelle: 0 ohne Verschiebung, 1 psi = c x z
+    // (harmonisch), 2 psi = c (x^2+y^2) z (nicht harmonisch). Verschiebung der Kanten-DOF:
+    // a' = a_ex + c (psi(Endknoten) - psi(Anfangsknoten)) (exakt), K2 und B unveraendert, K1' = K1 + tang(H n)
+    // (Schritt 2). Konsistentes Paar (Schritt 3): k_FEM = K2 in Zeile 1, k_BEM = K2 - d_Vorhersage in
+    // Zeile 2, mit A.n aus dem verschobenen exakten Feld A_ex + grad psi am Quadraturpunkt.
+    {
+        std::printf("\n[RowCheck] ===== Schritt 2 und 3: Eichverschiebung und konsistentes Paar =====\n");
+        auto apply_Kb = [&](const std::vector<double>& a, std::vector<double>& Kab, std::vector<double>& Cx) {
+            Kab.assign(static_cast<size_t>(P.E), 0.0);
+            Cx.assign(static_cast<size_t>(P.E), 0.0);
+            for (int r = 0; r < P.E; ++r) {
+                double w = 0.0, c = 0.0;
+                for (int q = csr_W.row_offsets[static_cast<size_t>(r)]; q < csr_W.row_offsets[static_cast<size_t>(r) + 1]; ++q)
+                    w += csr_W.values[static_cast<size_t>(q)] * a[static_cast<size_t>(csr_W.col_indices[static_cast<size_t>(q)])];
+                for (int q = csr_C.row_offsets[static_cast<size_t>(r)]; q < csr_C.row_offsets[static_cast<size_t>(r) + 1]; ++q)
+                    c += csr_C.values[static_cast<size_t>(q)] * a[static_cast<size_t>(csr_C.col_indices[static_cast<size_t>(q)])];
+                Kab[static_cast<size_t>(r)] = (w - omega * c) - b_phys[static_cast<size_t>(r)];
+                Cx[static_cast<size_t>(r)] = c;
+            }
+        };
+        auto apply_W = [&](const std::vector<double>& a) {
+            std::vector<double> out(static_cast<size_t>(P.E), 0.0);
+            for (int r = 0; r < P.E; ++r)
+                for (int q = csr_W.row_offsets[static_cast<size_t>(r)]; q < csr_W.row_offsets[static_cast<size_t>(r) + 1]; ++q)
+                    out[static_cast<size_t>(r)] += csr_W.values[static_cast<size_t>(q)] * a[static_cast<size_t>(csr_W.col_indices[static_cast<size_t>(q)])];
+            return out;
+        };
+        std::vector<int> lab(static_cast<size_t>(P.nb));
+        for (int i = 0; i < P.nb; ++i) lab[static_cast<size_t>(i)] = P.pos_label[static_cast<size_t>(i / 4)];
+        // Amplitude der Verschiebung: ||grad psi|| = ||a_ex||, beide nur ueber Randkanten (dort wirkt Zeile 2;
+        // innere Kanten naehe einer Dipolsingularitaet wuerden die Norm sonst dominieren)
+        double norm_a = 0.0;
+        for (int e = 0; e < P.E; ++e)
+            if (P.edge_label[static_cast<size_t>(e)] >= 0) norm_a += a_ex[static_cast<size_t>(e)] * a_ex[static_cast<size_t>(e)];
+        norm_a = std::sqrt(norm_a);
+
+        // Basis (Fall 0): t2 ohne Verschiebung als Bezug fuer die Aenderung von Zeile 2
+        std::vector<double> t2_base;
+        std::vector<double> Ka_b_base = Ka_b;
+
+        const char* case_name[5] = {"Fall 0: ohne Verschiebung",
+                                    "Fall 1: psi = c x z (harmonisch, waechst)",
+                                    "Fall 2: psi = c (x^2 + y^2) z (nicht harmonisch, waechst)",
+                                    "Fall 3: psi = c d_z/|d|^3 (Dipol bei (41.3, 0.7, -26.3) mm in der Innenspule, harmonisch, klingt ab)",
+                                    "Fall 4: psi = c z exp(-r^2/s^2), s = 150 mm (nicht harmonisch, klingt ab)"};
+        for (int cs = 0; cs < 5; ++cs) {
+            Gauge gg; gg.kind = cs >= 1 ? cs - 1 : 0; gg.c = 0.0;
+            std::vector<double> g(static_cast<size_t>(P.E), 0.0);
+            if (cs > 0) {
+                // Amplitude: ||g|| = ||a_ex|| (gesamte Kantenvektoren, 2-Norm)
+                Gauge u1 = gg; u1.c = 1.0;
+                double ng = 0.0;
+                for (int e = 0; e < P.E; ++e) {
+                    const int2 ed = mesh.edges[static_cast<size_t>(e)];
+                    g[static_cast<size_t>(e)] = u1.psi(to_v3(P.nodes[static_cast<size_t>(ed.y)])) -
+                                                u1.psi(to_v3(P.nodes[static_cast<size_t>(ed.x)]));
+                    if (P.edge_label[static_cast<size_t>(e)] >= 0) ng += g[static_cast<size_t>(e)] * g[static_cast<size_t>(e)];
+                }
+                gg.c = norm_a / std::sqrt(ng);
+                for (double& x : g) x *= gg.c;
+            }
+            std::printf("\n[RowCheck] %s%s\n", case_name[cs], "");
+            if (cs > 0) {
+                double ngb = 0.0;
+                for (int e = 0; e < P.E; ++e)
+                    if (P.edge_label[static_cast<size_t>(e)] >= 0) ngb += g[static_cast<size_t>(e)] * g[static_cast<size_t>(e)];
+                std::printf("[RowCheck]   c = %.4e (Randkanten: ||a_ex|| = %.4e, ||grad psi (Kantenintegrale)|| = %.4e; alle Kanten: "
+                            "||a_ex|| = %.4e, ||grad psi|| = %.4e)\n", gg.c, norm_a, std::sqrt(ngb), vnorm(a_ex), vnorm(g));
+            }
+            std::vector<double> a2(static_cast<size_t>(P.E));
+            for (int e = 0; e < P.E; ++e) a2[static_cast<size_t>(e)] = a_ex[static_cast<size_t>(e)] + g[static_cast<size_t>(e)];
+
+            // K1', K2, k_BEM (mit 1/mu0)
+            std::vector<double> k1p(static_cast<size_t>(P.nb), 0.0), kB(static_cast<size_t>(P.nb), 0.0);
+            std::vector<double> k2c(static_cast<size_t>(P.nb), 0.0);
+            parallel_for(static_cast<size_t>(P.nq), [&](size_t pos) {
+                QuadTrace tr;
+                if (!quad_trace_projection(P.geom[pos], fil, 1.0, 1.0, tr, gg)) return;
+                for (int i = 0; i < 4; ++i) {
+                    k1p[pos * 4 + i] = tr.k1[i] / kMu0;
+                    k2c[pos * 4 + i] = tr.k2[i] / kMu0;
+                    kB[pos * 4 + i] = (tr.k2[i] - tr.pred[i]) / kMu0;
+                }
+            });
+            std::printf("[RowCheck]   k2 dieses Falls gegen k2 (unverschoben): %.2e (K2 muss invariant sein)\n",
+                        rel_diff(k2c, k2));
+            std::printf("[RowCheck]   ||k_BEM - K1'|| / ||K1'|| = %.2e  (k_BEM = K2 - d_Vorhersage)\n",
+                        rel_diff(kB, k1p));
+
+            // Operatoranwendungen mit a2
+            std::vector<double> TKp, GKp, TKb, GKb, TAc, DAc;
+            for (int pass = 0; pass < 2; ++pass) {
+                const std::vector<double>& kk = pass == 0 ? k1p : kB;
+                for (int e = 0; e < P.E; ++e) d_a[static_cast<size_t>(e)] = a2[static_cast<size_t>(e)];
+                for (int i = 0; i < P.nb; ++i) d_k[static_cast<size_t>(i)] = kk[static_cast<size_t>(i)];
+                d_a.prefetch_to_device(); d_k.prefetch_to_device(); bf::sync();
+                op.row_check_parts(d_a.data(), d_k.data(), d_TK.data(), d_TA.data(), d_DA.data(), d_GK.data());
+                d_TK.prefetch_to_host(); d_TA.prefetch_to_host(); d_DA.prefetch_to_host(); d_GK.prefetch_to_host();
+                bf::sync();
+                if (pass == 0) {
+                    TKp.assign(d_TK.data(), d_TK.data() + P.E);
+                    GKp.assign(d_GK.data(), d_GK.data() + P.nb);
+                    TAc.assign(d_TA.data(), d_TA.data() + P.nb);
+                    DAc.assign(d_DA.data(), d_DA.data() + P.nb);
+                } else {
+                    TKb.assign(d_TK.data(), d_TK.data() + P.E);
+                    GKb.assign(d_GK.data(), d_GK.data() + P.nb);
+                }
+                d_a.prefetch_to_host(); d_k.prefetch_to_host(); bf::sync();
+            }
+            std::vector<double> Kab, Cx;
+            apply_Kb(a2, Kab, Cx);
+            std::vector<double> t2(static_cast<size_t>(P.nb));
+            for (int i = 0; i < P.nb; ++i) t2[static_cast<size_t>(i)] = TAc[static_cast<size_t>(i)] + DAc[static_cast<size_t>(i)];
+            if (cs == 0) t2_base = t2;
+
+            // Zeile 1 und 2: +K1', -K1', +K2, -K2
+            std::vector<Residual> r1[4], r2[4];
+            {
+                int col = 0;
+                for (int v = 0; v < 2; ++v)
+                    for (int sgn = +1; sgn >= -1; sgn -= 2, ++col) {
+                        const std::vector<double>& tk = (v == 0) ? TKp : TK[1];
+                        const std::vector<double>& gk = (v == 0) ? GKp : Gk[1];
+                        r1[col] = by_body_and_class(axpy(Kab, static_cast<double>(sgn), tk), Kab, P.edge_label);
+                        r2[col] = by_body_and_class(axpy(t2, static_cast<double>(sgn), gk), t2, lab);
+                    }
+            }
+            char title[200];
+            std::snprintf(title, sizeof title, "Zeile 1, %s: ||K a' - T k - b|| / ||K a' - b||  (Spalten: K1' = verschobenes K1)", case_name[cs]);
+            print_table(title, r1);
+            std::snprintf(title, sizeof title, "Zeile 2, %s: ||(0.5 T - D) a' + mu0 G k|| / ||(0.5 T - D) a'||", case_name[cs]);
+            print_table(title, r2);
+
+            // Konsistentes Paar: Zeile 1 mit k = K2 (+K2), Zeile 2 mit k_BEM
+            {
+                const std::vector<Residual> p1 = by_body_and_class(axpy(Kab, +1.0, TK[1]), Kab, P.edge_label);
+                const std::vector<Residual> p2 = by_body_and_class(axpy(t2, +1.0, GKb), t2, lab);
+                const std::vector<Residual> p2k1 = by_body_and_class(axpy(t2, +1.0, GKp), t2, lab);
+                const std::vector<Residual> p2k2 = by_body_and_class(axpy(t2, +1.0, Gk[1]), t2, lab);
+                std::vector<double> t2d(static_cast<size_t>(P.nb));
+                for (int i = 0; i < P.nb; ++i) t2d[static_cast<size_t>(i)] = t2[static_cast<size_t>(i)] - t2_base[static_cast<size_t>(i)];
+                const std::vector<Residual> dz2 = by_body_and_class(t2d, t2_base, lab);
+                std::printf("\nKonsistentes Paar, %s (Zeile 1: k = K2; Zeile 2: k = k_BEM; zum Vergleich Zeile 2 mit K1' und mit K2; "
+                            "letzte Spalte: Aenderung von (0.5 T - D) a gegen Fall 0)\n\n", case_name[cs]);
+                std::printf("| Koerper | Klasse | n Zeile 1 | n Zeile 2 | Z1 (K2) | Z2 (k_BEM) | Z2 (K1') | Z2 (K2) | Aenderung Z2-Operand |\n"
+                            "|---|---|---:|---:|---:|---:|---:|---:|---:|\n");
+                for (int b = 0; b < kNumBodies; ++b)
+                    for (int c = 0; c <= kNumClasses; ++c) {
+                        const size_t idx = static_cast<size_t>((c < kNumClasses) ? b * kNumClasses + c : kNumLabels + b);
+                        if (p2[idx].n == 0) continue;
+                        std::printf("| %s | %s | %ld | %ld | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% |\n", kBodyName[b],
+                                    c < kNumClasses ? class_name(c) : "alle", p1[idx].n, p2[idx].n, 100.0 * p1[idx].rel(),
+                                    100.0 * p2[idx].rel(), 100.0 * p2k1[idx].rel(), 100.0 * p2k2[idx].rel(),
+                                    100.0 * dz2[idx].rel());
+                    }
+                const size_t all = static_cast<size_t>(kNumLabels + kNumBodies);
+                std::printf("| alle | alle | %ld | %ld | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% |\n", p1[all].n, p2[all].n,
+                            100.0 * p1[all].rel(), 100.0 * p2[all].rel(), 100.0 * p2k1[all].rel(),
+                            100.0 * p2k2[all].rel(), 100.0 * dz2[all].rel());
+            }
+
+            // Zeile 1: Aenderung durch die Verschiebung. K = W - omega C ist die reine curl-curl-Form
+            // (ohne Wirbelstromterm): K g = 0 in allen Koerpern. Die W-Form enthaelt omega C und aendert
+            // sich um W g = omega C g (Platte; in den Spulen ist C = 0).
+            if (cs > 0) {
+                std::vector<double> Kg, Cg;
+                apply_Kb(g, Kg, Cg);                       // Kg = (W - omega C) g - b
+                for (int e = 0; e < P.E; ++e) Kg[static_cast<size_t>(e)] += b_phys[static_cast<size_t>(e)];
+                const std::vector<double> Wg = apply_W(g);
+                double kn[kNumBodies + 1] = {}, wn[kNumBodies + 1] = {}, cn[kNumBodies + 1] = {}, dn[kNumBodies + 1] = {},
+                       base[kNumBodies + 1] = {};
+                for (int e = 0; e < P.E; ++e) {
+                    if (P.edge_label[static_cast<size_t>(e)] < 0) continue;
+                    const int b2 = P.edge_body[static_cast<size_t>(e)];
+                    const double w = Wg[static_cast<size_t>(e)], c = omega * Cg[static_cast<size_t>(e)];
+                    kn[b2] += Kg[static_cast<size_t>(e)] * Kg[static_cast<size_t>(e)];
+                    wn[b2] += w * w; cn[b2] += c * c; dn[b2] += (w - c) * (w - c);
+                    base[b2] += Ka_b_base[static_cast<size_t>(e)] * Ka_b_base[static_cast<size_t>(e)];
+                }
+                std::printf("\nZeile 1, Aenderung durch die Verschiebung je Koerper (Randkanten), %s\n\n", case_name[cs]);
+                std::printf("| Koerper | ||K g|| (K-Form, gemessene Aenderung) | ||W g|| (W-Form, gemessen) | ||omega C g|| | "
+                            "||W g - omega C g|| | ||K a_ex - b|| (Grundpegel) |\n|---|---:|---:|---:|---:|---:|\n");
+                for (int bb = 1; bb <= kNumBodies; ++bb)
+                    std::printf("| %s | %.3e | %.3e | %.3e | %.3e | %.3e |\n", kBodyName[bb - 1], std::sqrt(kn[bb]),
+                                std::sqrt(wn[bb]), std::sqrt(cn[bb]), std::sqrt(dn[bb]), std::sqrt(base[bb]));
+            }
+        }
+        std::cout.flush();
     }
 
     // -- Referenz-Randterm: Zeile 1 ohne Rooftop-Darstellung und ohne T ---------------------

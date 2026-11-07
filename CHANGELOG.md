@@ -6,6 +6,13 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Spurkonsistenz der FEM-BEM-Kopplung (`docs/design/bem-trace-consistency.md`): Test `test_bem_trace_identity`
+  (Identität μ0 (K2 − K1) = −∇_Γ(A·n) + Krümmungsterm am exakten Feld, mit Gegenproben und Eichverschiebung);
+  in `--bem-row-check` Spurdifferenz je Körper/Klasse, Eichverschiebung A + ∇ψ (vier ψ) und konsistentes Paar
+  (nur Ausgabe, Lösungspfad unverändert). Befund: K1 ≠ K2 ist durch die Identität quantitativ erklärt (25 bis
+  27 % auf den Spulenmänteln); Zeile 1 ist eichinvariant, Zeile 2 nicht, und das mit K1 übersetzte Paar
+  übersteht die Eichverschiebung nicht. Es wurde nichts am Operator geändert.
+
 - Eingrenzung des Kraftüberschusses (`docs/design/force-excess-localization.md`): Wirbelstromdiagnose
   für Kantenelemente (`harmonic_eddy_diag`, reine Konsolenausgabe im BEM-FEM-Pfad, ohne Einfluss auf Lösung
   und Kraft); Werkzeuge `bem_eddy_table.py`, `bem_lowfreq_profile.py`, `bem_stokes_check.py`. Befund: der

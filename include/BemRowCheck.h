@@ -286,6 +286,173 @@ inline int classify_quad(V3 n, bool touches_sharp_edge) {
 }
 
 // ---------------------------------------------------------------------------
+// Spurdifferenz K2 - K1 und ihre Zerlegung (bem-trace-consistency, Schritt 1)
+// ---------------------------------------------------------------------------
+// Herleitung (ausfuehrlich in docs/design/bem-trace-consistency.md):
+//   Fuer festes n gilt n x (rot A) = (grad A) n - (n.grad)A  mit ((grad A) n)_i = n_j d_i A_j.
+//   Also mu0 K2 = -n x B = (n.grad)A - (grad A) n, und mit mu0 K1 = tang (n.grad)A
+//     d := mu0 (K2 - K1) = - tang[(grad A) n].
+//   Auf einer Flaeche x(u,v) mit Einheitsnormale n(u,v) und f := A.n ist
+//     d_a f = (x_a . grad)A . n + A . d_a n,   t_a . (grad A) n = (x_a . grad)A . n,
+//   also tang[(grad A) n] = grad_G f - C  mit  grad_G f = g^{ab} (d_b f) x_a  und
+//     C = g^{ab} (A . d_b n) x_a   (= W A_tan, W = Weingarten-Abbildung d n).
+//   Ergebnis:  d = - grad_G (A.n) + C.
+//   Zylinder (n = +e_r, A = A_phi e_phi): A.n = 0, C = (A_phi / r) e_phi.
+//   Ebene Flaeche (n = +-e_z): beide Terme null, d = 0.
+// (v.grad)A analytisch: A = A_phi(r,z) e_phi,  d_r A_phi = B_z - A_phi/r,  d_z A_phi = -B_r.
+inline V3 directional_derivative_A(const ExactField& e, V3 v) {
+    const double over_r = e.r > 1e-12 ? e.Aphi / e.r : 0.0;
+    const double dAr = e.Bz - over_r;
+    const double dAz = -e.Br;
+    const double s = dot(v, e.e_r) * dAr + v.z * dAz;
+    return s * e.e_phi - (over_r * dot(v, e.e_phi)) * e.e_r;
+}
+
+struct TraceTerms {
+    V3 K1, K2;      // mu0 K1 (tangential), mu0 K2 = -n x B
+    V3 d;           // mu0 (K2 - K1), direkt aus K1, K2
+    V3 grad;        // - grad_G (A.n)
+    V3 curv;        // + C
+};
+
+// Eichverschiebung A -> A + grad psi mit analytischem psi (Schritt 2 und 3):
+//   kind 0: psi = c x z            (harmonisch, waechst im Unendlichen)
+//   kind 1: psi = c (x^2 + y^2) z  (nicht harmonisch, Laplace psi = 4 c z, waechst)
+//   kind 2: psi = c d_z / |d|^3, d = p - p0   (Dipol, harmonisch ausser in p0, klingt wie 1/|d|^3 ab)
+//   kind 3: psi = c z exp(-|p|^2 / s^2)       (nicht harmonisch, klingt ab)
+// Die Kinds 0 und 1 verletzen die Abklingbedingung der Aussenraum-Darstellungsformel, die Kinds 2 und 3
+// nicht (p0 liegt im Innenraum, d.h. in einem Leiter). B = rot A bleibt unveraendert, K2 ebenso;
+// K1 aendert sich um tang (H n) mit der Hesse-Matrix H.
+struct Gauge {
+    int kind = 0;
+    double c = 0.0;
+    V3 p0{0.0413, 0.0007, -0.0263};   // Dipolpunkt (Innenspule, abseits der Gitterknoten)
+    double s = 0.15;             // Breite von kind 3
+    bool active() const { return c != 0.0; }
+    double psi(V3 p) const {
+        if (kind == 0) return c * p.x * p.z;
+        if (kind == 1) return c * (p.x * p.x + p.y * p.y) * p.z;
+        if (kind == 2) { const V3 d = p - p0; const double r = norm(d); return c * d.z / (r * r * r); }
+        return c * p.z * std::exp(-dot(p, p) / (s * s));
+    }
+    V3 grad(V3 p) const {
+        if (kind == 0) return {c * p.z, 0.0, c * p.x};
+        if (kind == 1) return {2 * c * p.x * p.z, 2 * c * p.y * p.z, c * (p.x * p.x + p.y * p.y)};
+        if (kind == 2) {
+            const V3 d = p - p0; const double r2 = dot(d, d), r = std::sqrt(r2);
+            return c * (1.0 / (r2 * r)) * V3{0, 0, 1} - (3 * c * d.z / (r2 * r2 * r)) * d;
+        }
+        const double E = std::exp(-dot(p, p) / (s * s));
+        return {c * E * p.z * (-2 * p.x / (s * s)), c * E * p.z * (-2 * p.y / (s * s)),
+                c * E * (1.0 - 2 * p.z * p.z / (s * s))};
+    }
+    V3 hess_times(V3 p, V3 v) const {      // (H psi) v
+        if (kind == 0) return {c * v.z, 0.0, c * v.x};
+        if (kind == 1)
+            return {2 * c * (p.z * v.x + p.x * v.z), 2 * c * (p.z * v.y + p.y * v.z), 2 * c * (p.x * v.x + p.y * v.y)};
+        if (kind == 2) {
+            // d_j d_i psi = -3 d_iz d_j/r^5 - 3 d_jz d_i/r^5 - 3 d_z delta_ij/r^5 + 15 d_z d_i d_j / r^7
+            const V3 d = p - p0; const double r2 = dot(d, d), r = std::sqrt(r2);
+            const double r5 = r2 * r2 * r, r7 = r5 * r2;
+            const double dv = dot(d, v);
+            return c * ((-3.0 / r5) * (v.z * d + dv * V3{0, 0, 1}) - (3.0 * d.z / r5) * v + (15.0 * d.z * dv / r7) * d);
+        }
+        const double s2 = s * s;
+        const double E = std::exp(-dot(p, p) / s2);
+        const double pv = dot(p, v);
+        // d_j d_i psi = E [ -2 delta_iz p_j/s2 - 2 delta_jz p_i/s2 - 2 z delta_ij/s2 + 4 z p_i p_j / s2^2 ]
+        const V3 ez{0, 0, 1};
+        return c * E * ((-2.0 / s2) * (pv * ez + v.z * p) - (2.0 * p.z / s2) * v + (4.0 * p.z * pv / (s2 * s2)) * p);
+    }
+};
+
+// xu, xv: Tangenten; n: Einheitsnormale; nu, nv: Ableitungen der Normale nach (u, v).
+// Alle Groessen am selben Punkt p, ExactField dort ausgewertet; optional Eichverschiebung.
+inline TraceTerms trace_terms_g(const ExactField& e, V3 p, const Gauge& gg, V3 xu, V3 xv, V3 n, V3 nu, V3 nv) {
+    TraceTerms t;
+    const V3 A = e.A + gg.grad(p);
+    auto dirA = [&](V3 v) { return directional_derivative_A(e, v) + gg.hess_times(p, v); };
+    V3 dn = dirA(n);
+    t.K1 = dn - dot(dn, n) * n;
+    t.K2 = -1.0 * cross(n, e.B);
+    t.d = t.K2 - t.K1;
+    const double guu = dot(xu, xu), guv = dot(xu, xv), gvv = dot(xv, xv);
+    const double det = guu * gvv - guv * guv;
+    const double iuu = gvv / det, iuv = -guv / det, ivv = guu / det;
+    const double fu = dot(dirA(xu), n) + dot(A, nu);
+    const double fv = dot(dirA(xv), n) + dot(A, nv);
+    const double cu = dot(A, nu), cv = dot(A, nv);
+    const double gu = iuu * fu + iuv * fv, gv = iuv * fu + ivv * fv;      // Komponenten von grad_G f
+    const double ku = iuu * cu + iuv * cv, kv = iuv * cu + ivv * cv;
+    t.grad = -1.0 * (gu * xu + gv * xv);
+    t.curv = ku * xu + kv * xv;
+    return t;
+}
+
+inline TraceTerms trace_terms(const ExactField& e, V3 xu, V3 xv, V3 n, V3 nu, V3 nv) {
+    return trace_terms_g(e, V3{}, Gauge{}, xu, xv, n, nu, nv);
+}
+
+// Tangenten und Normalen-Ableitungen des bilinearen Quads (u, v in [-1,1]).
+struct QuadFrame { V3 p, xu, xv, n, nu, nv; };
+inline QuadFrame quad_frame(const QuadGeom& q, double u, double v) {
+    QuadFrame f;
+    const double3* N = q.n;
+    auto comb = [&](double a0, double a1, double a2, double a3) {
+        return V3{a0 * N[0].x + a1 * N[1].x + a2 * N[2].x + a3 * N[3].x,
+                  a0 * N[0].y + a1 * N[1].y + a2 * N[2].y + a3 * N[3].y,
+                  a0 * N[0].z + a1 * N[1].z + a2 * N[2].z + a3 * N[3].z};
+    };
+    f.p  = quad_point(q.n, u, v);
+    f.xu = comb(0.25 * -(1 - v), 0.25 * (1 - v), 0.25 * (1 + v), 0.25 * -(1 + v));
+    f.xv = comb(0.25 * -(1 - u), 0.25 * -(1 + u), 0.25 * (1 + u), 0.25 * (1 - u));
+    const V3 xuv = comb(0.25, -0.25, 0.25, -0.25);
+    const V3 m = cross(f.xu, f.xv);
+    const double len = norm(m);
+    const V3 mh = (1.0 / len) * m;
+    f.n = q.outward * mh;
+    const V3 mu = cross(f.xu, xuv), mv = cross(xuv, f.xv);          // d_u m = xu x xuv, d_v m = xuv x xv
+    f.nu = (q.outward / len) * (mu - dot(mh, mu) * mh);
+    f.nv = (q.outward / len) * (mv - dot(mh, mv) * mh);
+    return f;
+}
+
+// Galerkin-Projektion (wie project_to_rooftop) von K1, K2, d und der Vorhersage
+// -w_grad * grad_G(A.n) + w_curv * C auf die vier Rooftop-Koeffizienten.
+// (w_grad, w_curv) = (1, 1) ist die Herleitung; andere Werte sind Gegenproben.
+struct QuadTrace { double k1[4], k2[4], d[4], pred[4]; };
+inline bool quad_trace_projection(const QuadGeom& q, const std::vector<Filament>& fil,
+                                  double w_grad, double w_curv, QuadTrace& out,
+                                  const Gauge& gg = Gauge{}) {
+    double x[4], w[4];
+    gauss4(x, w);
+    double f1[4] = {}, f2[4] = {}, fd[4] = {}, fp[4] = {};
+    for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) {
+        const QuadFrame fr = quad_frame(q, x[a], x[b]);
+        const ExactField ef = exact_field(fil, fr.p);
+        const TraceTerms t = trace_terms_g(ef, fr.p, gg, fr.xu, fr.xv, fr.n, fr.nu, fr.nv);
+        const V3 pred = w_grad * t.grad + w_curv * t.curv;
+        double detJ; double3 W[4];
+        evaluate_rooftop_basis(x[a], x[b], q.n, W, detJ);
+        for (int i = 0; i < 4; ++i) {
+            const double wt = w[a] * w[b] * detJ;
+            f1[i] += wt * dot(to_v3(W[i]), t.K1);
+            f2[i] += wt * dot(to_v3(W[i]), t.K2);
+            fd[i] += wt * dot(to_v3(W[i]), t.d);
+            fp[i] += wt * dot(to_v3(W[i]), pred);
+        }
+    }
+    double T[4][4];
+    integrate_boundary_mass_matrix(q.n, T);
+    double Tc[4][4];
+    auto solve = [&](const double* f, double* c) {
+        for (int i = 0; i < 4; ++i) for (int j = 0; j < 4; ++j) Tc[i][j] = T[i][j];
+        return solve4(Tc, f, c);
+    };
+    return solve(f1, out.k1) && solve(f2, out.k2) && solve(fd, out.d) && solve(fp, out.pred);
+}
+
+// ---------------------------------------------------------------------------
 // Residuenbuchhaltung
 // ---------------------------------------------------------------------------
 struct Residual {
