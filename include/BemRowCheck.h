@@ -315,25 +315,82 @@ struct TraceTerms {
     V3 curv;        // + C
 };
 
+// Eichverschiebung A -> A + grad psi mit analytischem psi (Schritt 2 und 3):
+//   kind 0: psi = c x z            (harmonisch, waechst im Unendlichen)
+//   kind 1: psi = c (x^2 + y^2) z  (nicht harmonisch, Laplace psi = 4 c z, waechst)
+//   kind 2: psi = c d_z / |d|^3, d = p - p0   (Dipol, harmonisch ausser in p0, klingt wie 1/|d|^3 ab)
+//   kind 3: psi = c z exp(-|p|^2 / s^2)       (nicht harmonisch, klingt ab)
+// Die Kinds 0 und 1 verletzen die Abklingbedingung der Aussenraum-Darstellungsformel, die Kinds 2 und 3
+// nicht (p0 liegt im Innenraum, d.h. in einem Leiter). B = rot A bleibt unveraendert, K2 ebenso;
+// K1 aendert sich um tang (H n) mit der Hesse-Matrix H.
+struct Gauge {
+    int kind = 0;
+    double c = 0.0;
+    V3 p0{0.0413, 0.0007, -0.0263};   // Dipolpunkt (Innenspule, abseits der Gitterknoten)
+    double s = 0.15;             // Breite von kind 3
+    bool active() const { return c != 0.0; }
+    double psi(V3 p) const {
+        if (kind == 0) return c * p.x * p.z;
+        if (kind == 1) return c * (p.x * p.x + p.y * p.y) * p.z;
+        if (kind == 2) { const V3 d = p - p0; const double r = norm(d); return c * d.z / (r * r * r); }
+        return c * p.z * std::exp(-dot(p, p) / (s * s));
+    }
+    V3 grad(V3 p) const {
+        if (kind == 0) return {c * p.z, 0.0, c * p.x};
+        if (kind == 1) return {2 * c * p.x * p.z, 2 * c * p.y * p.z, c * (p.x * p.x + p.y * p.y)};
+        if (kind == 2) {
+            const V3 d = p - p0; const double r2 = dot(d, d), r = std::sqrt(r2);
+            return c * (1.0 / (r2 * r)) * V3{0, 0, 1} - (3 * c * d.z / (r2 * r2 * r)) * d;
+        }
+        const double E = std::exp(-dot(p, p) / (s * s));
+        return {c * E * p.z * (-2 * p.x / (s * s)), c * E * p.z * (-2 * p.y / (s * s)),
+                c * E * (1.0 - 2 * p.z * p.z / (s * s))};
+    }
+    V3 hess_times(V3 p, V3 v) const {      // (H psi) v
+        if (kind == 0) return {c * v.z, 0.0, c * v.x};
+        if (kind == 1)
+            return {2 * c * (p.z * v.x + p.x * v.z), 2 * c * (p.z * v.y + p.y * v.z), 2 * c * (p.x * v.x + p.y * v.y)};
+        if (kind == 2) {
+            // d_j d_i psi = -3 d_iz d_j/r^5 - 3 d_jz d_i/r^5 - 3 d_z delta_ij/r^5 + 15 d_z d_i d_j / r^7
+            const V3 d = p - p0; const double r2 = dot(d, d), r = std::sqrt(r2);
+            const double r5 = r2 * r2 * r, r7 = r5 * r2;
+            const double dv = dot(d, v);
+            return c * ((-3.0 / r5) * (v.z * d + dv * V3{0, 0, 1}) - (3.0 * d.z / r5) * v + (15.0 * d.z * dv / r7) * d);
+        }
+        const double s2 = s * s;
+        const double E = std::exp(-dot(p, p) / s2);
+        const double pv = dot(p, v);
+        // d_j d_i psi = E [ -2 delta_iz p_j/s2 - 2 delta_jz p_i/s2 - 2 z delta_ij/s2 + 4 z p_i p_j / s2^2 ]
+        const V3 ez{0, 0, 1};
+        return c * E * ((-2.0 / s2) * (pv * ez + v.z * p) - (2.0 * p.z / s2) * v + (4.0 * p.z * pv / (s2 * s2)) * p);
+    }
+};
+
 // xu, xv: Tangenten; n: Einheitsnormale; nu, nv: Ableitungen der Normale nach (u, v).
-// Alle Groessen am selben Punkt, ExactField dort ausgewertet.
-inline TraceTerms trace_terms(const ExactField& e, V3 xu, V3 xv, V3 n, V3 nu, V3 nv) {
+// Alle Groessen am selben Punkt p, ExactField dort ausgewertet; optional Eichverschiebung.
+inline TraceTerms trace_terms_g(const ExactField& e, V3 p, const Gauge& gg, V3 xu, V3 xv, V3 n, V3 nu, V3 nv) {
     TraceTerms t;
-    V3 dn = normal_derivative_A(e, n);
+    const V3 A = e.A + gg.grad(p);
+    auto dirA = [&](V3 v) { return directional_derivative_A(e, v) + gg.hess_times(p, v); };
+    V3 dn = dirA(n);
     t.K1 = dn - dot(dn, n) * n;
     t.K2 = -1.0 * cross(n, e.B);
     t.d = t.K2 - t.K1;
     const double guu = dot(xu, xu), guv = dot(xu, xv), gvv = dot(xv, xv);
     const double det = guu * gvv - guv * guv;
     const double iuu = gvv / det, iuv = -guv / det, ivv = guu / det;
-    const double fu = dot(directional_derivative_A(e, xu), n) + dot(e.A, nu);
-    const double fv = dot(directional_derivative_A(e, xv), n) + dot(e.A, nv);
-    const double cu = dot(e.A, nu), cv = dot(e.A, nv);
+    const double fu = dot(dirA(xu), n) + dot(A, nu);
+    const double fv = dot(dirA(xv), n) + dot(A, nv);
+    const double cu = dot(A, nu), cv = dot(A, nv);
     const double gu = iuu * fu + iuv * fv, gv = iuv * fu + ivv * fv;      // Komponenten von grad_G f
     const double ku = iuu * cu + iuv * cv, kv = iuv * cu + ivv * cv;
     t.grad = -1.0 * (gu * xu + gv * xv);
     t.curv = ku * xu + kv * xv;
     return t;
+}
+
+inline TraceTerms trace_terms(const ExactField& e, V3 xu, V3 xv, V3 n, V3 nu, V3 nv) {
+    return trace_terms_g(e, V3{}, Gauge{}, xu, xv, n, nu, nv);
 }
 
 // Tangenten und Normalen-Ableitungen des bilinearen Quads (u, v in [-1,1]).
@@ -365,14 +422,15 @@ inline QuadFrame quad_frame(const QuadGeom& q, double u, double v) {
 // (w_grad, w_curv) = (1, 1) ist die Herleitung; andere Werte sind Gegenproben.
 struct QuadTrace { double k1[4], k2[4], d[4], pred[4]; };
 inline bool quad_trace_projection(const QuadGeom& q, const std::vector<Filament>& fil,
-                                  double w_grad, double w_curv, QuadTrace& out) {
+                                  double w_grad, double w_curv, QuadTrace& out,
+                                  const Gauge& gg = Gauge{}) {
     double x[4], w[4];
     gauss4(x, w);
     double f1[4] = {}, f2[4] = {}, fd[4] = {}, fp[4] = {};
     for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) {
         const QuadFrame fr = quad_frame(q, x[a], x[b]);
         const ExactField ef = exact_field(fil, fr.p);
-        const TraceTerms t = trace_terms(ef, fr.xu, fr.xv, fr.n, fr.nu, fr.nv);
+        const TraceTerms t = trace_terms_g(ef, fr.p, gg, fr.xu, fr.xv, fr.n, fr.nu, fr.nv);
         const V3 pred = w_grad * t.grad + w_curv * t.curv;
         double detJ; double3 W[4];
         evaluate_rooftop_basis(x[a], x[b], q.n, W, detJ);

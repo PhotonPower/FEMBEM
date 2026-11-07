@@ -173,6 +173,59 @@ int main() {
     }
     check(prev < 0.02, "192 Facetten: L2-Abweichung < 2 %", prev, 0.02);
 
+    std::printf("[5] Eichverschiebung A -> A + grad psi (Schritt 2): Identitaet, K2 invariant, K1 verschoben\n");
+    {
+        // Gauge selbst: grad psi gegen zentrale Differenz von psi, H v gegen zentrale Differenz von grad psi
+        double eg = 0, eh = 0, ng = 0, nh = 0;
+        for (int kind = 0; kind < 4; ++kind) {
+            Gauge gg; gg.kind = kind; gg.c = kind == 2 ? 3.0e-6 : 3.0;
+            for (int i = 0; i < 20; ++i) {
+                const V3 p{0.01 * i - 0.05, 0.02 - 0.003 * i, 0.03 + 0.004 * i}, v{0.3, -0.7, 0.5};
+                const double h = 1e-6;
+                const V3 gx = gg.grad(p);
+                V3 fd{(gg.psi(p + V3{h, 0, 0}) - gg.psi(p - V3{h, 0, 0})) / (2 * h),
+                      (gg.psi(p + V3{0, h, 0}) - gg.psi(p - V3{0, h, 0})) / (2 * h),
+                      (gg.psi(p + V3{0, 0, h}) - gg.psi(p - V3{0, 0, h})) / (2 * h)};
+                eg += dot(gx - fd, gx - fd); ng += dot(gx, gx);
+                const V3 hv = gg.hess_times(p, v);
+                const V3 fh = (1.0 / (2 * h)) * (gg.grad(p + h * v) - gg.grad(p - h * v));
+                eh += dot(hv - fh, hv - fh); nh += dot(hv, hv);
+            }
+        }
+        check(std::sqrt(eg / ng) < 1e-8, "psi: grad gegen zentrale Differenz", std::sqrt(eg / ng), 1e-8);
+        check(std::sqrt(eh / nh) < 1e-6, "psi: H v gegen zentrale Differenz von grad psi", std::sqrt(eh / nh), 1e-6);
+    }
+    for (int kind = 0; kind < 4; ++kind) {
+        Gauge gg; gg.kind = kind; gg.c = kind == 2 ? 1.0e-6 : 5.0e-3;
+        double worst_id = 0, k2max = 0, k2dev = 0, k1shift = 0, wrong_old = 0, den = 0;
+        auto run = [&](auto gen, int n) {
+            for (int i = 0; i < n; ++i) {
+                const Surf sf = gen(i);
+                const ExactField ef = exact_field(fil, sf.p);
+                const TraceTerms t0 = trace_terms(ef, sf.xu, sf.xv, sf.n, sf.nu, sf.nv);
+                const TraceTerms t1 = trace_terms_g(ef, sf.p, gg, sf.xu, sf.xv, sf.n, sf.nu, sf.nv);
+                worst_id = std::max(worst_id, norm(t1.d - (t1.grad + t1.curv)));
+                k2max = std::max(k2max, norm(t1.K2));
+                k2dev = std::max(k2dev, norm(t1.K2 - t0.K2));
+                const V3 hn = gg.hess_times(sf.p, sf.n);
+                const V3 exp_shift = hn - dot(hn, sf.n) * sf.n;               // tang (H n)
+                k1shift += dot(t1.K1 - t0.K1 - exp_shift, t1.K1 - t0.K1 - exp_shift);
+                den += dot(exp_shift, exp_shift);
+                // Gegenprobe: Vorhersage mit dem UNverschobenen A.n
+                wrong_old += dot(t1.d - (t0.grad + t0.curv), t1.d - (t0.grad + t0.curv));
+            }
+        };
+        run(cyl_o, N); run(sph, N); run(pln, N); run(tpl, N);
+        worst_id /= k2max; k2dev /= k2max;     // absolute Abweichungen gegen max |K2| (auf der Achse ist K2 = 0)
+        std::printf("  psi kind %d (c = %.1e):\n", kind, gg.c);
+        check(worst_id < 1e-10, "  |d' - (grad + curv)'| / |K2| (alle Flaechen)", worst_id, 1e-10);
+        check(k2dev < 1e-12, "  K2 invariant", k2dev, 1e-12);
+        check(std::sqrt(k1shift / den) < 1e-10, "  K1' - K1 = tang(H n)", std::sqrt(k1shift / den), 1e-10);
+        check(std::sqrt(wrong_old / (den > 0 ? den : 1)) > 0.5,
+              "  Gegenprobe: Vorhersage mit unverschobenem A.n faellt durch (Abweichung gegen Verschiebung)",
+              std::sqrt(wrong_old / den), 0.5);
+    }
+
     std::printf("\n%s (%d Fehler)\n", g_fail ? "FEHLGESCHLAGEN" : "BESTANDEN", g_fail);
     return g_fail ? 1 : 0;
 }
