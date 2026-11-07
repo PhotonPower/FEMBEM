@@ -669,6 +669,109 @@ __global__ void element_center_fields(
                                elem_types, A, out);
 }
 
+// --harmonic-field-dump, Zusatz (bem-normal-components, Schritt 3): je Randquad Tangential- und
+// Normalanteil des geloesten A auf der Randflaeche. A wird aus den Kanten-DOF des EINEN angrenzenden
+// Hexaeders (Nedelec, kovariante Piola-Abbildung) an den 4x4-Gauss-Punkten der Flaeche ausgewertet; die
+// Aussenseite ist BEM, dort gibt es kein FEM-Feld. Die Normalkomponente ist zwischen Nachbarquads
+// unstetig (nur die Tangentialkomponente ist stetig), deshalb werden Integrale ueber das Quad ausgegeben
+// (Gauss-Quadratur), keine Punktwerte: ||A.n||^2 = int (A.n)^2 dS und ||A_tan||^2 = int |A - (A.n) n|^2 dS,
+// getrennt fuer Real- und Imaginaerteil. Die Klassifikation (eben/Seite/Kante) geschieht im Werkzeug aus den
+// Knotenkoordinaten. Reine Ausgabe, kein Einfluss auf Loesung oder Kraft.
+static void write_boundary_quad_fields(const std::string& path, Mesh& mesh,
+                                       const std::vector<int>& body,
+                                       const double* d_ar, const double* d_ai) {
+    mesh.boundary_faces.prefetch_to_host();
+    mesh.hex_nodes.prefetch_to_host();
+    mesh.nodes_current.prefetch_to_host();
+    mesh.hex_edges.prefetch_to_host();
+    mesh.hex_edge_signs.prefetch_to_host();
+    bf::sync();
+    const size_t nd_dofs = mesh.num_edges;
+    std::vector<double> ar(d_ar, d_ar + nd_dofs), ai(d_ai, d_ai + nd_dofs);
+    std::FILE* f = std::fopen(path.c_str(), "w");
+    if (f == nullptr) {
+        std::cout << "[Harmonisch] WARNUNG: " << path << " laesst sich nicht schreiben.\n";
+        return;
+    }
+    std::fprintf(f, "quad,body,x0,y0,z0,x1,y1,z1,x2,y2,z2,x3,y3,z3,area,tan_r2,tan_i2,nrm_r2,nrm_i2\n");
+    const double gx[4] = {-0.8611363115940526, -0.3399810435848563, 0.3399810435848563, 0.8611363115940526};
+    const double gw[4] = {0.3478548451374538, 0.6521451548625461, 0.6521451548625461, 0.3478548451374538};
+    for (size_t qi = 0; qi < mesh.num_boundary_faces; ++qi) {
+        const Mesh::QuadFace fc = mesh.boundary_faces[qi];
+        const int hid = fc.parent_hex_id;
+        const int etype = element_type_or_hex(mesh.elem_types.data(), hid);
+        if (etype != ELEM_HEX || fc.v[3] < 0) continue;
+        const Hexahedron hex = mesh.hex_nodes[static_cast<size_t>(hid)];
+        double3 nd[8];
+        for (int i = 0; i < 8; ++i) nd[i] = mesh.nodes_current[static_cast<size_t>(hex.v[i])];
+        // lokale Knotennummern der Flaechenknoten und deren Referenzkoordinaten
+        double rr[4], ss[4], tt[4];
+        bool ok = true;
+        for (int k = 0; k < 4; ++k) {
+            int loc = -1;
+            for (int i = 0; i < 8; ++i) if (hex.v[i] == fc.v[k]) loc = i;
+            if (loc < 0) { ok = false; break; }
+            element_reference_node(etype, loc, rr[k], ss[k], tt[k]);
+        }
+        if (!ok) continue;
+        double3 q[4];
+        for (int k = 0; k < 4; ++k) q[k] = mesh.nodes_current[static_cast<size_t>(fc.v[k])];
+        double3 c = make_double3(0, 0, 0);
+        for (int i = 0; i < 8; ++i) { c.x += nd[i].x; c.y += nd[i].y; c.z += nd[i].z; }
+        c.x *= 0.125; c.y *= 0.125; c.z *= 0.125;
+        double area = 0.0, tan2[2] = {0, 0}, nrm2[2] = {0, 0};
+        for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) {
+            const double u = gx[a], v = gx[b];
+            const double N[4] = {0.25 * (1 - u) * (1 - v), 0.25 * (1 + u) * (1 - v),
+                                 0.25 * (1 + u) * (1 + v), 0.25 * (1 - u) * (1 + v)};
+            // Tangenten und Normale des bilinearen Quads
+            double3 xu = make_double3(0, 0, 0), xv = make_double3(0, 0, 0), xp = make_double3(0, 0, 0);
+            const double Nu[4] = {-0.25 * (1 - v), 0.25 * (1 - v), 0.25 * (1 + v), -0.25 * (1 + v)};
+            const double Nv[4] = {-0.25 * (1 - u), -0.25 * (1 + u), 0.25 * (1 + u), 0.25 * (1 - u)};
+            for (int k = 0; k < 4; ++k) {
+                xu.x += Nu[k] * q[k].x; xu.y += Nu[k] * q[k].y; xu.z += Nu[k] * q[k].z;
+                xv.x += Nv[k] * q[k].x; xv.y += Nv[k] * q[k].y; xv.z += Nv[k] * q[k].z;
+                xp.x += N[k] * q[k].x;  xp.y += N[k] * q[k].y;  xp.z += N[k] * q[k].z;
+            }
+            double3 nn = make_double3(xu.y * xv.z - xu.z * xv.y, xu.z * xv.x - xu.x * xv.z, xu.x * xv.y - xu.y * xv.x);
+            const double dS = std::sqrt(nn.x * nn.x + nn.y * nn.y + nn.z * nn.z);
+            nn.x /= dS; nn.y /= dS; nn.z /= dS;
+            // aeussere Orientierung: von der Hexaedermitte weg
+            if (nn.x * (xp.x - c.x) + nn.y * (xp.y - c.y) + nn.z * (xp.z - c.z) < 0.0) { nn.x = -nn.x; nn.y = -nn.y; nn.z = -nn.z; }
+            const double w = gw[a] * gw[b] * dS;
+            area += w;
+            // Referenzpunkt auf der Flaeche
+            double r = 0, s2 = 0, t = 0;
+            for (int k = 0; k < 4; ++k) { r += N[k] * rr[k]; s2 += N[k] * ss[k]; t += N[k] * tt[k]; }
+            double J[3][3], invJ[3][3], detJ;
+            compute_element_jacobian(etype, nd, r, s2, t, J, invJ, detJ);
+            if (detJ <= 0.0) continue;
+            double3 W[12];
+            evaluate_element_basis(etype, r, s2, t, W);
+            for (int part = 0; part < 2; ++part) {
+                const std::vector<double>& A = part == 0 ? ar : ai;
+                double3 Av = make_double3(0, 0, 0);
+                for (int i = 0; i < 12; ++i) {
+                    const int ge = mesh.hex_edges[static_cast<size_t>(hid) * 12 + i];
+                    if (ge < 0) continue;
+                    const double aa = A[static_cast<size_t>(ge)] * static_cast<double>(mesh.hex_edge_signs[static_cast<size_t>(hid) * 12 + i]);
+                    const double3 wv = piola_covariant(invJ, W[i]);
+                    Av.x += aa * wv.x; Av.y += aa * wv.y; Av.z += aa * wv.z;
+                }
+                const double an = Av.x * nn.x + Av.y * nn.y + Av.z * nn.z;
+                const double a2 = Av.x * Av.x + Av.y * Av.y + Av.z * Av.z;
+                nrm2[part] += w * an * an;
+                tan2[part] += w * (a2 - an * an);
+            }
+        }
+        std::fprintf(f, "%zu,%d", qi, body[static_cast<size_t>(hid)]);
+        for (int k = 0; k < 4; ++k) std::fprintf(f, ",%.9e,%.9e,%.9e", q[k].x, q[k].y, q[k].z);
+        std::fprintf(f, ",%.9e,%.9e,%.9e,%.9e,%.9e\n", area, tan2[0], tan2[1], nrm2[0], nrm2[1]);
+    }
+    std::fclose(f);
+    std::cout << "[Harmonisch] Normal- und Tangentialanteil von A je Randquad nach " << path << " geschrieben.\n";
+}
+
 // --harmonic-field-dump: je Element Koerper-Kennung, Schwerpunkt, A_r, A_i,
 // B_r, B_i als CSV (SI-Einheiten). Kennung 0 sonst, 1 Platte, 2 Innen-,
 // 3 Aussenspule.
@@ -5535,6 +5638,8 @@ int mainloop(int argc, char** argv) {
                         for (int h : coil_outer.get_hex_indices()) body[h] = 3;
                         write_harmonic_field_dump(bf::harmonic_field_dump(), mesh, body,
                                                   d_xr.data(), d_xi.data());
+                        write_boundary_quad_fields(bf::harmonic_field_dump() + ".bquads.csv", mesh, body,
+                                                   d_xr.data(), d_xi.data());
 
                         // Dazu das FEM-Gleichungssystem, physikalisch: Kanten
                         // mit Endpunkten, Rand- und Eichkennung, rechte Seite
