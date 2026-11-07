@@ -315,3 +315,18 @@ python3 ../tools/bem_panel_sizes.py near/hex_s1.0.vtk
 ./test_bem_near_field --table
 CUDA_VISIBLE_DEVICES="" ctest -L host
 ```
+
+## Nachtrag (force-estimator-check, 06.11.2026)
+
+Drei Aussagen dieses Berichts sind nach `force-estimator-check.md` zu relativieren; die Zahlen oben
+bleiben unverändert.
+
+1. **Tabelle A vergleicht zwei Schätzer** (Maxwell BEM-FEM gegen Lorentz Referenz). Mit Lorentz auf beiden
+   Seiten ist Lorentz BEM-FEM / Referenz 1,75 / 1,78 / 1,78 / 1,98 (0,5 / 0,75 / 1,0 / 1,25): ein
+   Überschuss, kein Defizit.
+2. **Der Einbruch bei 1,25 ist ACA-Kompression.** Zeile 2 gesamt 9,67 % → 0,33 % mit dichtem Aufbau
+   (`--bem-eta=1e-9`), Platte 34,4 % → 1,4 %; das Netz ist unauffällig.
+3. **Die Plattenresiduen von Zeile 2 (45 / 28 / 20 / 34 %) waren überwiegend Kompressionsfehler**
+   (dicht bei 1,0: Platte 2,2 %, gesamt 0,77 %). Die Aussage „Nahfeldquadratur nicht die Ursache“ wurde
+   mit dem komprimierten Operator gemessen; dicht wirkt `--bem-near-subdiv` auf die Platte
+   (2,21 % → 1,19 %, Skalierung 1,0).

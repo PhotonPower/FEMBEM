@@ -324,3 +324,11 @@ python3 ../tools/compare_fields.py fix/after_s1_50.csv fix/ref_s1_50.csv --mesh 
 ./test_bem_coupling_geometry ../data/team28/team28.vtk
 ./test_bem_calderon
 ```
+
+## Nachtrag (force-estimator-check, 06.11.2026)
+
+Die F_z-Zahlen dieses Berichts (Maxwell-Spannungstensor, BEM-FEM) und der Referenzwert 0,9665 N
+(Lorentz-Volumenkraft) stammen aus **verschiedenen Schätzern**; „F_z −44 %“ ist deshalb kein Defizit des
+Pfads. Mit dem Lorentz-Volumenwert auf beiden Seiten liegt der BEM-FEM-Pfad bei Skalierung 1,0 bei
+1,72 N gegen 0,9665 N, also **über** dem Referenzpfad (Faktor 1,78). Einzelheiten, Tabelle und
+Messungen: `force-estimator-check.md`. Die Zahlen oben sind unverändert.

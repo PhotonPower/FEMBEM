@@ -121,6 +121,13 @@ extern double g_bem_row_check_mm;
 /// siehe docs/design/bem-near-field.md.
 extern int g_bem_near_subdiv;
 
+/// --bem-aca-tol=X und --bem-eta=X. NUR DIAGNOSE (docs/design/force-estimator-check.md,
+/// Teil B): ACA+-Toleranz der Fernfeldbloecke (Standard 1e-4) und Zulaessigkeitsparameter
+/// eta (Standard 1.0; ein sehr kleines eta macht alle Bloecke dicht). Ohne die Optionen
+/// bleibt alles bitgleich; die Standardwerte aendert dieser Schalter nicht.
+extern double g_bem_aca_tol;
+extern double g_bem_eta;
+
 /// --reference-dump-a=DATEI. Nur im harmonischen Referenzpfad: A_r und A_i an
 /// allen Leiterknoten als CSV (x_m,y_m,z_m,comp,Ar_x,..,Ai_z), Werte mit %.17g.
 /// Auswertung mit tools/compare_a.py. Leer = keine Ausgabe.
@@ -491,6 +498,8 @@ inline bool   fixed_plate()         { return g_fixed_plate; }
 inline bool   reference_dirichlet() { return g_reference_dirichlet; }
 inline double bem_row_check_mm()   { return g_bem_row_check_mm; }
 inline int    bem_near_subdiv()    { return g_bem_near_subdiv; }
+inline double bem_aca_tol()        { return g_bem_aca_tol; }
+inline double bem_eta()            { return g_bem_eta; }
 inline const std::string& reference_dump_a() { return g_reference_dump_a; }
 inline double plate_z_mm()          { return g_plate_z_mm; }
 // --fem-direct zaehlt hier mit: dieser Pfad entfernt den Curl-Curl-Nullraum
