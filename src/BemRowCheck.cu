@@ -322,6 +322,60 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
                 P.nq, std::chrono::duration<double>(clk::now() - t0).count(), n_bad);
     std::cout.flush();
 
+    // -- Spurdifferenz d = mu0 (K2 - K1) und ihre Zerlegung (bem-trace-consistency, Schritt 1) ------
+    // Nur Ausgabe: k1, k2 und alles Folgende bleiben unveraendert.
+    {
+        std::vector<double> kd(static_cast<size_t>(P.nb), 0.0), kp(static_cast<size_t>(P.nb), 0.0),
+                            kg(static_cast<size_t>(P.nb), 0.0), kc(static_cast<size_t>(P.nb), 0.0),
+                            k1m(static_cast<size_t>(P.nb), 0.0), k2m(static_cast<size_t>(P.nb), 0.0);
+        parallel_for(static_cast<size_t>(P.nq), [&](size_t pos) {
+            QuadTrace tr, tg, tc;
+            if (!quad_trace_projection(P.geom[pos], fil, 1.0, 1.0, tr)) return;
+            quad_trace_projection(P.geom[pos], fil, 1.0, 0.0, tg);   // nur grad-Term
+            quad_trace_projection(P.geom[pos], fil, 0.0, 1.0, tc);   // nur Kruemmungsterm
+            for (int i = 0; i < 4; ++i) {
+                kd[pos * 4 + i] = tr.d[i];  kp[pos * 4 + i] = tr.pred[i];
+                kg[pos * 4 + i] = tg.pred[i]; kc[pos * 4 + i] = tc.pred[i];
+                k1m[pos * 4 + i] = tr.k1[i]; k2m[pos * 4 + i] = tr.k2[i];
+            }
+        });
+        std::vector<int> lab(static_cast<size_t>(P.nb));
+        for (int i = 0; i < P.nb; ++i) lab[static_cast<size_t>(i)] = P.pos_label[static_cast<size_t>(i / 4)];
+        // k1m, k2m, kd, kp sind hier alle mit mu0 skaliert (die k1, k2 oben tragen 1/mu0)
+        std::vector<double> kd_r = axpy(kd, -1.0, kp);
+        std::vector<double> kp_nc = axpy(kd, -1.0, kg);     // d - nur grad
+        std::vector<double> kp_ng = axpy(kd, -1.0, kc);     // d - nur Kruemmung
+        const auto r_d_k2 = by_body_and_class(kd, k2m, lab);
+        const auto r_d_k1 = by_body_and_class(kd, k1m, lab);
+        const auto r_id   = by_body_and_class(kd_r, kd, lab);
+        const auto r_ng   = by_body_and_class(kp_ng, kd, lab);
+        const auto r_nc   = by_body_and_class(kp_nc, kd, lab);
+        std::printf("\n[RowCheck] Spurdifferenz d = mu0 (K2 - K1), Rooftop-Koeffizienten (Schritt 1)\n\n");
+        std::printf("| Koerper | Klasse | n | ||d||/||K2|| | ||d||/||K1|| | ||d - Vorhersage||/||d|| | "
+                    "ohne Kruemmungsterm | ohne grad-Term |\n|---|---|---:|---:|---:|---:|---:|---:|\n");
+        auto row = [&](const char* b, const char* c, size_t idx) {
+            if (r_d_k2[idx].n == 0) return;
+            const double dk2 = std::sqrt(r_d_k2[idx].num2 / r_d_k2[idx].ref2);
+            if (dk2 < 1e-10) {   // d ist Rundungsrauschen (ebene Quads): Verhaeltnisse waeren bedeutungslos
+                std::printf("| %s | %s | %ld | %.1e | %.1e | (|d| ~ 0) | - | - |\n", b, c, r_d_k2[idx].n, dk2,
+                            std::sqrt(r_d_k1[idx].num2 / r_d_k1[idx].ref2));
+                return;
+            }
+            std::printf("| %s | %s | %ld | %.2f %% | %.2f %% | %.2e | %.2f %% | %.2f %% |\n", b, c, r_d_k2[idx].n,
+                        100.0 * dk2,
+                        100.0 * std::sqrt(r_d_k1[idx].num2 / r_d_k1[idx].ref2), r_id[idx].rel(),
+                        100.0 * r_nc[idx].rel(), 100.0 * r_ng[idx].rel());
+        };
+        for (int b = 0; b < kNumBodies; ++b)
+            for (int c = 0; c <= kNumClasses; ++c)
+                row(kBodyName[b], c < kNumClasses ? class_name(c) : "alle",
+                    static_cast<size_t>(c < kNumClasses ? b * kNumClasses + c : kNumLabels + b));
+        row("alle", "alle", static_cast<size_t>(kNumLabels + kNumBodies));
+        std::printf("(||d||/||K|| bezieht sich auf mu0 K, Zaehler ||d|| bzw. Residuum; "
+                    "\"ohne ...\": ||d - Teilterm||/||d||)\n");
+        std::cout.flush();
+    }
+
     // -- Operatoren anwenden ----------------------------------------------------------
     DeviceArray<double> d_a(static_cast<size_t>(P.E)), d_k(static_cast<size_t>(P.nb));
     DeviceArray<double> d_TK(static_cast<size_t>(P.E)), d_TA(static_cast<size_t>(P.nb)),
