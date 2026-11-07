@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- `docs/design/bem-normal-components.md`: Gegenprobe Normalanteile in Zeile 2 (`include/BemNormalPart.h`, `test_bem_normal_components`, Zeile 2 mit vollständigen Daten in `--bem-row-check`, `A.n`-Dump `.bquads.csv`, `tools/bem_normal_ratio.py`). Am Lösungspfad nichts geändert.
+
 - Spurkonsistenz der FEM-BEM-Kopplung (`docs/design/bem-trace-consistency.md`): Test `test_bem_trace_identity`
   (Identität μ0 (K2 − K1) = −∇_Γ(A·n) + Krümmungsterm am exakten Feld, mit Gegenproben und Eichverschiebung);
   in `--bem-row-check` Spurdifferenz je Körper/Klasse, Eichverschiebung A + ∇ψ (vier ψ) und konsistentes Paar
