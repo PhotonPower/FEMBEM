@@ -392,6 +392,14 @@ add_executable(test_bem_trace_identity
 target_include_directories(test_bem_trace_identity PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(test_bem_trace_identity PRIVATE CUDA::cudart)
 
+# 🧪 Zeile 2 mit vollstaendigen Daten (Normalanteile von A und dA/dn), geschlossene Flaeche
+# (bem-normal-components). Reiner Host-Code, ohne GPU und ohne Netz.
+add_executable(test_bem_normal_components
+    tests/test_bem_normal_components.cu
+)
+target_include_directories(test_bem_normal_components PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(test_bem_normal_components PRIVATE CUDA::cudart)
+
 # 🧪 G_BEM ist als Operator exakt symmetrisch
 # Prueft <x, G y> == <G x, y> am angewandten Operator, mit Gegenprobe. Bauen:
 #   cmake --build build --config Release --target test_gbem_symmetry
@@ -1052,6 +1060,8 @@ add_test(NAME test_bem_row_check COMMAND test_bem_row_check)
 set_tests_properties(test_bem_row_check PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_bem_trace_identity COMMAND test_bem_trace_identity)
 set_tests_properties(test_bem_trace_identity PROPERTIES LABELS "host" TIMEOUT 600)
+add_test(NAME test_bem_normal_components COMMAND test_bem_normal_components)
+set_tests_properties(test_bem_normal_components PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_block_triangular_consistency COMMAND test_block_triangular_consistency)
 set_tests_properties(test_block_triangular_consistency PROPERTIES LABELS "host" TIMEOUT 600)
 add_test(NAME test_norm_nan_propagation COMMAND test_norm_nan_propagation)
@@ -1173,6 +1183,7 @@ add_custom_target(host_tests DEPENDS
     test_coupling_sign_convention
     test_bem_row_check
     test_bem_trace_identity
+    test_bem_normal_components
     test_bem_near_field
     test_bem_calderon
     test_bem_coupling_geometry
