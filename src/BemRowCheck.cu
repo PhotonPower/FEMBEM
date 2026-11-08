@@ -32,6 +32,7 @@
 #include <vector>
 
 #include "BemRowCheck.h"
+#include "BemNormalPart.h"
 #include "Backend.cuh"
 
 using namespace bem_row_check;
@@ -376,6 +377,40 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
         std::cout.flush();
     }
 
+    // -- Normalanteil des exakten Felds auf den Randquads (bem-normal-components, Schritt 3, Vergleichswert) ---
+    // ||A_ex.n|| / ||A_ex,tan|| je Koerper/Klasse, Flaechen-L2 mit 4x4-Gauss je Quad (n = aeussere Facettennormale).
+    {
+        std::vector<double> nn2(static_cast<size_t>(P.nq), 0.0), tt2(static_cast<size_t>(P.nq), 0.0);
+        parallel_for(static_cast<size_t>(P.nq), [&](size_t pos) {
+            double x[4], w[4];
+            gauss4(x, w);
+            for (int a = 0; a < 4; ++a) for (int b = 0; b < 4; ++b) {
+                const QuadFrame fr = quad_frame(P.geom[pos], x[a], x[b]);
+                const V3 A = exact_field(fil, fr.p).A;
+                const double an = dot(A, fr.n);
+                const double dS = w[a] * w[b] * norm(cross(fr.xu, fr.xv));
+                nn2[pos] += dS * an * an;
+                tt2[pos] += dS * (dot(A, A) - an * an);
+            }
+        });
+        double sn[kNumLabels + 1] = {}, st[kNumLabels + 1] = {};
+        for (int pos = 0; pos < P.nq; ++pos) {
+            const int lb = P.pos_label[static_cast<size_t>(pos)];
+            if (lb < 0) continue;
+            sn[lb] += nn2[static_cast<size_t>(pos)]; st[lb] += tt2[static_cast<size_t>(pos)];
+            sn[kNumLabels] += nn2[static_cast<size_t>(pos)]; st[kNumLabels] += tt2[static_cast<size_t>(pos)];
+        }
+        std::printf("\n[RowCheck] Exaktes Feld A_ex auf den Randquads: ||A.n|| / ||A_tan|| (Flaechen-L2)\n\n");
+        std::printf("| Koerper | Klasse | ||A.n|| / ||A_tan|| |\n|---|---|---:|\n");
+        for (int b = 0; b < kNumBodies; ++b)
+            for (int c = 0; c < kNumClasses; ++c) {
+                const int lb = label_of(b + 1, c);
+                if (st[lb] > 0.0) std::printf("| %s | %s | %.4f |\n", kBodyName[b], class_name(c), std::sqrt(sn[lb] / st[lb]));
+            }
+        std::printf("| alle | alle | %.4f |\n", std::sqrt(sn[kNumLabels] / st[kNumLabels]));
+        std::cout.flush();
+    }
+
     // -- Operatoren anwenden ----------------------------------------------------------
     DeviceArray<double> d_a(static_cast<size_t>(P.E)), d_k(static_cast<size_t>(P.nb));
     DeviceArray<double> d_TK(static_cast<size_t>(P.E)), d_TA(static_cast<size_t>(P.nb)),
@@ -557,6 +592,11 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
         std::vector<double> t2_base;
         std::vector<double> Ka_b_base = Ka_b;
 
+        // Normalanteile (bem-normal-components): Geometrie einmal in BEM-Reihenfolge
+        std::printf("[RowCheck] Normalanteile: Quadratursaetze (fern 4x4, mittel 3x3 Zellen, beruehrend 8x8 Zellen, je 3x3 Gauss)\n");
+        std::cout.flush();
+        const bem_normal::Geometry NG = bem_normal::build_geometry(P.geom);
+        std::vector<double> opf_base, opfx_base;   // vollstaendiger Operand im Fall 0 (Rooftop-Daten / exakte Daten)
         const char* case_name[5] = {"Fall 0: ohne Verschiebung",
                                     "Fall 1: psi = c x z (harmonisch, waechst)",
                                     "Fall 2: psi = c (x^2 + y^2) z (nicht harmonisch, waechst)",
@@ -677,6 +717,77 @@ int run_bem_row_check(CoupledMVOperator& op, Mesh& mesh, const BemCouplingMap& m
                 std::printf("| alle | alle | %ld | %ld | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% |\n", p1[all].n, p2[all].n,
                             100.0 * p1[all].rel(), 100.0 * p2[all].rel(), 100.0 * p2k1[all].rel(),
                             100.0 * p2k2[all].rel(), 100.0 * dz2[all].rel());
+            }
+
+            // ---- Zeile 2 mit vollstaendigen Daten (Normalanteile), Schritt 1 und 2 von bem-normal-components ----
+            {
+                const bem_normal::FieldFn Afun = [&](V3 pt) { return exact_field(fil, pt).A + gg.grad(pt); };
+                const bem_normal::NormalDerivFn dnAfun = [&](V3 pt, V3 nn) {
+                    const ExactField ef = exact_field(fil, pt);
+                    return directional_derivative_A(ef, nn) + gg.hess_times(pt, nn);
+                };
+                const auto dens = bem_normal::evaluate_densities(NG, Afun, dnAfun);
+                const bem_normal::NormalPartResult R = bem_normal::apply_kernels(NG, dens, &dnAfun);
+                const size_t nbs = static_cast<size_t>(P.nb);
+                std::vector<double> opt_op = t2;                              // (1/2 T - D) a' (Rooftop-Daten)
+                std::vector<double> res_t_op(nbs), opf_op(nbs), res_f_op(nbs), opt_ex(nbs), res_t_ex(nbs),
+                                    opf_ex(nbs), res_f_ex(nbs), nrm_part(nbs);
+                for (size_t i = 0; i < nbs; ++i) {
+                    const double Nn = 0.5 * R.Tn[i] - R.Dn[i];                // Normalanteil im Operanden
+                    res_t_op[i] = opt_op[i] + GKp[i];
+                    opf_op[i] = opt_op[i] + Nn;
+                    res_f_op[i] = opf_op[i] + GKp[i] + R.Gn[i];
+                    opt_ex[i] = 0.5 * R.Tt[i] - R.Dt[i];
+                    res_t_ex[i] = opt_ex[i] + R.Gt[i];
+                    opf_ex[i] = opt_ex[i] + Nn;
+                    res_f_ex[i] = opf_ex[i] + R.Gt[i] + R.Gn[i];
+                    nrm_part[i] = Nn + R.Gn[i];
+                }
+                if (cs == 0) { opf_base = opf_op; opfx_base = opf_ex; }
+                std::vector<double> dop(nbs), dopx(nbs);
+                for (size_t i = 0; i < nbs; ++i) { dop[i] = opf_op[i] - opf_base[i]; dopx[i] = opf_ex[i] - opfx_base[i]; }
+                const auto r_t_op = by_body_and_class(res_t_op, opt_op, lab);
+                const auto r_f_op = by_body_and_class(res_f_op, opf_op, lab);
+                const auto r_t_ex = by_body_and_class(res_t_ex, opt_ex, lab);
+                const auto r_f_ex = by_body_and_class(res_f_ex, opf_ex, lab);
+                const auto r_dop = by_body_and_class(dop, opf_base, lab);
+                const auto r_dopx = by_body_and_class(dopx, opfx_base, lab);
+                const auto r_nrm = by_body_and_class(nrm_part, t2, lab);
+                std::printf("\nZeile 2 mit Normalanteilen, %s (Residuum / Operand der jeweiligen Variante; op = Tangentialdaten aus den "
+                            "Kanten-DOF a', ex = aus dem exakten Feld; Spalten 4/5: Aenderung des vollstaendigen Operanden gegen Fall 0; "
+                            "Spalte 8: ||Normalanteil|| / ||(0.5 T - D) a'||)\n\n", case_name[cs]);
+                std::printf("| Koerper | Klasse | n | tangential op (+K1') | vollstaendig op | tangential ex | vollstaendig ex | "
+                            "Aend. Operand op | Aend. Operand ex | Normalanteil |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n");
+                auto rowN = [&](const char* b, const char* c, size_t idx) {
+                    if (r_t_op[idx].n == 0) return;
+                    std::printf("| %s | %s | %ld | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% | %.2f %% |\n", b, c,
+                                r_t_op[idx].n, 100.0 * r_t_op[idx].rel(), 100.0 * r_f_op[idx].rel(), 100.0 * r_t_ex[idx].rel(),
+                                100.0 * r_f_ex[idx].rel(), 100.0 * r_dop[idx].rel(), 100.0 * r_dopx[idx].rel(),
+                                100.0 * r_nrm[idx].rel());
+                };
+                for (int b = 0; b < kNumBodies; ++b)
+                    for (int c = 0; c <= kNumClasses; ++c)
+                        rowN(kBodyName[b], c < kNumClasses ? class_name(c) : "alle",
+                             static_cast<size_t>(c < kNumClasses ? b * kNumClasses + c : kNumLabels + b));
+                rowN("alle", "alle", static_cast<size_t>(kNumLabels + kNumBodies));
+                // Dipolstelle: Abstand zum Rand und lokale Elementgroesse
+                if (gg.kind == 2 && cs > 0) {
+                    double dmin = 1e30; size_t qmin = 0;
+                    for (size_t qi = 0; qi < NG.sets.size(); ++qi)
+                        for (const V3& y : NG.sets[qi].tch.y) {
+                            const double dd = norm(y - gg.p0);
+                            if (dd < dmin) { dmin = dd; qmin = qi; }
+                        }
+                    double emin = 1e30, emax = 0.0;
+                    for (int e = 0; e < 4; ++e) {
+                        const double len = norm(to_v3(P.geom[qmin].n[e]) - to_v3(P.geom[qmin].n[(e + 1) % 4]));
+                        emin = std::min(emin, len); emax = std::max(emax, len);
+                    }
+                    std::printf("[RowCheck]   Dipolstelle (%.1f, %.1f, %.1f) mm: Abstand zum naechsten Randpunkt %.2f mm; dieses Randquad "
+                                "(Koerper %d) hat Kantenlaengen %.2f bis %.2f mm\n", gg.p0.x * 1e3, gg.p0.y * 1e3, gg.p0.z * 1e3,
+                                dmin * 1e3, P.quad_body[qmin], emin * 1e3, emax * 1e3);
+                }
+                std::cout.flush();
             }
 
             // Zeile 1: Aenderung durch die Verschiebung. K = W - omega C ist die reine curl-curl-Form
