@@ -1340,9 +1340,12 @@ if (NOT TARGET Eigen3::Eigen)
     endif()
 endif()
 if (TARGET Eigen3::Eigen)
-    add_library(trace_core STATIC src/TraceSurface.cpp src/TraceSystem.cpp)
+    add_library(trace_core STATIC src/TraceSurface.cpp src/TraceSystem.cpp src/TraceReference.cpp)
     target_include_directories(trace_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(trace_core PUBLIC Eigen3::Eigen)
+    if (TARGET OpenMP::OpenMP_CXX)
+        target_link_libraries(trace_core PUBLIC OpenMP::OpenMP_CXX)   # Eigen parallelisiert damit die dichten Produkte und Zerlegungen
+    endif()
 
     # Quadratur der Randoperatoren (Sauter-Schwab-Rahmen aus SauterSchwab.cuh / SingularQuadPair.cuh, Host-Code)
     find_package(Threads REQUIRED)
@@ -1392,6 +1395,19 @@ if (TARGET Eigen3::Eigen)
     if (TARGET OpenMP::OpenMP_CXX)
         target_link_libraries(trace_conditioning PRIVATE OpenMP::OpenMP_CXX)
     endif()
+
+    # Phase 2: Volumenstrom-Biot-Savart (C++) gegen die Python-Fassung
+    add_executable(test_trace_reference tests/test_trace_reference.cpp)
+    target_include_directories(test_trace_reference PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_trace_reference PRIVATE trace_core)
+    add_test(NAME test_trace_reference COMMAND test_trace_reference)
+    set_tests_properties(test_trace_reference PROPERTIES LABELS "host" TIMEOUT 120)
+    add_dependencies(host_tests test_trace_reference)
+
+    # Phase 2: TEAM-28-Magnetostatik (Messtreiber, kein Test)
+    add_executable(trace_magnetostatics tests/trace_magnetostatics.cpp)
+    target_include_directories(trace_magnetostatics PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(trace_magnetostatics PRIVATE trace_quad trace_fem)
 
     # Phase 2, Schritt 0b: Quelle, Nettostrom, c_Meridian
     add_executable(test_trace_source tests/test_trace_source.cpp)

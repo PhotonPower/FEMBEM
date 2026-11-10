@@ -5,6 +5,7 @@
 // ASCII-VTK geschrieben und ueber den Bestand (VtkReader) gelesen. Alle Hexaeder rechtshaendig (det J > 0).
 #include <algorithm>
 #include <array>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>

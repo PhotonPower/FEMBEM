@@ -60,18 +60,27 @@ Vec3 FemProblem::curl_at_center(int h, const std::vector<double>& a) const
     double3 C[12];
     evaluate_nedelec_curl(0, 0, 0, C);
     Vec3 r;
-    // lokale Kantenkoeffizienten: a[globale Kante] * Vorzeichen; Vorzeichen aus Knotenreihenfolge (v_min -> v_max)
-    static const int le[12][2] = {{0,1},{1,2},{2,3},{3,0},{4,5},{5,6},{6,7},{7,4},{0,4},{1,5},{2,6},{3,7}};
-    // Kanten-Index suchen
     for (int i = 0; i < 12; ++i) {
-        const int n0 = hex[h][le[i][0]], n1 = hex[h][le[i][1]];
-        int ge = -1;
-        for (int e = 0; e < num_edges; ++e) if (edges[e][0] == std::min(n0, n1) && edges[e][1] == std::max(n0, n1)) { ge = e; break; }
-        const double s = (n0 < n1) ? 1.0 : -1.0;
-        const double ai = a[ge] * s;
-        // physikalische Rotation: J curl_ref / det
+        const double ai = a[hex_edge[h][i]] * hex_sign[h][i];
         const double3 c = piola_contravariant(J, det, C[i]);
         r.x += ai * c.x; r.y += ai * c.y; r.z += ai * c.z;
+    }
+    return r;
+}
+
+Vec3 FemProblem::a_at_center(int h, const std::vector<double>& a) const
+{
+    double3 nd[8];
+    for (int k = 0; k < 8; ++k) nd[k] = make_double3(X[hex[h][k]].x, X[hex[h][k]].y, X[hex[h][k]].z);
+    double J[3][3], iJ[3][3], det;
+    compute_jacobian(nd, 0, 0, 0, J, iJ, det);
+    double3 W[12];
+    evaluate_nedelec_basis(0, 0, 0, W);
+    Vec3 r;
+    for (int i = 0; i < 12; ++i) {
+        const double ai = a[hex_edge[h][i]] * hex_sign[h][i];
+        const double3 w = piola_covariant(iJ, W[i]);
+        r.x += ai * w.x; r.y += ai * w.y; r.z += ai * w.z;
     }
     return r;
 }
@@ -121,6 +130,9 @@ FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& ma
         for (int k = 0; k < 8; ++k) P.hex[h][k] = mesh.hex_nodes[h].v[k];
         P.hex_comp[h] = mesh.hex_component_ids[h];
     }
+    P.hex_edge.resize(P.num_hexes);
+    P.hex_sign.resize(P.num_hexes);
+    for (int h = 0; h < P.num_hexes; ++h) for (int i = 0; i < 12; ++i) { P.hex_edge[h][i] = mesh.hex_edges[h * 12 + i]; P.hex_sign[h][i] = mesh.hex_edge_signs[h * 12 + i]; }
     P.edges.resize(E);
     for (int e = 0; e < E; ++e) { const int2 ed = mesh.edges[e]; P.edges[e] = {ed.x, ed.y}; }
 

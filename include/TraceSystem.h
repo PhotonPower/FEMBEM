@@ -56,6 +56,26 @@ Coupled build_coupled(const FemProblem& F, const BoundaryOps& O, const DerivedOp
 
 Mat dense_K(const FemProblem& F, double sigma_factor);
 
+// ---- Dichtes Schurkomplement auf (a_Gamma, psi~, c~) mit duenner Elimination der inneren Kanten (Phase 2, Schritt 1) ----
+// Gleiches (skaliertes, symmetrisches) System wie build_coupled(scaled = true), aber K nur als dünne Matrix: die inneren Kanten (nicht auf dem Rand,
+// nicht geeicht) werden mit Eigen (SimplicialLDLT, sonst SparseLU) eliminiert, das Schurkomplement auf den Randunbekannten ist dicht und wird direkt geloest.
+struct SchurOptions {
+    std::vector<char> gauged;     // Baum-Kobaum (E Eintraege); leer: F.gauged
+    bool pin_psi = true;
+    // Gegenproben: Vorzeichen der Kopplung in der FEM-Zeile umkehren; harmonische Spalten c_k weglassen (drop_c[k] = 1, c_k = 0; leer: keine)
+    bool flip_lambda = false;
+    std::vector<char> drop_c;
+};
+struct SchurResult {
+    Vec a, psi, c;                // urspruengliche Variablen (psi, c zurueckskaliert), geeichte Kanten = 0, gestrichene psi = 0
+    int nI = 0, nGa = 0, nPsi = 0, nC = 0;
+    double residual_rel = 0;      // ||A x - b|| / ||b|| im skalierten System
+    double t_eliminate = 0, t_schur = 0, t_solve = 0;   // Sekunden
+    double schur_gb = 0;          // Speicher des dichten Schurkomplements
+    bool used_ldlt = true;
+};
+SchurResult solve_schur(const FemProblem& F, const BoundaryOps& O, const DerivedOps& D, const Vec& f, const SchurOptions& opt = SchurOptions());
+
 } // namespace trace
 
 #endif

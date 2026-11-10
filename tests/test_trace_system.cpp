@@ -468,9 +468,46 @@ static void test_scaling()
     }
 }
 
+// ---------------- Phase 2, Schritt 1: duenne Elimination + dichtes Schurkomplement gegen die dichte Loesung ----------------
+static void test_schur()
+{
+    std::printf("[S] solve_schur (duenne Elimination der inneren Kanten, dichtes Schurkomplement) gegen die dichte Gesamtloesung: Kugel n = 6, mu0 = 4 pi 1e-7\n");
+    const double MU = 4e-7 * PI;
+    write_vtk("trace_ball_schur.vtk", ball_hex(6, 1.0), "ball");
+    FemMaterials mats;
+    mats.mu_r = {1.0, 1.0}; mats.kappa = {0.0, 0.0};
+    FemProblem F = build_fem_problem("trace_ball_schur.vtk", mats, MU, [&](const Vec3& x, int) { return v3(-x.y, x.x, 0.0); });
+    project_source("trace_ball_schur.vtk", F.f);
+    TraceSurface& S = F.surface;
+    compute_harmonic_fields(S);
+    const BoundaryOps O = assemble_boundary_ops(S);
+    const DerivedOps D = derive_ops(S, O);
+    const Vec f = Eigen::Map<const Vec>(F.f.data(), F.f.size());
+    CoupledOptions o; o.sigma_factor = 0.0;
+    const Vec xd = build_coupled(F, O, D, f, o).solve();
+    const SchurResult r = solve_schur(F, O, D, f);
+    const double da = (r.a - xd.head(F.num_edges)).norm() / xd.head(F.num_edges).norm();
+    const double dp = (r.psi - xd.segment(F.num_edges, S.num_nodes())).norm() / xd.segment(F.num_edges, S.num_nodes()).norm();
+    std::printf("     n_innen %d, n_Gamma(a) %d, psi %d, c %d; Schurkomplement %.4f GB; Zeiten: eliminieren %.2f s, Schur %.2f s, loesen %.2f s; LDL^T: %s; Residuum %.2e\n",
+                r.nI, r.nGa, r.nPsi, r.nC, r.schur_gb, r.t_eliminate, r.t_schur, r.t_solve, r.used_ldlt ? "ja" : "nein (SparseLU)", r.residual_rel);
+    check(da <= 1e-8 && dp <= 1e-8, "solve_schur = dichte Loesung (<= 1e-8)", std::max(da, dp), 1e-8);
+    check(r.residual_rel <= 1e-10, "Residuum des skalierten Gesamtsystems (<= 1e-10)", r.residual_rel, 1e-10);
+    // Gegenprobe: anderer Baum (Seed): a anders, B gleich
+    SchurOptions so; so.gauged = make_tree_gauge(F, 7u);
+    const SchurResult r2 = solve_schur(F, O, D, f, so);
+    double dB = 0, nB = 0;
+    const std::vector<double> a1(r.a.data(), r.a.data() + r.a.size()), a2(r2.a.data(), r2.a.data() + r2.a.size());
+    for (int h = 0; h < F.num_hexes; ++h) { const Vec3 b1 = F.curl_at_center(h, a1), b2 = F.curl_at_center(h, a2); dB += dot(b1 - b2, b1 - b2); nB += dot(b1, b1); }
+    const double dAa = (r.a - r2.a).norm() / r.a.norm();
+    std::printf("     anderer Baum (Seed 7): |a1 - a2|/|a| = %.2e, |B1 - B2|/|B| = %.2e, Residuum %.2e\n", dAa, std::sqrt(dB / nB), r2.residual_rel);
+    check(std::sqrt(dB / nB) <= 1e-8, "anderer Baum: B gleich (<= 1e-8)", std::sqrt(dB / nB), 1e-8);
+    check_ge(dAa >= 1e-2, "anderer Baum: a verschieden (>= 1e-2)", dAa, 1e-2);
+}
+
 int main()
 {
     test_scaling();
+    test_schur();
     test_T8();
     test_T6_T7_T4_R3();
     std::printf(g_fail == 0 ? "ALLE TESTS BESTANDEN\n" : "FEHLGESCHLAGEN: %d\n", g_fail);

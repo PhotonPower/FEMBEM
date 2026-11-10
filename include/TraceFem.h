@@ -35,6 +35,8 @@ struct FemProblem {
     std::vector<std::array<int, 8>> hex;
     std::vector<int> hex_comp;
     std::vector<std::array<int, 2>> edges;     // (vmin, vmax)
+    std::vector<std::array<int, 12>> hex_edge;   // globale Kante der lokalen Kante 0..11 (VTK-Konvention, wie NedelecHexahedron.cuh)
+    std::vector<std::array<int, 12>> hex_sign;   // +1/-1: lokale gegen globale Richtung
     std::vector<Triplet> K;                    // E x E, Tripletliste (doppelte Eintraege werden summiert): int nu curl a . curl v
     std::vector<Triplet> Msig;                 // E x E: int kappa a . v
     std::vector<double> f;                     // E: int J_s . W_e (nicht projiziert)
@@ -47,6 +49,7 @@ struct FemProblem {
 
     // Rotation von a (Kantenkoeffizienten) im Hexaedermittelpunkt
     Vec3 curl_at_center(int h, const std::vector<double>& a) const;
+    Vec3 a_at_center(int h, const std::vector<double>& a) const;   // Vektorpotential im Hexaedermittelpunkt (kovariante Basis)
     Vec3 center(int h) const;
 };
 

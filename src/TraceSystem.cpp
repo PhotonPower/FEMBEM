@@ -1,5 +1,8 @@
 #include "TraceSystem.h"
 
+#include <Eigen/Sparse>
+#include <chrono>
+
 namespace trace {
 
 Mat as_matrix(const std::vector<double>& d, int rows, int cols)
@@ -117,6 +120,123 @@ Coupled build_coupled(const FemProblem& F, const BoundaryOps& O, const DerivedOp
     if (!opt.include_bem) for (int i = nE; i < N; ++i) drop[i] = 1;
     for (int i = 0; i < N; ++i) if (!drop[i]) C.keep.push_back(i);
     return C;
+}
+
+SchurResult solve_schur(const FemProblem& F, const BoundaryOps& O, const DerivedOps& D, const Vec& f, const SchurOptions& opt)
+{
+    using Clock = std::chrono::steady_clock;
+    auto secs = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double>(b - a).count(); };
+    const TraceSurface& S = F.surface;
+    const int nE = F.num_edges, nV = S.num_nodes(), nHall = S.nH, Es = S.num_edges();
+    std::vector<int> listC;
+    for (int k = 0; k < nHall; ++k) if (opt.drop_c.empty() || !opt.drop_c[k]) listC.push_back(k);
+    const int nH = static_cast<int>(listC.size());
+    const std::vector<char>& gauged = opt.gauged.empty() ? F.gauged : opt.gauged;
+    const double mu0 = F.mu0;
+
+    std::vector<int> surf_of_fem(nE, -1);
+    for (int e = 0; e < Es; ++e) surf_of_fem[F.surf_edge_to_fem[e]] = e;
+    // Indexmengen
+    std::vector<int> posI(nE, -1), posGa(nE, -1);
+    std::vector<int> listI, listGa;
+    for (int e = 0; e < nE; ++e) {
+        if (gauged[e]) continue;
+        if (surf_of_fem[e] >= 0) { posGa[e] = static_cast<int>(listGa.size()); listGa.push_back(e); }
+        else { posI[e] = static_cast<int>(listI.size()); listI.push_back(e); }
+    }
+    std::vector<int> listPsi;
+    {
+        std::vector<char> seen(S.num_components, 0);
+        for (int v = 0; v < nV; ++v) {
+            if (opt.pin_psi && !seen[S.node_comp[v]]) { seen[S.node_comp[v]] = 1; continue; }
+            listPsi.push_back(v);
+        }
+    }
+    const int nI = static_cast<int>(listI.size()), nGa = static_cast<int>(listGa.size()), nP = static_cast<int>(listPsi.size()), nG = nGa + nP + nH;
+
+    SchurResult R;
+    R.nI = nI; R.nGa = nGa; R.nPsi = nP; R.nC = nH;
+    R.schur_gb = 8.0 * static_cast<double>(nG) * nG / 1e9;
+
+    // ---- duenne Bloecke aus K (mal mu0) ----
+    using SpMat = Eigen::SparseMatrix<double>;
+    std::vector<Eigen::Triplet<double>> tII, tIG, tGG;
+    for (const Triplet& t : F.K) {
+        if (gauged[t.row] || gauged[t.col]) continue;
+        const double v = mu0 * t.val;
+        const int ri = posI[t.row], ci = posI[t.col], rg = posGa[t.row], cg = posGa[t.col];
+        if (ri >= 0 && ci >= 0) tII.emplace_back(ri, ci, v);
+        else if (ri >= 0 && cg >= 0) tIG.emplace_back(ri, cg, v);
+        else if (rg >= 0 && cg >= 0) tGG.emplace_back(rg, cg, v);
+    }
+    SpMat AII(nI, nI), AIG(nI, nGa);
+    AII.setFromTriplets(tII.begin(), tII.end());
+    AIG.setFromTriplets(tIG.begin(), tIG.end());
+    Vec bI(nI), bG = Vec::Zero(nG);
+    for (int i = 0; i < nI; ++i) bI[i] = mu0 * f[listI[i]];
+    for (int i = 0; i < nGa; ++i) bG[i] = mu0 * f[listGa[i]];
+
+    // ---- dichter Block A_GG ----
+    Mat AGG = Mat::Zero(nG, nG);
+    for (const auto& t : tGG) AGG(t.row(), t.col()) += t.value();
+    {   // R^T V0 R, R^T N, Q auf den Flaechenkanten der erhaltenen Randfreiheitsgrade
+        std::vector<int> se(nGa);
+        for (int i = 0; i < nGa; ++i) se[i] = surf_of_fem[listGa[i]];
+        // V0 R (F x Es) nur fuer die benoetigten Spalten
+        Mat R_sel(D.R.rows(), nGa);
+        for (int i = 0; i < nGa; ++i) R_sel.col(i) = D.R.col(se[i]);
+        AGG.topLeftCorner(nGa, nGa) += R_sel.transpose() * (D.V0 * R_sel);
+        const Mat RtN = R_sel.transpose() * D.N;                 // nGa x nV
+        const double fl = opt.flip_lambda ? -1.0 : 1.0;   // Gegenprobe: Vorzeichen der Kopplung in der FEM-Zeile
+        for (int i = 0; i < nGa; ++i) for (int j = 0; j < nP; ++j) { AGG(i, nGa + j) = fl * RtN(i, listPsi[j]); AGG(nGa + j, i) = RtN(i, listPsi[j]); }
+        for (int i = 0; i < nGa; ++i) for (int k = 0; k < nH; ++k) { AGG(i, nGa + nP + k) = fl * D.Q(se[i], listC[k]); AGG(nGa + nP + k, i) = D.Q(se[i], listC[k]); }
+    }
+    for (int i = 0; i < nP; ++i) for (int j = 0; j < nP; ++j) AGG(nGa + i, nGa + j) = -D.W(listPsi[i], listPsi[j]);
+    for (int i = 0; i < nP; ++i) for (int k = 0; k < nH; ++k) { AGG(nGa + i, nGa + nP + k) = -D.Z(listPsi[i], listC[k]); AGG(nGa + nP + k, nGa + i) = -D.Z(listPsi[i], listC[k]); }
+    for (int k = 0; k < nH; ++k) for (int l = 0; l < nH; ++l) AGG(nGa + nP + k, nGa + nP + l) = -D.Y(listC[k], listC[l]);
+
+    // ---- Elimination der inneren Kanten ----
+    const auto t0 = Clock::now();
+    Eigen::SimplicialLDLT<SpMat> ldlt;
+    Eigen::SparseLU<SpMat> splu;
+    ldlt.compute(AII);
+    R.used_ldlt = (ldlt.info() == Eigen::Success);
+    if (!R.used_ldlt) splu.compute(AII);
+    auto solveI = [&](const Mat& rhs) -> Mat { return R.used_ldlt ? Mat(ldlt.solve(rhs)) : Mat(splu.solve(rhs)); };
+    const Mat Xdense = solveI(Mat(AIG));                         // A_II^{-1} A_IG (nI x nGa)
+    const Vec yI = solveI(bI);
+    const auto t1 = Clock::now();
+    R.t_eliminate = secs(t0, t1);
+
+    // ---- Schurkomplement S = A_GG - A_GI X auf allen Randfreiheitsgraden; A_GI = (A_IG, 0)^T ----
+    Mat Sc = AGG;
+    {
+        const Mat AGI_X = Mat(AIG.transpose()) * Xdense;          // nGa x nGa
+        Sc.topLeftCorner(nGa, nGa) -= AGI_X;
+    }
+    Vec rhsG = bG;
+    rhsG.head(nGa) -= AIG.transpose() * yI;
+    const auto t2 = Clock::now();
+    R.t_schur = secs(t1, t2);
+    const Vec xG = Sc.partialPivLu().solve(rhsG);
+    const Vec xI = yI - Xdense * xG.head(nGa);
+    R.t_solve = secs(t2, Clock::now());
+
+    // ---- Rueckwaertsfehler im (nicht eliminierten) skalierten System ----
+    {
+        Vec rI = AII * xI + AIG * xG.head(nGa) - bI;
+        Vec rG = AGG * xG - bG;
+        rG.head(nGa) += AIG.transpose() * xI;
+        const double bn = std::sqrt(bI.squaredNorm() + bG.squaredNorm());
+        R.residual_rel = std::sqrt(rI.squaredNorm() + rG.squaredNorm()) / bn;
+    }
+
+    R.a = Vec::Zero(nE); R.psi = Vec::Zero(nV); R.c = Vec::Zero(nHall);
+    for (int k = 0; k < nH; ++k) R.c[listC[k]] = xG[nGa + nP + k] / mu0;
+    for (int i = 0; i < nI; ++i) R.a[listI[i]] = xI[i];
+    for (int i = 0; i < nGa; ++i) R.a[listGa[i]] = xG[i];
+    for (int j = 0; j < nP; ++j) R.psi[listPsi[j]] = xG[nGa + j] / mu0;
+    return R;
 }
 
 } // namespace trace
