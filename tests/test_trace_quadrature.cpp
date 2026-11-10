@@ -72,7 +72,7 @@ int main()
         const PairResult r = integrate_quad_pair(S, c.p, c.q);
         double m = 0.0;
         for (int j = 0; j < 4; ++j) m = std::max(m, std::fabs(r.dt[j]));
-        for (int e = 0; e < 4; ++e) for (int g = 0; g < 4; ++g) m = std::max(m, std::fabs(r.cm[e][g]));
+        for (int e = 0; e < 4; ++e) for (int g = 0; g < 4; ++g) m = std::max(m, std::fabs(r.cr[e][g]));
         check(m < 1e-10, c.name, m, 1e-10);
     }
     {
@@ -127,10 +127,10 @@ int main()
             double dv = 0, dc = 0, nv = 0, nc = 0, dd = 0, nd = 0;
             for (int e = 0; e < 4; ++e) for (int f = 0; f < 4; ++f) {
                 dv = std::max(dv, std::fabs(r.vr[e][f] - ref.vr[e][f])); nv = std::max(nv, std::fabs(ref.vr[e][f]));
-                dc = std::max(dc, std::fabs(r.cm[e][f] - ref.cm[e][f])); nc = std::max(nc, std::fabs(ref.cm[e][f]));
+                dc = std::max(dc, std::fabs(r.cr[e][f] - ref.cr[e][f])); nc = std::max(nc, std::fabs(ref.cr[e][f]));
             }
             for (int j = 0; j < 4; ++j) { dd = std::max(dd, std::fabs(r.dt[j] - ref.dt[j])); nd = std::max(nd, std::fabs(ref.dt[j])); }
-            std::printf("    ng=%2d gegen ng=12: V_rot %.2e, Cm %.2e, Dt %.2e, V0 %.2e (relativ zum groessten Eintrag)\n", ng, dv / nv, nc > 0 ? dc / nc : 0.0, nd > 0 ? dd / nd : 0.0, std::fabs(r.v0 - ref.v0) / ref.v0);
+            std::printf("    ng=%2d gegen ng=12: V_rot %.2e, Crot %.2e, Dt %.2e, V0 %.2e (relativ zum groessten Eintrag)\n", ng, dv / nv, nc > 0 ? dc / nc : 0.0, nd > 0 ? dd / nd : 0.0, std::fabs(r.v0 - ref.v0) / ref.v0);
             if (ng == 8) check(dv / nv <= 1e-5 && dc / nc <= 1e-5, "ng = 8 stimmt mit ng = 12 auf 1e-5 ueberein", std::max(dv / nv, dc / nc), 1e-5);
         }
         // gleiches, gekruemmtes (nichtebenes) Quad: Selbstkonvergenz der Duffy-Regel in der Differenzvariablen
@@ -146,9 +146,9 @@ int main()
                 double dv = 0, nv = 0, dc = 0, nc = 0;
                 for (int e = 0; e < 4; ++e) for (int f = 0; f < 4; ++f) {
                     dv = std::max(dv, std::fabs(r.vr[e][f] - rf.vr[e][f])); nv = std::max(nv, std::fabs(rf.vr[e][f]));
-                    dc = std::max(dc, std::fabs(r.cm[e][f] - rf.cm[e][f])); nc = std::max(nc, std::fabs(rf.cm[e][f]));
+                    dc = std::max(dc, std::fabs(r.cr[e][f] - rf.cr[e][f])); nc = std::max(nc, std::fabs(rf.cr[e][f]));
                 }
-                std::printf("    gebogenes Quad, gleiches Quad, ng=%2d gegen ng=16: V_rot %.2e, Cm %.2e, V0 %.2e\n", ng, dv / nv, nc > 0 ? dc / nc : 0.0, std::fabs(r.v0 - rf.v0) / rf.v0);
+                std::printf("    gebogenes Quad, gleiches Quad, ng=%2d gegen ng=16: V_rot %.2e, Crot %.2e, V0 %.2e\n", ng, dv / nv, nc > 0 ? dc / nc : 0.0, std::fabs(r.v0 - rf.v0) / rf.v0);
                 if (ng == 12) check(dv / nv <= 1e-8 && dc / std::max(nc, 1e-300) <= 1e-6, "gebogenes Quad: ng = 12 stimmt mit ng = 16 ueberein", std::max(dv / nv, dc / std::max(nc, 1e-300)), 1e-6);
                 prev = dv / nv;
             }
@@ -176,10 +176,10 @@ int main()
             };
             const DerivedOps Dp = derive_ops(Sg, Op), Dh = derive_ops(Sg, Oh);
             auto relm = [](const Mat& a, const Mat& b) { return b.norm() > 0 ? (a - b).norm() / b.norm() : 0.0; };
-            std::printf("    %-14s: V0 %.2e, Dt %.2e, Vrot %.2e, Cm %.2e | W %.2e, N %.2e", gm.name, rel(Op.V0, Oh.V0), rel(Op.Dt, Oh.Dt), rel(Op.Vrot, Oh.Vrot), rel(Op.Cm, Oh.Cm), relm(Dp.W, Dh.W), relm(Dp.N, Dh.N));
+            std::printf("    %-14s: V0 %.2e, Dt %.2e, Vrot %.2e, Crot %.2e | W %.2e, N %.2e", gm.name, rel(Op.V0, Oh.V0), rel(Op.Dt, Oh.Dt), rel(Op.Vrot, Oh.Vrot), rel(Op.Crot, Oh.Crot), relm(Dp.W, Dh.W), relm(Dp.N, Dh.N));
             if (gm.harm) std::printf(" | Q %.2e, Z %.2e, Y %.2e", relm(Dp.Q, Dh.Q), relm(Dp.Z, Dh.Z), relm(Dp.Y, Dh.Y));
             std::printf("\n");
-            const double worst = std::max({rel(Op.V0, Oh.V0), rel(Op.Dt, Oh.Dt), rel(Op.Vrot, Oh.Vrot), rel(Op.Cm, Oh.Cm), relm(Dp.W, Dh.W), relm(Dp.N, Dh.N)});
+            const double worst = std::max({rel(Op.V0, Oh.V0), rel(Op.Dt, Oh.Dt), rel(Op.Vrot, Oh.Vrot), rel(Op.Crot, Oh.Crot), relm(Dp.W, Dh.W), relm(Dp.N, Dh.N)});
             check(worst <= 1e-5, gm.name, worst, 1e-5);
         }
     }

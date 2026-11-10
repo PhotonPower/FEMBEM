@@ -1354,6 +1354,13 @@ if (TARGET Eigen3::Eigen)
     set_tests_properties(test_trace_ops PROPERTIES LABELS "host" TIMEOUT 600)
     add_dependencies(host_tests test_trace_ops)
 
+    # T5: Torus mit Kreisstrom, harmonische Felder (c_Meridian, c_Laengs)
+    add_executable(test_trace_torus tests/test_trace_torus.cpp)
+    target_link_libraries(test_trace_torus PRIVATE trace_quad)
+    add_test(NAME test_trace_torus COMMAND test_trace_torus)
+    set_tests_properties(test_trace_torus PROPERTIES LABELS "host" TIMEOUT 600)
+    add_dependencies(host_tests test_trace_torus)
+
     # T9: Hodge-Strukturen (Wuerfel, Kugel, Quader, Torus, zwei Tori, Quader + Torus)
     add_executable(test_trace_surface tests/test_trace_surface.cpp)
     target_link_libraries(test_trace_surface PRIVATE trace_core)

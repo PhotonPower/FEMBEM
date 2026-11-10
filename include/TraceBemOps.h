@@ -13,8 +13,9 @@
 //   Dt   F x V  (1/|p|) int_p int_q (x-y).n_y/(4 pi |x-y|^3) N_j(y)   Doppelschicht, P0 x Q1
 //   Mt   F x V  (1/|p|) int_p N_j                                    Masse, P0 x Q1
 //   Vrot E x E  int int G (n_x x W_e(x)).(n_y x W_f(y))               gedrehte Rooftop-Einfachschicht
-//   Cm   E x E  int int W_e(x).[ n_x x (grad_x G x W_f(y)) ]          Maxwell-Doppelschicht, = <W_e, n x C W_f>
-//   Mm   E x E  int W_e.W_f                                          Rooftop-Masse
+//   Crot E x E  int int W_e(x).[ n_x x (grad_x G x (n_y x W_f(y))) ]   Maxwell-Doppelschicht auf dem LAMBDA-Feld n x W_f: <W_e, n x C (n x W_f)>
+//   Mrot E x E  int W_e.(n x W_f)                                    gedrehte Rooftop-Masse (Paarung <W_e, n x W_f>), antisymmetrisch
+//   Mm   E x E  int W_e.W_f                                          Rooftop-Masse (nur Hilfsgroesse)
 // W_e = kovariante Rooftop-Funktion der globalen Kante e (Kantenintegral 1, Orientierung vmin->vmax).
 // G(x,y) = 1/(4 pi |x-y|),  grad_x G = -(x-y)/(4 pi |x-y|^3).
 // =============================================================================
@@ -36,7 +37,7 @@ struct QuadParams {
 struct BoundaryOps {
     int F = 0, V = 0, E = 0;
     std::vector<double> area;                // |q|
-    std::vector<double> V0, Dt, Mt, Vrot, Cm, Mm;
+    std::vector<double> V0, Dt, Mt, Vrot, Crot, Mm, Mrot;
     std::vector<double> VrotFlat;   // V mit koplanarem Skalarprodukt W_e.W_f statt (n x W_e).(n x W_f): NUR Gegenprobe (T3)
     std::vector<double> M1;         // V x V, Q1-Masse int N_i N_j
     // Asymmetrie von V0, Vrot vor der Symmetrisierung, ||A - A^T||_F / ||A||_F: Mass der Quadraturkonsistenz. V0, Vrot und
@@ -54,7 +55,7 @@ struct PairResult {
     double dt[4] = {0, 0, 0, 0};
     double vr[4][4] = {};
     double vrf[4][4] = {};   // koplanares Skalarprodukt, nur Gegenprobe
-    double cm[4][4] = {};
+    double cr[4][4] = {};
 };
 PairResult integrate_quad_pair(const TraceSurface& S, int p, int q, const QuadParams& qp = QuadParams());
 

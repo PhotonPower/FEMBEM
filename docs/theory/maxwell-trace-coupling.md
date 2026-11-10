@@ -272,11 +272,17 @@ getestet mit η' ∈ Λ (der Term −∇_ΓV(n·A) fällt weg, Abschnitt 2.3) un
 
 K(a,v) = ∫ν curl a·curl v + jω∫σ a·v. Matrixform (Unbekannte x = (a, ψ, c)), mit B_R = R eingebettet in alle FEM-Kanten,
 V₀ = (1/|q||q'|)∫_q∫_{q'}G (P0-Einfachschicht), D̃_{qj} = (1/|q|)∫_q∫ ∂_{n_y}G φ_j, M̃_{qj} = (1/|q|)∫_q φ_j, N = ½M̃ + D̃,
-W = Gᵀ V_rot G, Z = Gᵀ V_rot H, Y = Hᵀ V_rot H, Q_{e,l} = ⟨W_e, (½ + n×𝒞) h_l⟩:
+W = Gᵀ V_rot G, **Z = −Gᵀ V_rot H** (Vorzeichen: Korrektur Phase 1b, Schritt 3, siehe unten), Y = Hᵀ V_rot H, Q_{e,l} = ⟨W_e, (½ + n×𝒞) h_l⟩ mit dem **λ-Feld** h_l = n × Σ_f H_{fl} W_f (nicht mit dem Kantenfeld Σ H_{fl} W_f):
 
     ⎡ K + (1/μ₀) B_Rᵀ V₀ B_R     B_Rᵀ N       Q       ⎤ ⎡a⎤   ⎡f⎤
     ⎢ Nᵀ B_R                     −μ₀ W      −μ₀ Z      ⎥ ⎢ψ⎥ = ⎢0⎥
     ⎣ Qᵀ                          −μ₀ Zᵀ     −μ₀ Y     ⎦ ⎣c⎦   ⎣0⎦
+
+**Korrektur (Phase 1b, Schritt 3, am Torus gefunden; an der Kugel unsichtbar, weil dort keine harmonischen Spalten vorkommen).**
+(i) *Vorzeichen von Z:* Mit c_Kante = −Gψ + H c ist die Gram-Matrix des λ-Raums bezüglich V_rot gleich [GᵀVG, −GᵀVH; −HᵀVG, HᵀVH]; der Kreuzblock ist also **−GᵀV_rotH**. Die frühere Fassung
+(Z = +GᵀV_rotH bei gleichem Zeichen −μ₀Z im System) verletzte (S2)/(S3) mit exakten Spuren um O(1) (Residuum 1,3). (ii) *Q auf dem λ-Feld:* h_l = n×w_l, also
+Q = (½ M_rot + C_rot) H mit M_rot,ef = ∫W_e·(n×W_f) und C_rot,ef = ∫∫W_e·[n_x×(∇_xG×(n_y×W_f))]; die erste Implementierung benutzte W_f statt n×W_f. Für (J) gilt entsprechend
+P = M_rot H. Mit beiden Korrekturen: Residuen (S2), (S3) Ordnung 1,9 bis 2 (T5).
 
 **Die Matrix ist symmetrisch** (komplex symmetrisch bei jω): (a,ψ)- und (ψ,a)-Block sind Transponierte, weil K' = Dᵀ; (a,c)- und (c,a)-Block, weil
 ⟨h_l,(½−𝒞n×)w_e⟩ = ⟨w_e,(½+n×𝒞)h_l⟩ (Adjungiertheit, Abschnitt 2.3); der Rest aus V = Vᵀ. Die Herleitung ist **[hergeleitet]**; die einzelnen Bausteine sind
@@ -413,7 +419,7 @@ Erwartete Ordnungen sind Erwartungen aus der Theorie (Galerkin Q1/P0, quasi-unif
 | T2 | (R-T), (R-N), Matrix-Residuum | Kugel, **Würfel** (Kanten, Ecken), dasselbe Dipolfeld (Würfel mit Dipol im Innern) | Kugel: ~h²; Würfel: ~h^{1…2} wegen Singularitäten an Kanten | Vorzeichen von ½, K', D einzeln |
 | T3 | Nédélec-Identität W = Gᵀ V_rot G, K' = Dᵀ, Symmetrie | Kugel, Würfel: Eigenwerte l(l+1)/(2l+1), D/K' Spurzeilen | ‖W − Wᵀ‖ ≤ 10⁻¹² ‖W‖; Eigenwert Y_l: Fehler ~h² | falscher Faktor 2; W nur mit koplanarem Skalarprodukt (ohne n_x·n_y) auf dem Würfel muss auf Kanten abweichen |
 | T4 | Eichtest | beliebige der obigen, a → a + Gψ_h mit **nichtharmonischem** ψ_h (z. B. ψ = z exp(−r²/s²) wie Fall 4 des alten Row-Checks) | Flussblöcke (B_R-Faktor) ≤ 10⁻¹² relativ; Q/Qᵀ auf Quadraturniveau (Schwelle aus Selbstkonvergenz, Schritt 2) | a + n-Anteil (nicht Gradient, z. B. curl-Anteil) ändert um O(1); das alte Operatorresiduum 62 % |
-| T5 | Torus, harmonische Felder | **Torus** (R = 3, r = 1; Quadnetz 24×12 …), **Kreisstrom** I auf dem Kernkreis im Innern: B_ext analytisch (Schleifenformel, Abschnitt 7.5), A analytisch | c_Meridian = I (Fehler ~h²), c_Längs → 0 mit Verfeinerung (Ordnung ~h²); Zeilen (S2)/(S3) mit exakten (A_t, λ): Residuum ~h² | c_Meridian := 0 setzen: Residuum O(1) |
+| T5 | Torus, harmonische Felder | **Torus** (R = 3, r = 1; Quadnetz 24×12 …), **Kreisstrom** I auf dem Kernkreis im Innern: B_ext analytisch (Schleifenformel, Abschnitt 7.5), A analytisch | Zirkulation der exakten Spuren: c_Meridian = I **exakt** (Ampère, unabhängig vom Netz; Phase 1b: 3·10⁻¹³), c_Längs = 0; aus (S2),(S3) bei exaktem a gelöst: c_Meridian → I mit Ordnung ~2 (gemessen 1,96), c_Längs ~10⁻⁸ (symmetrisches Netz) bzw. ~3·10⁻⁵ (verschobene Knoten); Zeilen (S2)/(S3) mit exakten Spuren: Residuum Ordnung ~2 (gemessen 1,9 bis 2,0) | c_Meridian := 0 setzen: Residuum O(1) (gemessen Faktor 54 bis 204 größer) |
 | T6 | Symmetrie des Gesamtsystems | alle Netze | ‖M − Mᵀ‖/‖M‖ ≤ 10⁻¹²; (J) unsymmetrisch (‖M_J − M_Jᵀ‖ ≥ 10⁻²) | (J) als symmetrisch ausgeben |
 | T7 | Eindeutigkeit/Nullraum | Torus-Spule + Platte (K = 2, g = 1) | SVD des Gesamtsystems nach Baum-Kobaum und Streichen je eines ψ-Knotens: kein weiterer Nullvektor | Streichen weglassen: Nullraumdimension K; Baum-Kobaum weglassen: Nullraum wächst um die Zahl der σ = 0-Gradienten |
 | T8 | Ende zu Ende | **Kugel** mit Azimutalstrom J_s = j₀ ẑ × r (Abschnitt 5.2): FEM-Kugel mit BEM-Außenraum | ψ = (β/μ₀) cos θ, g = 2β cos θ, β = μ₀ j₀/15; Fehler ~h² | Vorzeichen von λ in (E1) umkehren (Abweichung 0,78 im Kontinuum) |

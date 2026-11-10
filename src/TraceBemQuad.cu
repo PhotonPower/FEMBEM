@@ -83,7 +83,9 @@ inline void accumulate(const QPoint& a, const QPoint& b, double w, PairResult& o
         for (int g = 0; g < 4; ++g) {
             out.vr[e][g] += f * G * dot3(A[e], B[g]);
             out.vrf[e][g] += f * G * dot3(a.W[e], b.W[g]);
-            out.cm[e][g] += f * (wg * dot3(a.n, b.W[g]) - dot3(a.W[e], b.W[g]) * ngrad);
+            // Kern <W_e, n x C (n x W_g)>: W_e(x).[ n_x x (grad_x G x (n_y x W_g(y))) ]
+            //   = (W_e.grad G)(n_x.B_g) - (W_e.B_g)(n_x.grad G),  B_g = n_y x W_g(y)
+            out.cr[e][g] += f * (wg * dot3(a.n, B[g]) - dot3(a.W[e], B[g]) * ngrad);
         }
     }
 }
@@ -262,8 +264,9 @@ BoundaryOps assemble_boundary_ops(const TraceSurface& S, const QuadParams& qp, i
     O.Dt.assign(static_cast<size_t>(F) * V, 0.0);
     O.Mt.assign(static_cast<size_t>(F) * V, 0.0);
     O.Vrot.assign(static_cast<size_t>(E) * E, 0.0);
-    O.Cm.assign(static_cast<size_t>(E) * E, 0.0);
+    O.Crot.assign(static_cast<size_t>(E) * E, 0.0);
     O.Mm.assign(static_cast<size_t>(E) * E, 0.0);
+    O.Mrot.assign(static_cast<size_t>(E) * E, 0.0);
     O.VrotFlat.assign(static_cast<size_t>(E) * E, 0.0);
     O.M1.assign(static_cast<size_t>(V) * V, 0.0);
     O.area.assign(F, 0.0);
@@ -274,13 +277,13 @@ BoundaryOps assemble_boundary_ops(const TraceSurface& S, const QuadParams& qp, i
     const Gauss01 gs(qp.ng_sing), gr(qp.ng_reg), gm(6);
     // lokale Masse (Rooftop) und Q1-Masse
     for (int q = 0; q < F; ++q) {
-        double mloc[4][4] = {}, nloc[4] = {}, m1loc[4][4] = {};
+        double mloc[4][4] = {}, nloc[4] = {}, m1loc[4][4] = {}, mrloc[4][4] = {};
         for (int i = 0; i < 6; ++i) for (int j = 0; j < 6; ++j) {
             const QPoint pt = eval_quad(geo[q].x, -1.0 + 2.0 * gm.x[i], -1.0 + 2.0 * gm.x[j]);
             const double w = 4.0 * gm.w[i] * gm.w[j] * pt.detJ;
             for (int a = 0; a < 4; ++a) {
                 nloc[a] += w * pt.N[a];
-                for (int b = 0; b < 4; ++b) { mloc[a][b] += w * dot3(pt.W[a], pt.W[b]); m1loc[a][b] += w * pt.N[a] * pt.N[b]; }
+                for (int b = 0; b < 4; ++b) { mloc[a][b] += w * dot3(pt.W[a], pt.W[b]); m1loc[a][b] += w * pt.N[a] * pt.N[b]; mrloc[a][b] += w * dot3(pt.W[a], cross3(pt.n, pt.W[b])); }
             }
         }
         for (int a = 0; a < 4; ++a) {
@@ -288,6 +291,7 @@ BoundaryOps assemble_boundary_ops(const TraceSurface& S, const QuadParams& qp, i
             for (int b = 0; b < 4; ++b) {
                 O.Mm[static_cast<size_t>(S.quad_edges[q][a]) * E + S.quad_edges[q][b]] += S.quad_sign[q][a] * S.quad_sign[q][b] * mloc[a][b];
                 O.M1[static_cast<size_t>(S.quads[q][a]) * V + S.quads[q][b]] += m1loc[a][b];
+                O.Mrot[static_cast<size_t>(S.quad_edges[q][a]) * E + S.quad_edges[q][b]] += S.quad_sign[q][a] * S.quad_sign[q][b] * mrloc[a][b];
             }
         }
     }
@@ -310,7 +314,7 @@ BoundaryOps assemble_boundary_ops(const TraceSurface& S, const QuadParams& qp, i
                     const double s = S.quad_sign[p][a] * S.quad_sign[q][b];
                     const size_t idx = static_cast<size_t>(S.quad_edges[p][a]) * E + S.quad_edges[q][b];
                     O.Vrot[idx] += s * r.vr[a][b];
-                    O.Cm[idx] += s * r.cm[a][b];
+                    O.Crot[idx] += s * r.cr[a][b];
                     O.VrotFlat[idx] += s * r.vrf[a][b];
                 }
             }
