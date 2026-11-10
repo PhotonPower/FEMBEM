@@ -9,7 +9,8 @@ on:
 # Das CUDA-Toolkit wird zum Uebersetzen gebraucht, eine GPU nicht: die Tests mit
 # der Marke "host" laufen im CPU-Modus (siehe tests/README.md).
 env:
-  CUDA_TOOLCHAIN_PACKAGES: cmake make g++-12 nvidia-cuda-toolkit
+  # libeigen3-dev: Pflicht fuer die Trace-Tests (Maxwell-Spur-Kopplung), siehe CMakeLists.txt
+  CUDA_TOOLCHAIN_PACKAGES: cmake make g++-12 nvidia-cuda-toolkit libeigen3-dev
   # apt ohne Rueckfragen: ein Paket, das auf Eingabe wartet, haengt sonst ewig
   DEBIAN_FRONTEND: noninteractive
 

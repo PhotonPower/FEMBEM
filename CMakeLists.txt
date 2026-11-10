@@ -1326,9 +1326,19 @@ endif()
 # Maxwell-Spur-Kopplung, Phase 1b (docs/tasks/maxwell-trace-operators.md)
 # =============================================================================
 # Eigene Dateien, vom Loesungspfad unabhaengig; nur von diesen Tests benutzt. Dichte lineare Algebra
-# und CG ueber Eigen (nur Header, wird nur in .cpp-Dateien eingebunden, nie in .cu). Ohne Eigen
-# werden diese Tests uebersprungen.
+# und CG ueber Eigen (nur Header, wird nur in .cpp-Dateien eingebunden, nie in .cu).
+# Eigen ist Pflicht (FEMBEM_REQUIRE_EIGEN, Standard ON): diese Tests pruefen die kuenftige Kopplung und
+# duerfen in der CI nicht still uebersprungen werden. Nur lokal abschaltbar mit -DFEMBEM_REQUIRE_EIGEN=OFF.
+option(FEMBEM_REQUIRE_EIGEN "Eigen3 fuer die Trace-Tests verlangen (sonst Abbruch)" ON)
 find_package(Eigen3 3.3 QUIET NO_MODULE)
+if (NOT TARGET Eigen3::Eigen)
+    if (FEMBEM_REQUIRE_EIGEN)
+        message(FATAL_ERROR "Eigen3 (>= 3.3) nicht gefunden; die Trace-Tests (Maxwell-Spur-Kopplung) brauchen es. "
+                            "Installieren (z. B. apt install libeigen3-dev) oder bewusst -DFEMBEM_REQUIRE_EIGEN=OFF setzen.")
+    else()
+        message(WARNING "Eigen3 nicht gefunden: Trace-Tests werden NICHT gebaut (FEMBEM_REQUIRE_EIGEN=OFF).")
+    endif()
+endif()
 if (TARGET Eigen3::Eigen)
     add_library(trace_core STATIC src/TraceSurface.cpp src/TraceSystem.cpp)
     target_include_directories(trace_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
