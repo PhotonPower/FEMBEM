@@ -1393,6 +1393,14 @@ if (TARGET Eigen3::Eigen)
         target_link_libraries(trace_conditioning PRIVATE OpenMP::OpenMP_CXX)
     endif()
 
+    # Phase 2, Schritt 0b: Quelle, Nettostrom, c_Meridian
+    add_executable(test_trace_source tests/test_trace_source.cpp)
+    target_include_directories(test_trace_source PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_trace_source PRIVATE trace_quad trace_fem)
+    add_test(NAME test_trace_source COMMAND test_trace_source)
+    set_tests_properties(test_trace_source PROPERTIES LABELS "host" TIMEOUT 600)
+    add_dependencies(host_tests test_trace_source)
+
     # T9: Hodge-Strukturen (Wuerfel, Kugel, Quader, Torus, zwei Tori, Quader + Torus)
     add_executable(test_trace_surface tests/test_trace_surface.cpp)
     target_link_libraries(test_trace_surface PRIVATE trace_core)
