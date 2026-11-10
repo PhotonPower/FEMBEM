@@ -1322,4 +1322,37 @@ else()
                    "-DPython3_EXECUTABLE=<python mit gmsh>)")
 endif()
 
+# =============================================================================
+# Maxwell-Spur-Kopplung, Phase 1b (docs/tasks/maxwell-trace-operators.md)
+# =============================================================================
+# Eigene Dateien, vom Loesungspfad unabhaengig; nur von diesen Tests benutzt. Dichte lineare Algebra
+# und CG ueber Eigen (nur Header, wird nur in .cpp-Dateien eingebunden, nie in .cu). Ohne Eigen
+# werden diese Tests uebersprungen.
+find_package(Eigen3 3.3 QUIET NO_MODULE)
+if (TARGET Eigen3::Eigen)
+    add_library(trace_core STATIC src/TraceSurface.cpp)
+    target_include_directories(trace_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(trace_core PUBLIC Eigen3::Eigen)
+
+    # T9: Hodge-Strukturen (Wuerfel, Kugel, Quader, Torus, zwei Tori, Quader + Torus)
+    add_executable(test_trace_surface tests/test_trace_surface.cpp)
+    target_link_libraries(test_trace_surface PRIVATE trace_core)
+    add_test(NAME test_trace_surface COMMAND test_trace_surface)
+    set_tests_properties(test_trace_surface PROPERTIES LABELS "host" TIMEOUT 120)
+    add_dependencies(host_tests test_trace_surface)
+
+    # T9 an der Randflaeche von team28_hex.vtk (g = 1, 1, 0)
+    add_executable(test_trace_surface_team28
+        tests/test_trace_surface_team28.cu
+        src/Backend.cu src/VtkReader.cpp src/TopologyExtractor.cpp)
+    target_include_directories(test_trace_surface_team28 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_trace_surface_team28 PRIVATE trace_core CUDA::cudart)
+    add_test(NAME test_trace_surface_team28
+             COMMAND test_trace_surface_team28 ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28_hex.vtk)
+    set_tests_properties(test_trace_surface_team28 PROPERTIES LABELS "host" TIMEOUT 120)
+    message(STATUS "FEMBEM: Tests Maxwell-Spur-Kopplung aktiv (Eigen ${Eigen3_VERSION})")
+else()
+    message(STATUS "FEMBEM: Tests Maxwell-Spur-Kopplung aus (Eigen3 nicht gefunden)")
+endif()
+
 endif()  # FEMBEM_BUILD_TESTS (CTest)
