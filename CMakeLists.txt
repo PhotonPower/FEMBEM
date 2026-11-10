@@ -1340,6 +1340,12 @@ if (TARGET Eigen3::Eigen)
     target_include_directories(trace_quad PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(trace_quad PUBLIC trace_core CUDA::cudart Threads::Threads)
 
+    # FEM-Seite (Hexaeder-Assemblierung mit den Produktionsbasisfunktionen, Rand, Baum-Kobaum-Eichung des Bestands)
+    add_library(trace_fem STATIC
+        src/TraceFem.cu src/Backend.cu src/VtkReader.cpp src/TopologyExtractor.cpp src/TreeCotreeGauge.cpp src/FemDirectBC.cpp)
+    target_include_directories(trace_fem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(trace_fem PUBLIC trace_core CUDA::cudart)
+
     # Quadraturtests (Sauter-Schwab-Faelle, Selbstkonvergenz)
     add_executable(test_trace_quadrature tests/test_trace_quadrature.cpp)
     target_link_libraries(test_trace_quadrature PRIVATE trace_quad)
@@ -1360,6 +1366,22 @@ if (TARGET Eigen3::Eigen)
     add_test(NAME test_trace_torus COMMAND test_trace_torus)
     set_tests_properties(test_trace_torus PROPERTIES LABELS "host" TIMEOUT 600)
     add_dependencies(host_tests test_trace_torus)
+
+    # Schritt 4: gekoppeltes System (S), (J): T8, T6, T7, T4, R3
+    add_executable(test_trace_system tests/test_trace_system.cpp)
+    target_include_directories(test_trace_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_trace_system PRIVATE trace_quad trace_fem)
+    add_test(NAME test_trace_system COMMAND test_trace_system)
+    set_tests_properties(test_trace_system PROPERTIES LABELS "host" TIMEOUT 900)
+    add_dependencies(host_tests test_trace_system)
+
+    # Schritt 5: Messung der Konditionierung (kein Test): trace_conditioning ball <n> | team28 <vtk>
+    add_executable(trace_conditioning tests/trace_conditioning.cpp)
+    target_include_directories(trace_conditioning PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(trace_conditioning PRIVATE trace_quad trace_fem)
+    if (TARGET OpenMP::OpenMP_CXX)
+        target_link_libraries(trace_conditioning PRIVATE OpenMP::OpenMP_CXX)
+    endif()
 
     # T9: Hodge-Strukturen (Wuerfel, Kugel, Quader, Torus, zwei Tori, Quader + Torus)
     add_executable(test_trace_surface tests/test_trace_surface.cpp)
