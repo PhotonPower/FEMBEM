@@ -32,8 +32,9 @@ DerivedOps derive_ops(const TraceSurface& S, const BoundaryOps& O, bool flat)
 Mat dense_K(const FemProblem& F, double sigma_factor)
 {
     const int E = F.num_edges;
-    Mat K = as_matrix(F.K, E, E);
-    if (sigma_factor != 0.0) K += sigma_factor * as_matrix(F.Msig, E, E);
+    Mat K = Mat::Zero(E, E);
+    for (const Triplet& t : F.K) K(t.row, t.col) += t.val;
+    if (sigma_factor != 0.0) for (const Triplet& t : F.Msig) K(t.row, t.col) += sigma_factor * t.val;
     return K;
 }
 
@@ -53,6 +54,7 @@ Vec Coupled::solve() const
     const Vec xr = reduced().partialPivLu().solve(rb);
     Vec x = Vec::Zero(A.rows());
     for (int i = 0; i < n; ++i) x[keep[i]] = xr[i];
+    if (scaled) x.tail(nV + nH) /= mu0;                // psi = psi~ / mu0, c = c~ / mu0
     return x;
 }
 
@@ -61,11 +63,15 @@ Coupled build_coupled(const FemProblem& F, const BoundaryOps& O, const DerivedOp
     const TraceSurface& S = F.surface;
     Coupled C;
     C.nE = F.num_edges; C.nV = S.num_nodes(); C.nH = S.nH;
+    C.scaled = opt.scaled; C.mu0 = F.mu0;
+    const double kfac = opt.scaled ? F.mu0 : 1.0;          // Faktor vor K (und vor der rechten Seite)
+    const double v0fac = opt.scaled ? 1.0 : 1.0 / F.mu0;   // Faktor vor R^T V0 R
+    const double wfac = opt.scaled ? 1.0 : F.mu0;          // Faktor vor W, Z, Y
     const int nE = C.nE, nV = C.nV, nH = C.nH, N = nE + nV + nH;
     C.A = Mat::Zero(N, N);
     C.b = Vec::Zero(N);
-    C.b.head(nE) = f;
-    C.A.topLeftCorner(nE, nE) = dense_K(F, opt.sigma_factor);
+    C.b.head(nE) = kfac * f;
+    C.A.topLeftCorner(nE, nE) = kfac * dense_K(F, opt.sigma_factor);
 
     if (opt.include_bem) {
         const int Es = S.num_edges();
@@ -81,7 +87,7 @@ Coupled build_coupled(const FemProblem& F, const BoundaryOps& O, const DerivedOp
         const Mat Nt = D.N.transpose();                           // V x F
         if (!opt.unsymmetric) {
             // (1,1): (1/mu0) R^T V0 R eingebettet
-            const Mat RtV0R = (1.0 / F.mu0) * R.transpose() * D.V0 * R;   // Es x Es
+            const Mat RtV0R = v0fac * R.transpose() * D.V0 * R;   // Es x Es
             for (int e = 0; e < Es; ++e) for (int g = 0; g < Es; ++g) C.A(F.surf_edge_to_fem[e], F.surf_edge_to_fem[g]) += RtV0R(e, g);
             add_rows(nE, R.transpose() * D.N);                    // (1,2)
             add_rows(nE + nV, D.Q);                               // (1,3)
@@ -91,10 +97,10 @@ Coupled build_coupled(const FemProblem& F, const BoundaryOps& O, const DerivedOp
         }
         add_cols(nE, Nt * R);                                     // (2,1)
         add_cols(nE + nV, D.Q.transpose());                       // (3,1)
-        C.A.block(nE, nE, nV, nV) = -F.mu0 * D.W;                 // (2,2)
-        C.A.block(nE, nE + nV, nV, nH) = -F.mu0 * D.Z;            // (2,3)
-        C.A.block(nE + nV, nE, nH, nV) = -F.mu0 * D.Z.transpose();// (3,2)
-        C.A.block(nE + nV, nE + nV, nH, nH) = -F.mu0 * D.Y;       // (3,3)
+        C.A.block(nE, nE, nV, nV) = -wfac * D.W;                  // (2,2)
+        C.A.block(nE, nE + nV, nV, nH) = -wfac * D.Z;             // (2,3)
+        C.A.block(nE + nV, nE, nH, nV) = -wfac * D.Z.transpose(); // (3,2)
+        C.A.block(nE + nV, nE + nV, nH, nH) = -wfac * D.Y;        // (3,3)
     }
 
     if (opt.flip_lambda && opt.include_bem) {

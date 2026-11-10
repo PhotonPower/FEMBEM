@@ -66,7 +66,7 @@ static double cond_scaled(const CMat& A)
 
 // Schurkomplement des Gesamtsystems auf Gamma = (a auf Flaechenkanten, psi, c); innen = uebrige erhaltene FEM-Kanten.
 struct Parts { int nG = 0, nI = 0; };
-static CMat schur(const Coupled& C, const FemProblem& F, const Mat& Msig_scaled, double omega, Parts* parts, double* cond_Aii)
+static CMat schur(const Coupled& C, const FemProblem& F, const Mat& Msig_scaled, double omega, Parts* parts, double* cond_Aii)  // omega schon mit mu0 multipliziert, falls C.scaled
 {
     const TraceSurface& S = F.surface;
     std::vector<char> on_surface(F.num_edges, 0);
@@ -104,20 +104,21 @@ static CMat schur(const Coupled& C, const FemProblem& F, const Mat& Msig_scaled,
     return AGG - AGI * lu.solve(AIG);
 }
 
-static void report(const char* label, const FemProblem& F, const BoundaryOps& O, const DerivedOps& D, double mu0, double omega, bool want_blocks)
+static void report(const char* label, const FemProblem& F, const BoundaryOps& O, const DerivedOps& D, double mu0, double omega, bool want_blocks, bool scaled = false)
 {
     const TraceSurface& S = F.surface;
-    CoupledOptions opt; opt.sigma_factor = 0.0;
+    CoupledOptions opt; opt.sigma_factor = 0.0; opt.scaled = scaled;
     const Vec f = Vec::Zero(F.num_edges);
     const Coupled C = build_coupled(F, O, D, f, opt);
-    const Mat Msig = as_matrix(F.Msig, F.num_edges, F.num_edges);
+    Mat Msig = Mat::Zero(F.num_edges, F.num_edges);
+    for (const Triplet& t : F.Msig) Msig(t.row, t.col) += t.val;
     Parts parts;
     double cAii = 0;
     const double t0 = now();
-    const CMat Sc = schur(C, F, Msig, omega, &parts, &cAii);
+    const CMat Sc = schur(C, F, Msig, scaled ? omega * mu0 : omega, &parts, &cAii);
     const double cS = cond_svd(Sc), cSs = cond_scaled(Sc);
-    std::printf("  %-34s omega=%9.3e  n_innen=%5d n_Gamma=%5d | cond(A_ii) ~ %.3e | cond(S) = %.3e, mit Diagonalskalierung %.3e  [%.0f s]\n",
-                label, omega, parts.nI, parts.nG, cAii, cS, cSs, now() - t0);
+    std::printf("  %-34s [%s] omega=%9.3e  n_innen=%5d n_Gamma=%5d | cond(A_ii) ~ %.3e | cond(S) = %.3e, mit Diagonalskalierung %.3e  [%.0f s]\n",
+                label, scaled ? "skaliert" : "unskaliert", omega, parts.nI, parts.nG, cAii, cS, cSs, now() - t0);
     if (want_blocks) {
         // symmetrische Bloecke
         std::vector<char> gauged = F.gauged;
@@ -167,10 +168,14 @@ int main(int argc, char** argv)
         const DerivedOps D = derive_ops(S, O);
         std::printf("TEAM 28: %s: %d Hexaeder, %d FEM-Kanten, %d Randquads, %d Komponenten, nH = %d, mu_r(Spulen) = %g  [Aufbau %.0f s]\n",
                     vtk.c_str(), F.num_hexes, F.num_edges, S.num_quads(), S.num_components, S.nH, mur_coil, now() - t0);
+        bool only_scaling = false;
+        for (int i = 3; i < argc; ++i) if (!std::strcmp(argv[i], "--scaling")) only_scaling = true;
         bool first = true;
-        for (double fHz : {0.01, 0.1, 1.0, 10.0, 50.0}) {
+        const std::vector<double> freqs = only_scaling ? std::vector<double>{0.01, 50.0} : std::vector<double>{0.01, 0.1, 1.0, 10.0, 50.0};
+        for (double fHz : freqs) {
             char label[64]; std::snprintf(label, sizeof label, "f = %g Hz", fHz);
-            report(label, F, O, D, MU0r, 2.0 * 3.14159265358979323846 * fHz, first);
+            report(label, F, O, D, MU0r, 2.0 * 3.14159265358979323846 * fHz, first && !only_scaling, false);
+            if (only_scaling) report(label, F, O, D, MU0r, 2.0 * 3.14159265358979323846 * fHz, false, true);
             first = false;
         }
     } else { std::fprintf(stderr, "unbekannter Modus\n"); return 2; }

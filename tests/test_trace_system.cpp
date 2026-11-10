@@ -416,8 +416,61 @@ static void test_T6_T7_T4_R3()
     }
 }
 
+// ---------------- Phase 2, Schritt 0a: Skalierung ----------------
+static void test_scaling()
+{
+    std::printf("[0a] Skalierung (psi~ = mu0 psi, c~ = mu0 c, Matrix mal mu0): Kugel n = 4 und Ring + Platte mit mu0 = 4 pi 1e-7\n");
+    const double MU = 4e-7 * PI;
+    write_vtk("trace_ball_scal.vtk", ball_hex(4, 1.0), "ball");
+    FemMaterials mats;
+    mats.mu_r = {1.0, 1.0}; mats.kappa = {0.0, 0.0};
+    FemProblem F = build_fem_problem("trace_ball_scal.vtk", mats, MU, [&](const Vec3& x, int) { return v3(-x.y, x.x, 0.0); });
+    project_source("trace_ball_scal.vtk", F.f);
+    TraceSurface& S = F.surface;
+    compute_harmonic_fields(S);
+    const BoundaryOps O = assemble_boundary_ops(S);
+    const DerivedOps D = derive_ops(S, O);
+    const Vec f = Eigen::Map<const Vec>(F.f.data(), F.f.size());
+    CoupledOptions o1; o1.sigma_factor = 0.0;
+    CoupledOptions o0 = o1; o0.scaled = false;
+    const Coupled C1 = build_coupled(F, O, D, f, o1), C0 = build_coupled(F, O, D, f, o0);
+    const Vec x1 = C1.solve(), x0 = C0.solve();
+    const double dA = (x1.head(C1.nE) - x0.head(C1.nE)).norm() / x1.head(C1.nE).norm();
+    const double dP = (x1.segment(C1.nE, C1.nV) - x0.segment(C1.nE, C1.nV)).norm() / x1.segment(C1.nE, C1.nV).norm();
+    // Rueckwaertsfehler beider Loesungen im jeweiligen System (relativ zu |A||x|)
+    auto resid = [&](const Coupled& C, const Vec& x) {
+        Vec xs = x;
+        if (C.scaled) xs.tail(C.nV + C.nH) *= C.mu0;
+        const Mat A = C.reduced();
+        Vec xr(C.keep.size()), br(C.keep.size());
+        for (size_t i = 0; i < C.keep.size(); ++i) { xr[i] = xs[C.keep[i]]; br[i] = C.b[C.keep[i]]; }
+        return (A * xr - br).norm() / (A.norm() * xr.norm());
+    };
+    const double asym1 = (C1.A - C1.A.transpose()).norm() / C1.A.norm();
+    Eigen::BDCSVD<Mat> s1(C1.reduced()), s0(C0.reduced());
+    const double cond1 = s1.singularValues()(0) / s1.singularValues().tail(1)(0), cond0 = s0.singularValues()(0) / s0.singularValues().tail(1)(0);
+    std::printf("     Kugel n=4: |a_skal - a_unskal|/|a| = %.2e, |psi_skal - psi_unskal|/|psi| = %.2e; Rueckwaertsfehler skaliert %.2e, unskaliert %.2e; Kond %.2e (skaliert) gegen %.2e (unskaliert); Asymmetrie skaliert %.2e\n",
+                dA, dP, resid(C1, x1), resid(C0, x0), cond1, cond0, asym1);
+    check(asym1 <= 1e-15, "T6 (skaliert): Symmetrie 1e-15", asym1, 1e-15);
+    check(cond1 < 1e-3 * cond0, "skalierte Matrix ist um >= 3 Dekaden besser konditioniert als die unskalierte (mu0 = 4 pi 1e-7)", cond1 / cond0, 1e-3);
+    check(dA <= 1e-6 && dP <= 1e-6, "skaliert und unskaliert liefern dieselbe Loesung (<= 1e-6; die unskalierte ist die ungenauere)", std::max(dA, dP), 1e-6);
+    // mu0 = 1: Skalierung ist die Identitaet
+    {
+        FemProblem F1 = build_fem_problem("trace_ball_scal.vtk", mats, 1.0, [&](const Vec3& x, int) { return v3(-x.y, x.x, 0.0); });
+        project_source("trace_ball_scal.vtk", F1.f);
+        TraceSurface& S1 = F1.surface;
+        compute_harmonic_fields(S1);
+        const BoundaryOps O1 = assemble_boundary_ops(S1);
+        const DerivedOps D1 = derive_ops(S1, O1);
+        const Vec f1 = Eigen::Map<const Vec>(F1.f.data(), F1.f.size());
+        const Vec xa = build_coupled(F1, O1, D1, f1, o1).solve(), xb = build_coupled(F1, O1, D1, f1, o0).solve();
+        check((xa - xb).norm() / xa.norm() <= 1e-12, "mu0 = 1: skalierte und unskalierte Loesung stimmen auf 1e-12 ueberein (T8-Aufbau)", (xa - xb).norm() / xa.norm(), 1e-12);
+    }
+}
+
 int main()
 {
+    test_scaling();
     test_T8();
     test_T6_T7_T4_R3();
     std::printf(g_fail == 0 ? "ALLE TESTS BESTANDEN\n" : "FEHLGESCHLAGEN: %d\n", g_fail);

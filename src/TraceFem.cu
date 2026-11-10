@@ -1,4 +1,5 @@
 // FEM-Seite der Maxwell-Spur-Kopplung, siehe include/TraceFem.h
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <map>
@@ -76,7 +77,8 @@ Vec3 FemProblem::curl_at_center(int h, const std::vector<double>& a) const
 }
 
 FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& mats, double mu0,
-                             const std::function<Vec3(const Vec3&, int)>& Js, double length_scale)
+                             const std::function<Vec3(const Vec3&, int)>& Js, double length_scale,
+                             const std::vector<Vec3>* comp_shift)
 {
     Mesh mesh;
     load_mesh(vtk_path, mesh);
@@ -87,6 +89,24 @@ FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& ma
             mesh.nodes_current[i] = p;
             mesh.nodes_initial[i] = p;
         }
+    if (comp_shift) {
+        std::vector<char> shifted(mesh.num_nodes, 0);
+        for (size_t h = 0; h < mesh.num_hexes; ++h) {
+            const int c = mesh.hex_component_ids[h];
+            if (c >= static_cast<int>(comp_shift->size())) continue;
+            const Vec3& d = (*comp_shift)[c];
+            if (d.x == 0 && d.y == 0 && d.z == 0) continue;
+            for (int k = 0; k < 8; ++k) {
+                const int v = mesh.hex_nodes[h].v[k];
+                if (shifted[v]) continue;
+                shifted[v] = 1;
+                double3 p = mesh.nodes_current[v];
+                p.x += d.x; p.y += d.y; p.z += d.z;
+                mesh.nodes_current[v] = p;
+                mesh.nodes_initial[v] = p;
+            }
+        }
+    }
     FemProblem P;
     P.mu0 = mu0;
     P.num_nodes = static_cast<int>(mesh.num_nodes);
@@ -105,8 +125,6 @@ FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& ma
     for (int e = 0; e < E; ++e) { const int2 ed = mesh.edges[e]; P.edges[e] = {ed.x, ed.y}; }
 
     // ---- K, M_sigma, f ----
-    P.K.assign(static_cast<size_t>(E) * E, 0.0);
-    P.Msig.assign(static_cast<size_t>(E) * E, 0.0);
     P.f.assign(E, 0.0);
     const double g2 = 0.5773502691896257;
     const double gp2[2] = {-g2, g2};
@@ -163,8 +181,8 @@ FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& ma
             P.f[gi] += si * fe[i];
             for (int j = 0; j < 12; ++j) {
                 const int gj = mesh.hex_edges[h * 12 + j], sj = mesh.hex_edge_signs[h * 12 + j];
-                P.K[static_cast<size_t>(gi) * E + gj] += si * sj * Ke[i][j];
-                P.Msig[static_cast<size_t>(gi) * E + gj] += si * sj * Me[i][j];
+                P.K.push_back({gi, gj, si * sj * Ke[i][j]});
+                if (Me[i][j] != 0.0) P.Msig.push_back({gi, gj, si * sj * Me[i][j]});
             }
         }
     }
@@ -202,6 +220,25 @@ FemProblem build_fem_problem(const std::string& vtk_path, const FemMaterials& ma
     return P;
 }
 
+std::vector<char> make_tree_gauge(const FemProblem& F, unsigned seed)
+{
+    std::vector<int> order(F.num_edges);
+    for (int e = 0; e < F.num_edges; ++e) order[e] = e;
+    if (seed != 0) {
+        unsigned st = seed;
+        for (int i = F.num_edges - 1; i > 0; --i) { st = st * 1664525u + 1013904223u; std::swap(order[i], order[st % static_cast<unsigned>(i + 1)]); }
+    }
+    std::vector<int> parent(F.num_nodes);
+    for (int v = 0; v < F.num_nodes; ++v) parent[v] = v;
+    auto find = [&](int a) { while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+    std::vector<char> tree(F.num_edges, 0);
+    for (int e : order) {
+        const int a = find(F.edges[e][0]), b = find(F.edges[e][1]);
+        if (a != b) { parent[a] = b; tree[e] = 1; }
+    }
+    return tree;
+}
+
 ProjectionResult project_source(const std::string& vtk_path, std::vector<double>& f, const std::vector<char>* blocked)
 {
     Mesh mesh;
@@ -211,6 +248,89 @@ ProjectionResult project_source(const std::string& vtk_path, std::vector<double>
     res.rel_before = r.rel_before;
     res.rel_after = r.rel_after;
     return res;
+}
+
+CutLayers build_cut_layers(const FemProblem& F, int comp)
+{
+    CutLayers L;
+    const double PI = 3.14159265358979323846;
+    std::vector<char> in_node(F.num_nodes, 0);
+    for (int h = 0; h < F.num_hexes; ++h) if (F.hex_comp[h] == comp) for (int k = 0; k < 8; ++k) in_node[F.hex[h][k]] = 1;
+    std::vector<double> theta(F.num_nodes, 0.0);
+    std::vector<double> levels;
+    for (int v = 0; v < F.num_nodes; ++v) if (in_node[v]) { theta[v] = std::atan2(F.X[v].y, F.X[v].x); levels.push_back(theta[v]); }
+    std::sort(levels.begin(), levels.end());
+    std::vector<double> uniq;
+    for (double t : levels) if (uniq.empty() || t - uniq.back() > 1e-7) uniq.push_back(t);
+    L.K = static_cast<int>(uniq.size());
+    auto slice = [&](int v) { // Index der Halbebene
+        const double t = theta[v];
+        int lo = 0, hi = L.K - 1;
+        while (lo < hi) { const int mid = (lo + hi) / 2; if (uniq[mid] < t - 1e-7) lo = mid + 1; else hi = mid; }
+        return lo;
+    };
+    L.layers.assign(L.K, {});
+    L.in_comp_edge.assign(F.num_edges, 0);
+    for (int e = 0; e < F.num_edges; ++e) {
+        const int a = F.edges[e][0], b = F.edges[e][1];
+        if (!in_node[a] || !in_node[b]) continue;
+        L.in_comp_edge[e] = 1;
+        const int sa = slice(a), sb = slice(b);
+        if (sa == sb) continue;
+        double d = theta[b] - theta[a];                       // Richtung vmin -> vmax
+        while (d > PI) d -= 2 * PI;
+        while (d <= -PI) d += 2 * PI;
+        const int k = (d > 0) ? sa : sb;                      // Schicht zwischen Halbebene k und k+1 (zyklisch)
+        if (((k + 1) % L.K) != ((d > 0) ? sb : sa)) throw std::runtime_error("build_cut_layers: Kante ueberspringt eine Halbebene");
+        L.layers[k].push_back({e, d > 0 ? 1.0 : -1.0});
+    }
+    return L;
+}
+
+std::vector<double> prepare_source(const FemProblem& F, const std::string& vtk_path, const std::vector<CoilSource>& coils, bool project,
+                                   bool renormalize, std::vector<SourceDiagnostics>* diag)
+{
+    std::vector<double> out(F.num_edges, 0.0);
+    if (diag) diag->clear();
+    for (const CoilSource& cs : coils) {
+        const CutLayers L = build_cut_layers(F, cs.comp);
+        std::vector<double> fc(F.num_edges, 0.0);
+        for (int e = 0; e < F.num_edges; ++e) if (L.in_comp_edge[e]) fc[e] = F.f[e];
+        auto gtn = [&](const std::vector<double>& f) {
+            std::vector<double> g(F.num_nodes, 0.0);
+            double fn = 0;
+            for (int e = 0; e < F.num_edges; ++e) if (L.in_comp_edge[e]) { g[F.edges[e][1]] += f[e]; g[F.edges[e][0]] -= f[e]; fn += f[e] * f[e]; }
+            double sn = 0;
+            for (double v : g) sn += v * v;
+            return fn > 0 ? std::sqrt(sn / fn) : 0.0;
+        };
+        SourceDiagnostics d;
+        d.comp = cs.comp; d.K = L.K;
+        d.rel_gt_before = gtn(fc);
+        d.net_min_before = 1e300; d.net_max_before = -1e300;
+        for (int k = 0; k < L.K; ++k) { const double n = L.net(fc, k); d.net_min_before = std::min(d.net_min_before, n); d.net_max_before = std::max(d.net_max_before, n); }
+        if (project) {
+            std::vector<char> blocked(F.num_edges, 1);
+            for (int e = 0; e < F.num_edges; ++e) if (L.in_comp_edge[e]) blocked[e] = 0;
+            project_source(vtk_path, fc, &blocked);
+        }
+        d.rel_gt_after = gtn(fc);
+        auto stats = [&](double* mean, double* spread) {
+            double mn = 1e300, mx = -1e300, sum = 0;
+            for (int k = 0; k < L.K; ++k) { const double n = L.net(fc, k); mn = std::min(mn, n); mx = std::max(mx, n); sum += n; }
+            *mean = sum / L.K;
+            *spread = (mx - mn) / std::fabs(*mean);
+        };
+        stats(&d.net_proj, &d.net_proj_spread);
+        if (renormalize) {
+            d.scale = cs.target / d.net_proj;
+            for (double& v : fc) v *= d.scale;
+        }
+        stats(&d.net_final, &d.net_final_spread);
+        for (int e = 0; e < F.num_edges; ++e) out[e] += fc[e];
+        if (diag) diag->push_back(d);
+    }
+    return out;
 }
 
 } // namespace trace
