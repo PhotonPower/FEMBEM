@@ -383,8 +383,12 @@ den nodalen div-div-Referenzpfad; Costabel–Dauge zeigen das Versagen der Regul
 
 **Neu** also: (a) das Skalarprodukt (n×a)·(n'×b) im Einfachschicht-Integranden, (b) der Q-Kern, (c) Q1- und P0-Formfunktionen in den vorhandenen Integratoren.
 **Per partieller Integration auf schwach Singuläres zurückgeführt:** das Hypersingular (über die Nédélec-Identität, Abschnitt 3.3) und die ∇G×-Doppelschicht auf Q1×Fluss (über (I3) auf K').
-**Von Sauter–Schwab gedeckt** (laut Quelltext, in diesem Auftrag nicht neu getestet): 4-D-Fälle gleich / Kante / Ecke / getrennt für Kerne der Ordnung −1 und −2 (`SauterSchwab.cu`, `SingularQuadPair.cuh`,
-`AdjacentIntegration.cu`; Sauter–Schwab 2011).
+**Von Sauter–Schwab gedeckt** (laut Quelltext): 4-D-Fälle Kante / Ecke / getrennt für Kerne der Ordnung −1 und −2 (`SauterSchwab.cuh`, `SingularQuadPair.cuh`; Sauter–Schwab 2011).
+**Korrektur (Phase 1b, Schritt 2): Der Fall „gleiches Quad“ ist durch `get_coincident_coords` NICHT gedeckt.** Gemessen (`test_trace_quadrature`, [Q1]): ∫∫ 1/R über das Einheitsquadrat mit
+den sechs Teilgebieten dieser Abbildung hat 2,8 % Fehler bei 4 Gauß-Punkten und 0,75 % bei 8, also algebraische statt exponentielle Konvergenz (unabhängig in Python nachgerechnet): die Abbildung
+hebt nur die Singularität im Ursprung auf, nicht die auf der ganzen Diagonalen x = y. Die neue Bibliothek verwendet für das gleiche Quad eine Duffy-Regel in der Differenzvariablen
+h = y − x (8 Sektoren, Fehler 4·10⁻¹² bei 8 Punkten); die Fälle gemeinsame Kante und gemeinsame Ecke aus dem Bestand konvergieren dagegen exponentiell (4·10⁻¹⁰ bzw. 5·10⁻¹³ bei 8 Punkten)
+und werden unverändert verwendet. Der Bestand (`integrate_triangle_coincident`) wurde nicht angefasst.
 
 ### 6.2 Kollokation oder Galerkin
 
@@ -405,7 +409,7 @@ Erwartete Ordnungen sind Erwartungen aus der Theorie (Galerkin Q1/P0, quasi-unif
 
 | Nr. | Identität | Geometrie, exaktes Feld | Erwartete Größe, Ordnung | Gegenprobe (muss durchfallen) |
 |---|---|---|---|---|
-| T1 | (R-A), (R-B): Darstellung | **Kugel** R = 1, Dipol m = ẑ im Ursprung: A = μ₀ m × r/(4π r³) (Coulomb) | Fehler des Quadraturoperators an Punkten außen ≤ 1·10⁻³ bei 6·6 Quads je Seite, Ordnung ~2 | Vorzeichen jedes Terms umkehren |
+| T1 | (R-A), (R-B): Darstellung | **Kugel** R = 1, Dipol m = ẑ im Ursprung: A = μ₀ m × r/(4π r³) (Coulomb) | Fehler des Quadraturoperators an Punkten außen, Ordnung ~2 (Schätzung ≤ 1·10⁻³ bei 6·6 Quads je Seite; **gemessen in Phase 1b: 2,6·10⁻² (A), 3,1·10⁻² (B), Ordnung 1,9–2,0**, die Schätzung war zu optimistisch) | Vorzeichen jedes Terms umkehren |
 | T2 | (R-T), (R-N), Matrix-Residuum | Kugel, **Würfel** (Kanten, Ecken), dasselbe Dipolfeld (Würfel mit Dipol im Innern) | Kugel: ~h²; Würfel: ~h^{1…2} wegen Singularitäten an Kanten | Vorzeichen von ½, K', D einzeln |
 | T3 | Nédélec-Identität W = Gᵀ V_rot G, K' = Dᵀ, Symmetrie | Kugel, Würfel: Eigenwerte l(l+1)/(2l+1), D/K' Spurzeilen | ‖W − Wᵀ‖ ≤ 10⁻¹² ‖W‖; Eigenwert Y_l: Fehler ~h² | falscher Faktor 2; W nur mit koplanarem Skalarprodukt (ohne n_x·n_y) auf dem Würfel muss auf Kanten abweichen |
 | T4 | Eichtest | beliebige der obigen, a → a + Gψ_h mit **nichtharmonischem** ψ_h (z. B. ψ = z exp(−r²/s²) wie Fall 4 des alten Row-Checks) | Flussblöcke (B_R-Faktor) ≤ 10⁻¹² relativ; Q/Qᵀ auf Quadraturniveau (Schwelle aus Selbstkonvergenz, Schritt 2) | a + n-Anteil (nicht Gradient, z. B. curl-Anteil) ändert um O(1); das alte Operatorresiduum 62 % |
