@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Formulierung der FEM-BEM-Kopplung in Maxwell-Spuren (`docs/theory/maxwell-trace-coupling.md`, Bericht `docs/design/maxwell-trace-formulation.md`, Prüfskripte `tools/theory/`): Phase 1a, reine Theorie, kein Code am Lösungspfad.
+
 - `docs/design/bem-normal-components.md`: Gegenprobe Normalanteile in Zeile 2 (`include/BemNormalPart.h`, `test_bem_normal_components`, Zeile 2 mit vollständigen Daten in `--bem-row-check`, `A.n`-Dump `.bquads.csv`, `tools/bem_normal_ratio.py`). Am Lösungspfad nichts geändert.
 
 - Spurkonsistenz der FEM-BEM-Kopplung (`docs/design/bem-trace-consistency.md`): Test `test_bem_trace_identity`
