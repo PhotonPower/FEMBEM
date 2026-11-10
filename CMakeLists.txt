@@ -1322,4 +1322,86 @@ else()
                    "-DPython3_EXECUTABLE=<python mit gmsh>)")
 endif()
 
+# =============================================================================
+# Maxwell-Spur-Kopplung, Phase 1b (docs/tasks/maxwell-trace-operators.md)
+# =============================================================================
+# Eigene Dateien, vom Loesungspfad unabhaengig; nur von diesen Tests benutzt. Dichte lineare Algebra
+# und CG ueber Eigen (nur Header, wird nur in .cpp-Dateien eingebunden, nie in .cu). Ohne Eigen
+# werden diese Tests uebersprungen.
+find_package(Eigen3 3.3 QUIET NO_MODULE)
+if (TARGET Eigen3::Eigen)
+    add_library(trace_core STATIC src/TraceSurface.cpp src/TraceSystem.cpp)
+    target_include_directories(trace_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(trace_core PUBLIC Eigen3::Eigen)
+
+    # Quadratur der Randoperatoren (Sauter-Schwab-Rahmen aus SauterSchwab.cuh / SingularQuadPair.cuh, Host-Code)
+    find_package(Threads REQUIRED)
+    add_library(trace_quad STATIC src/TraceBemQuad.cu)
+    target_include_directories(trace_quad PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(trace_quad PUBLIC trace_core CUDA::cudart Threads::Threads)
+
+    # FEM-Seite (Hexaeder-Assemblierung mit den Produktionsbasisfunktionen, Rand, Baum-Kobaum-Eichung des Bestands)
+    add_library(trace_fem STATIC
+        src/TraceFem.cu src/Backend.cu src/VtkReader.cpp src/TopologyExtractor.cpp src/TreeCotreeGauge.cpp src/FemDirectBC.cpp)
+    target_include_directories(trace_fem PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(trace_fem PUBLIC trace_core CUDA::cudart)
+
+    # Quadraturtests (Sauter-Schwab-Faelle, Selbstkonvergenz)
+    add_executable(test_trace_quadrature tests/test_trace_quadrature.cpp)
+    target_link_libraries(test_trace_quadrature PRIVATE trace_quad)
+    add_test(NAME test_trace_quadrature COMMAND test_trace_quadrature)
+    set_tests_properties(test_trace_quadrature PROPERTIES LABELS "host" TIMEOUT 120)
+    add_dependencies(host_tests test_trace_quadrature)
+
+    # T1, T2, T3: Randoperatoren gegen exakte Dipolfelder (Kugel, Wuerfel)
+    add_executable(test_trace_ops tests/test_trace_ops.cpp)
+    target_link_libraries(test_trace_ops PRIVATE trace_quad)
+    add_test(NAME test_trace_ops COMMAND test_trace_ops)
+    set_tests_properties(test_trace_ops PROPERTIES LABELS "host" TIMEOUT 600)
+    add_dependencies(host_tests test_trace_ops)
+
+    # T5: Torus mit Kreisstrom, harmonische Felder (c_Meridian, c_Laengs)
+    add_executable(test_trace_torus tests/test_trace_torus.cpp)
+    target_link_libraries(test_trace_torus PRIVATE trace_quad)
+    add_test(NAME test_trace_torus COMMAND test_trace_torus)
+    set_tests_properties(test_trace_torus PROPERTIES LABELS "host" TIMEOUT 600)
+    add_dependencies(host_tests test_trace_torus)
+
+    # Schritt 4: gekoppeltes System (S), (J): T8, T6, T7, T4, R3
+    add_executable(test_trace_system tests/test_trace_system.cpp)
+    target_include_directories(test_trace_system PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(test_trace_system PRIVATE trace_quad trace_fem)
+    add_test(NAME test_trace_system COMMAND test_trace_system)
+    set_tests_properties(test_trace_system PROPERTIES LABELS "host" TIMEOUT 900)
+    add_dependencies(host_tests test_trace_system)
+
+    # Schritt 5: Messung der Konditionierung (kein Test): trace_conditioning ball <n> | team28 <vtk>
+    add_executable(trace_conditioning tests/trace_conditioning.cpp)
+    target_include_directories(trace_conditioning PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)
+    target_link_libraries(trace_conditioning PRIVATE trace_quad trace_fem)
+    if (TARGET OpenMP::OpenMP_CXX)
+        target_link_libraries(trace_conditioning PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+
+    # T9: Hodge-Strukturen (Wuerfel, Kugel, Quader, Torus, zwei Tori, Quader + Torus)
+    add_executable(test_trace_surface tests/test_trace_surface.cpp)
+    target_link_libraries(test_trace_surface PRIVATE trace_core)
+    add_test(NAME test_trace_surface COMMAND test_trace_surface)
+    set_tests_properties(test_trace_surface PROPERTIES LABELS "host" TIMEOUT 120)
+    add_dependencies(host_tests test_trace_surface)
+
+    # T9 an der Randflaeche von team28_hex.vtk (g = 1, 1, 0)
+    add_executable(test_trace_surface_team28
+        tests/test_trace_surface_team28.cu
+        src/Backend.cu src/VtkReader.cpp src/TopologyExtractor.cpp)
+    target_include_directories(test_trace_surface_team28 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(test_trace_surface_team28 PRIVATE trace_core CUDA::cudart)
+    add_test(NAME test_trace_surface_team28
+             COMMAND test_trace_surface_team28 ${CMAKE_CURRENT_SOURCE_DIR}/data/team28/team28_hex.vtk)
+    set_tests_properties(test_trace_surface_team28 PROPERTIES LABELS "host" TIMEOUT 120)
+    message(STATUS "FEMBEM: Tests Maxwell-Spur-Kopplung aktiv (Eigen ${Eigen3_VERSION})")
+else()
+    message(STATUS "FEMBEM: Tests Maxwell-Spur-Kopplung aus (Eigen3 nicht gefunden)")
+endif()
+
 endif()  # FEMBEM_BUILD_TESTS (CTest)
