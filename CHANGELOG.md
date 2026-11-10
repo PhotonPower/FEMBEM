@@ -6,6 +6,8 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Phase 2 (`docs/design/maxwell-trace-magnetostatics.md`): TEAM-28-Magnetostatik mit der Maxwell-Spur-Kopplung (Messtreiber `trace_magnetostatics`, `TraceReference.h` Volumenstrom-Biot-Savart in C++, `solve_schur`,
+  Skalierung ψ̃ = μ₀ψ in `build_coupled`, Quellprojektion mit Nettostrom-Renormierung `prepare_source`, Tests `test_trace_reference`, `test_trace_source`). Feldfehler gegen Biot-Savart 0,9 / 1,7 / 3,0 % (Platte / Innen- / Außenspule, Skalierung 1,0), Ordnung ≈ 2.
 - Operatorbibliothek der Maxwell-Spur-Kopplung, dicht, Double, Host (Phase 1b, `docs/design/maxwell-trace-operators.md`): `include/TraceSurface.h`, `TraceMeshes.h`,
   `TraceBemOps.h`, `TraceFem.h`, `TraceSystem.h`, `src/TraceSurface.cpp`, `TraceBemQuad.cu`, `TraceFem.cu`, `TraceSystem.cpp` (alle neu, vom Lösungspfad unabhängig; Eigen ist neu als
   optionale Abhängigkeit der Tests), Tests `test_trace_surface`, `test_trace_surface_team28`, `test_trace_quadrature`, `test_trace_ops`, `test_trace_torus`, `test_trace_system`
