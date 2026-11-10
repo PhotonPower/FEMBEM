@@ -326,7 +326,7 @@ K nur über B_Rᵀ(·) an den Rand koppelt; die Randunbekannten (a_Γ, ψ, c) bi
   (bestehender Code `TreeCotreeGauge`).
 * **Innen, σ > 0** (Leiter): keine Eichung nötig, der Term jωσ a löst sie auf.
 * **Kohomologie-Eichung der Spulen** (`CohomologyGauge`): **entfällt in der gekoppelten Formulierung**, weil (S3) die Längs-Zirkulation (Fluss durch das Loch) festlegt:
-  Der Nullraum a → a + h_int (curl-frei, nicht Gradient) hat auf Γ eine nichtverschwindende Zirkulation und wird von (S3) angezeigt **[hergeleitet; Test T7]**.
+  Der Nullraum a → a + h_int (curl-frei, nicht Gradient) hat auf Γ eine nichtverschwindende Zirkulation und wird von (S3) angezeigt **[hergeleitet; geprüft in Phase 1b, T7 (`test_trace_system`): nur K mit Baum-Kobaum lässt am Ring genau einen harmonischen Nullvektor übrig (Singulärwert < 10⁻¹⁰ σ_max), das gekoppelte System (S) und (J) keinen (kleinster Singulärwert 2,6·10⁻⁴ σ_max); die Kohomologie-Eichung ist ersetzt, auf kleinen Netzen. Große Netze: offen]**.
 * **ψ:** Konstanten je Komponente (Abschnitt 4.4).
 * **Risiko R4' (kleine Frequenz, Korrektur Phase 1b, Schritt 0):** Im Leiter wird nicht geeicht; die Gradienten a + Gχ fixiert nur jωσ. Bei kleiner Frequenz
   (0,01 Hz) wird das System im Gradientenraum entsprechend schlecht konditioniert (Eigenwerte ∝ ωσ), und die Randblöcke helfen nicht, weil sie a nur über den Fluss
@@ -422,7 +422,7 @@ Erwartete Ordnungen sind Erwartungen aus der Theorie (Galerkin Q1/P0, quasi-unif
 | T5 | Torus, harmonische Felder | **Torus** (R = 3, r = 1; Quadnetz 24×12 …), **Kreisstrom** I auf dem Kernkreis im Innern: B_ext analytisch (Schleifenformel, Abschnitt 7.5), A analytisch | Zirkulation der exakten Spuren: c_Meridian = I **exakt** (Ampère, unabhängig vom Netz; Phase 1b: 3·10⁻¹³), c_Längs = 0; aus (S2),(S3) bei exaktem a gelöst: c_Meridian → I mit Ordnung ~2 (gemessen 1,96), c_Längs ~10⁻⁸ (symmetrisches Netz) bzw. ~3·10⁻⁵ (verschobene Knoten); Zeilen (S2)/(S3) mit exakten Spuren: Residuum Ordnung ~2 (gemessen 1,9 bis 2,0) | c_Meridian := 0 setzen: Residuum O(1) (gemessen Faktor 54 bis 204 größer) |
 | T6 | Symmetrie des Gesamtsystems | alle Netze | ‖M − Mᵀ‖/‖M‖ ≤ 10⁻¹²; (J) unsymmetrisch (‖M_J − M_Jᵀ‖ ≥ 10⁻²) | (J) als symmetrisch ausgeben |
 | T7 | Eindeutigkeit/Nullraum | Torus-Spule + Platte (K = 2, g = 1) | SVD des Gesamtsystems nach Baum-Kobaum und Streichen je eines ψ-Knotens: kein weiterer Nullvektor | Streichen weglassen: Nullraumdimension K; Baum-Kobaum weglassen: Nullraum wächst um die Zahl der σ = 0-Gradienten |
-| T8 | Ende zu Ende | **Kugel** mit Azimutalstrom J_s = j₀ ẑ × r (Abschnitt 5.2): FEM-Kugel mit BEM-Außenraum | ψ = (β/μ₀) cos θ, g = 2β cos θ, β = μ₀ j₀/15; Fehler ~h² | Vorzeichen von λ in (E1) umkehren (Abweichung 0,78 im Kontinuum) |
+| T8 | Ende zu Ende | **Kugel** mit Azimutalstrom J_s = j₀ ẑ × r (Abschnitt 5.2): FEM-Kugel mit BEM-Außenraum | ψ = (β/μ₀) cos θ, g = 2β cos θ, β = μ₀ j₀/15; **Fehler: O(h) für g und B (niedrigste Nédélec-Ordnung), nicht h²**. Phase 1b (n = 4…10 Hexaeder, Cube-to-Ball): ψ 7,6 %…1,9 %, g 24 %…7,6 %, B innen 19 %…6,4 %, und der Fehler des reinen FEM mit exakten Randdaten ist praktisch derselbe (B: 6,2 % bei n = 10); die Kopplung trägt im Maßstab des FEM-Fehlers kaum bei | Vorzeichen von λ in (E1) umkehren (Abweichung 0,78 im Kontinuum) |
 | T9 | Hodge-Strukturen | Würfel, Torus, zwei Körper | R G = 0 exakt; dim ker R − dim range G = 2Σg; harmonische Felder orthogonal zu range G und ker R | – (kombinatorisch, bereits geprüft) |
 
 ### 7.5 Referenz für Phase 2: Volumenstrom-Biot-Savart (Rechteckring)
@@ -470,5 +470,5 @@ Die Angaben wurden am 09.11.2026 per Websuche gegen Verlags- bzw. Katalogseiten 
 | `check_sphere_coupling.py` | (E1) mit Vorzeichen, S_ext = l + 1, Kugel-Lösung, (V1)–(V5) | Maschinengenauigkeit; Gegenproben 0,24 bis 0,78 |
 | `check_volume_biot_savart.py` | Rechteckring-Verfahren, Fadenmodell | siehe 7.5 |
 
-Offen nach diesem Auftrag (Risikoliste im Bericht `docs/design/maxwell-trace-formulation.md`): diskrete Lösbarkeit/Stabilität von (S) auf realen Netzen; die
-Behauptung, dass (S3) die Kohomologie-Eichung der Spulen ersetzt; Abstimmung der diskreten Divergenzfreiheit von J_s; Konditionierung des Schurkomplements.
+Offen nach Phase 1a (Risikoliste im Bericht `docs/design/maxwell-trace-formulation.md`); Stand nach Phase 1b siehe `docs/design/maxwell-trace-operators.md`: diskrete Lösbarkeit von (S) auf kleinen Netzen ist **geprüft** (T7), Stabilität/inf-sup auf feinen Netzen und TEAM-28-Größe **offen**;
+(S3) ersetzt die Kohomologie-Eichung auf kleinen Netzen **geprüft**; diskrete Divergenzfreiheit von J_s **geprüft** (Projektion nötig, R3); Konditionierung **gemessen**.

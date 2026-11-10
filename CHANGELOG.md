@@ -6,6 +6,10 @@ Format nach [Keep a Changelog](https://keepachangelog.com/de/1.1.0/).
 
 ### Hinzugefügt
 
+- Operatorbibliothek der Maxwell-Spur-Kopplung, dicht, Double, Host (Phase 1b, `docs/design/maxwell-trace-operators.md`): `include/TraceSurface.h`, `TraceMeshes.h`,
+  `TraceBemOps.h`, `TraceFem.h`, `TraceSystem.h`, `src/TraceSurface.cpp`, `TraceBemQuad.cu`, `TraceFem.cu`, `TraceSystem.cpp` (alle neu, vom Lösungspfad unabhängig; Eigen ist neu als
+  optionale Abhängigkeit der Tests), Tests `test_trace_surface`, `test_trace_surface_team28`, `test_trace_quadrature`, `test_trace_ops`, `test_trace_torus`, `test_trace_system`
+  (T1 bis T9, Gegenproben, Konvergenzordnungen), Messtreiber `trace_conditioning`. Korrekturen an der Theorie: Vorzeichen von Z, Q auf dem λ-Feld, `c_Längs` nicht auf null setzen, Eisen-Skalierung.
 - Formulierung der FEM-BEM-Kopplung in Maxwell-Spuren (`docs/theory/maxwell-trace-coupling.md`, Bericht `docs/design/maxwell-trace-formulation.md`, Prüfskripte `tools/theory/`): Phase 1a, reine Theorie, kein Code am Lösungspfad.
 
 - `docs/design/bem-normal-components.md`: Gegenprobe Normalanteile in Zeile 2 (`include/BemNormalPart.h`, `test_bem_normal_components`, Zeile 2 mit vollständigen Daten in `--bem-row-check`, `A.n`-Dump `.bquads.csv`, `tools/bem_normal_ratio.py`). Am Lösungspfad nichts geändert.
