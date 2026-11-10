@@ -71,7 +71,9 @@ Bis zum Abschluss von Phase 3 bleibt der alte Pfad als Vergleich hinter einer Op
 ## Hilfsbaustein, früh einplanen
 
 **Volumenstrom-Biot-Savart** für rechteckige Ringquerschnitte, als Referenz in Phase 2 und für den
-Row-Check an den Spulen. Das Fadenmodell weicht dort um 24 bis 69 % ab. Er gehört zu Phase 1b oder
+Row-Check an den Spulen. (Korrektur 10.11.2026: Die früher hier genannten 24 bis 69 % waren das Residuum von
+Zeile 1 auf den inneren Spulenzeilen, wo das Fadenfeld zwischen den Fäden singulär ist, nicht eine Abweichung im |B| am Rand;
+am Rand liegt das Fadenmodell bei 0,1 bis 3 %, siehe `maxwell-trace-formulation.md`.) Er gehört zu Phase 1b oder
 direkt davor.
 
 ## Was bleibt, was ersetzt wird
