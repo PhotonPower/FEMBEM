@@ -43,7 +43,7 @@ angesetzt hatte, war falsch und ist korrigiert.
 
 * Dass (S) auf realen Netzen ein gut konditioniertes Schurkomplement hat und der Nullraum nach Baum-Kobaum und Streichen je eines ψ-Knotens leer ist.
 * Dass (S3) die Kohomologie-Eichung der Spulen ersetzt (es ist hergeleitet, aber diskret nicht gemessen).
-* Dass c_Längs verschwindet und c_Meridian = N·I ist; das Letztere hängt an diskret divergenzfreiem J_s.
+* Dass c_Längs bei TEAM 28 verschwindet (nur wenn kein Körper durch das Loch geht, sonst Unbekannte) und c_Meridian = N·I ist; das Letztere hängt an diskret divergenzfreiem J_s.
 * Übertragbarkeit der Stabilität von Hiptmair 2002 (E-basiert) auf die A-Formulierung.
 
 ## Offene Punkte
@@ -59,6 +59,8 @@ angesetzt hatte, war falsch und ist korrigiert.
 * **R1** Vorzeichen und Normale: drei von vier Fehlern in #23 lagen hier. Gegenmaßnahme: Tests T1 bis T3, T8 jeweils mit Vorzeichen-Gegenprobe; Normale ist die der Quads (`evaluate_quad_normal`).
 * **R2** Neue Integranden: Skalarprodukt (n_x×W_e)·(n_y×W_f) auf nicht koplanaren Paaren (Würfelkanten), Q-Kern (Ordnung −2). Nicht von Sauter–Schwab als solche getestet; Test T3 mit Würfel.
 * **R3** J_s diskret divergenzfrei: Sonst hängt c_Meridian von der Wahl der Schnittscheibe ab und das Gradientenprojektionsproblem im Baum-Kobaum-System wird inkonsistent.
+* **R7** (Phase 1b, Schritt 0) Eisen: der Randterm (1/μ₀)B_RᵀV₀B_R ist bei μ_r ≫ 1 um μ_r **größer** als K im Eisen (nicht kleiner); Skalierung des Vorkonditionierers (TEAM 13).
+* **R4'** (Phase 1b, Schritt 0) Kleine Frequenz (0,01 Hz): Im Leiter fixiert nur jωσ die Gradienten; die Randblöcke sehen nur den Fluss und helfen nicht; schlechte Konditionierung im Gradientenraum.
 * **R4** Konditionierung: W hat Kern (Konstanten); V₀ hat große Eigenwertspanne; Block-Vorkonditionierer für den Schurkomplement nicht entworfen.
 * **R5** Harmonische Felder auf realen Netzen (Spulen mit Ecken): Konstruktion per CG-Projektion wie `CohomologyGauge.cpp`; Randflächen mit nicht-manifoldem Netz sind ein Risiko (TEAM 28 hat keine).
 * **R6** Das Abklingverhalten (Coulomb-Eichung außen) ist nur für die Herleitung gebraucht; im Code wird sie nie erzwungen; die Darstellung gilt aber nur für abklingende Felder. Bei Netzen mit Quellen im Außenraum (nicht Teil des Plans) wäre die Formulierung zu erweitern.

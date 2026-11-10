@@ -20,8 +20,9 @@ einschließlich Gegenprobe (falsches Vorzeichen muss durchfallen). Was nur herge
   harmonischen Feldern. Wegen R G = 0 **exakt** (Kombinatorik) ist a + Gψ_h für **beliebiges** diskretes ψ_h, auch nicht harmonisches,
   ohne Wirkung. Das ist der Fall 4 aus `bem-normal-components.md`.
 * **Topologie** (Abschnitt 4): 2g harmonische Felder je Fläche, kombinatorisch **[geprüft: Skript]**. Die Meridian-Zirkulation ist der
-  umschlossene Strom (Ampère); mit eingeprägtem Strom folgt c_Meridian = N·I direkt aus der FEM-Zeile. Die Längszirkulation der Luftseite
-  ist 0. Die Innen-Kohomologie-Eichung der Spulen wird durch die harmonische Zeile (S3) ersetzt **[hergeleitet]**.
+  umschlossene Strom (Ampère); mit eingeprägtem Strom folgt c_Meridian = N·I direkt aus der FEM-Zeile. Die Längszirkulation ist der Strom durch
+  eine Scheibe, die den Längskreis berandet: 0, wenn die Scheibe im Luftraum liegt (TEAM 28), sonst Strom durch den Körper im Loch und eine Unbekannte,
+  die nie auf null gesetzt wird (Abschnitt 4.2). Die Innen-Kohomologie-Eichung der Spulen wird durch die harmonische Zeile (S3) ersetzt **[hergeleitet]**.
 * Ende-zu-Ende-Vorzeichenprüfung an der Kugel mit bekannter Lösung (eingeprägter Azimutalstrom) **[geprüft: Skript]**.
 * Bibliographie in Abschnitt 8, gegen Verlagsseiten geprüft; meine zunächst aus dem Gedächtnis notierte DOI der Hiptmair-Arbeit war falsch (siehe dort).
 
@@ -224,9 +225,11 @@ Zirkulationsmatrix zwischen den Zyklen (Meridian, Längskreis) und den harmonisc
 
 * **Meridian-Zirkulation** (kleiner Kreis um den Querschnitt): ∮ H_t·dl = ∫_{Querschnittsscheibe} J = **umschlossener Strom** I_enc (Ampère, die
   Scheibe liegt im Inneren). Bei einer Spule mit eingeprägtem Strom N·I und ohne Wirbelstrom ist c_Meridian = N·I.
-* **Längs-Zirkulation** (Kreis um die Achse): Der Kreis berandet in Ω_e eine Scheibe ohne Strom, also ∮ H_t·dl = 0.
-  Die Luftseite erzwingt c_Längs = 0 **[hergeleitet]**. Es verbleibt ein Freiheitsgrad im λ-Raum, der von den Gleichungen auf null gesetzt wird; der
-  Test „c_Längs → 0 mit Verfeinerung" gehört in die Prüfung (Abschnitt 7).
+* **Längs-Zirkulation** (Kreis um die Achse): ∮ H_t·dl ist der Strom durch eine Scheibe, die den Längskreis berandet. Berandet er eine Scheibe **im Luftraum**,
+  ist der Strom 0, also c_Längs = 0 **[hergeleitet]**. **Korrektur (Phase 1b, Schritt 0):** Das gilt nur dann. Geht ein anderer Körper durch das Loch
+  (Eisenkern durch die Spule, leitender Kern mit Wirbelströmen, Joch), ist c_Längs der Strom durch diesen Körper und im Allgemeinen ≠ 0. Bei TEAM 28 ist
+  c_Längs = 0, weil alle Ströme azimutal sind. **c_Längs ist eine Unbekannte und wird im Code nie auf null gesetzt**; der Test „c_Längs → 0 mit
+  Verfeinerung" (T5) gilt nur für das dort verwendete Feld (Kreisstrom, Luft im Loch).
 * **Fluss durch das Loch** Φ = ∮_{Längskreis} A·dl ist eichinvariant (∮∇χ = 0) und steckt in den **harmonischen Anteilen von γ_t A**, nicht in g. Er wird von
   der Außengleichung (S3) mit dem Außenfeld verknüpft (B_ext bestimmt Φ über Stokes auf der Lochscheibe).
 * **Verträglichkeit mit eingeprägtem Strom:** Die Testfunktion v_cut mit Träger auf den die Querschnittsscheibe durchstoßenden Kanten (Stufenfunktion des Potentials,
@@ -319,17 +322,26 @@ K nur über B_Rᵀ(·) an den Rand koppelt; die Randunbekannten (a_Γ, ψ, c) bi
 * **Kohomologie-Eichung der Spulen** (`CohomologyGauge`): **entfällt in der gekoppelten Formulierung**, weil (S3) die Längs-Zirkulation (Fluss durch das Loch) festlegt:
   Der Nullraum a → a + h_int (curl-frei, nicht Gradient) hat auf Γ eine nichtverschwindende Zirkulation und wird von (S3) angezeigt **[hergeleitet; Test T7]**.
 * **ψ:** Konstanten je Komponente (Abschnitt 4.4).
+* **Risiko R4' (kleine Frequenz, Korrektur Phase 1b, Schritt 0):** Im Leiter wird nicht geeicht; die Gradienten a + Gχ fixiert nur jωσ. Bei kleiner Frequenz
+  (0,01 Hz) wird das System im Gradientenraum entsprechend schlecht konditioniert (Eigenwerte ∝ ωσ), und die Randblöcke helfen nicht, weil sie a nur über den Fluss
+  sehen (Eichinvarianz, 5.6). Gilt für den harmonischen Pfad; Schritt 5 misst die Abhängigkeit von ω.
 * **Wo geeicht wird:** nur im FEM-Teil, nur im σ = 0-Gebiet (Baum-Kobaum). Das Außenfeld braucht die Coulomb-Eichung nur in der Herleitung.
 * **Warum B nicht von der Eichung abhängt:** Alles, was an a koppelt, ist (R a, Zirkulationen auf ℋ); beides ist invariant unter a → a + Gχ.
 
 ### 5.6 Eichinvarianz (ausdrücklich)
 
-**Behauptung.** Jeder Block, der auf a wirkt, behandelt a und a + G ψ_h für beliebige diskrete ψ_h (Q1 auf Γ oder im Gebiet; auch nicht harmonisch) gleich.
+**Behauptung (aufgeteilt, Korrektur Phase 1b, Schritt 0).** Für beliebige diskrete ψ_h (Q1 auf Γ oder im Gebiet; auch nicht harmonisch) gilt:
 
-**Beweis.** Die Blöcke (S1)–(S3) greifen auf a über (i) B_R a = Fluss je Quad, (ii) die Zirkulationen ⟨h_l, a_t⟩ und ⟨h_l, 𝒞(n×a_t)⟩ zu.
-(i) B_R G ψ_h = 0 **exakt** (Kombinatorik, **[geprüft: `check_surface_topology.py`]**: max|R G ψ| = 1,8·10⁻¹⁵ für ψ = zufällig³). (ii) h_l ⟂ range G (harmonisch) und der
-Term mit 𝒞 annulliert Gradienten (Abschnitt 2.3). Der FEM-Block K G = 0 im σ = 0-Gebiet (curl∘grad = 0); im Leiter ist jωσ G ≠ 0, das ist die gewollte Einschränkung
-auf die V = 0-Konvention. ∎
+* **(a) Exakt (kombinatorisch, Schwelle 10⁻¹² relativ):** Alle Blöcke, die a nur über den Fluss B_R a sehen, also (1,1), (1,2) und (2,1) mit B_Rᵀ-Faktor, sind invariant
+  unter a → a + Gψ_h. Grund: B_R G ψ_h = 0 **exakt** (**[geprüft: `check_surface_topology.py`]**: max|R G ψ| = 1,8·10⁻¹⁵ für ψ = zufällig³).
+* **(b) Q-Block (Spalten bzw. Zeilen ⟨h_l, (½ − 𝒞 n×)a_t⟩, Zeichen wie in (S1)/(S3)):** Der ½-Anteil verschwindet auf Gradienten **exakt**: H_l ∈ ker R, also
+  ⟨n×u_{H_l}, ∇_Γψ⟩ = ⟨curl_Γ u_{H_l}, ψ⟩ = 0 (diskret: Rc_l = 0 ⇒ c_lᵀ-Anteil G ψ ist orthogonal). Der 𝒞-Anteil verschwindet dagegen nur über die Identität
+  ⟨v, 𝒞(n×∇_Γψ)⟩ = 0 für div_Γ-freie v (Abschnitt 2.3), die **nach Quadratur nur näherungsweise** gilt. Erwartung: Abweichung auf Quadraturniveau (Schwelle aus der
+  Selbstkonvergenz von Schritt 2), nicht 10⁻¹².
+
+**Beweisskizze.** Die Blöcke (S1)–(S3) greifen auf a über (i) B_R a = Fluss je Quad, (ii) die Zirkulationen ⟨h_l, a_t⟩ und ⟨h_l, 𝒞(n×a_t)⟩ zu.
+(i) siehe (a). (ii) h_l ⟂ range G (harmonisch) für den ½-Anteil, und der Term mit 𝒞 annulliert Gradienten (Abschnitt 2.3), kontinuierlich. Der FEM-Block K G = 0 im σ = 0-Gebiet
+(curl∘grad = 0); im Leiter ist jωσ G ≠ 0, das ist die gewollte Einschränkung auf die V = 0-Konvention. ∎
 
 **Gegenüber dem alten Operator:** Der alte Operator griff mit D, G, T auf A_t selbst (nicht nur auf den Fluss) zu; für nichtharmonisches ψ (Fall 4)
 blieb das Residuum bei 62 %. Der neue Operator ist für Fall 4 per Konstruktion invariant (Test T4).
@@ -351,8 +363,9 @@ Ein Bewegungsterm σ v × curl a in der FEM-Zeile des bewegten Leiters ist von d
 
 Die Nichtlinearität steckt nur in K(a,v) = ∫ν(|curl a|) curl a·curl v. Die Randoperatoren (V₀, D̃, V_rot, Q, M̃, R, G) sind linear, geometrieabhängig und
 **bleiben unberührt**. Newton: Jacobi-Matrix K_T(a) ersetzt K im (1,1)-Block, alles andere bleibt; K_T bleibt symmetrisch für isotrope ν(|B|), also bleibt (S) symmetrisch. Zu beachten: (i) K_T muss
-positiv definit bleiben (ν_diff > 0); (ii) Kačanov-Fixpunkt: K(ν^k) mit festem Rand, monoton; (iii) bei μ_r ≫ 1 ist (1/μ₀)V₀ gegenüber K klein und B_Rᵀ V₀ B_R wirkt wie eine
-Randkorrektur, die bei Auslöschung (H_s ≈ −∇φ) kritisch werden könnte [offen]; (iv) Eisenkanten verlangen im FEM-Teil regularisierungsfreie Nédélec-Elemente (nicht
+positiv definit bleiben (ν_diff > 0); (ii) Kačanov-Fixpunkt: K(ν^k) mit festem Rand, monoton; (iii) **Korrektur (Phase 1b, Schritt 0):** Das Verhältnis ist umgekehrt zur früheren Aussage. K skaliert im Eisen mit 1/(μ₀μ_r), der Randterm (1/μ₀) B_Rᵀ V₀ B_R mit 1/μ₀.
+Bei μ_r ≫ 1 ist der Randterm also um den Faktor μ_r **größer** als K im Eisen, nicht kleiner. Folge: Die Skalierung der Blöcke spreizt sich mit μ_r
+(Vorkonditionierer, TEAM 13; Risiko R7, Schritt 5 misst es) [offen]; (iv) Eisenkanten verlangen im FEM-Teil regularisierungsfreie Nédélec-Elemente (nicht
 den nodalen div-div-Referenzpfad; Costabel–Dauge zeigen das Versagen der Regularisierung an einspringenden Ecken).
 
 ## 6. Diskretisierung und Quadratur
@@ -395,7 +408,7 @@ Erwartete Ordnungen sind Erwartungen aus der Theorie (Galerkin Q1/P0, quasi-unif
 | T1 | (R-A), (R-B): Darstellung | **Kugel** R = 1, Dipol m = ẑ im Ursprung: A = μ₀ m × r/(4π r³) (Coulomb) | Fehler des Quadraturoperators an Punkten außen ≤ 1·10⁻³ bei 6·6 Quads je Seite, Ordnung ~2 | Vorzeichen jedes Terms umkehren |
 | T2 | (R-T), (R-N), Matrix-Residuum | Kugel, **Würfel** (Kanten, Ecken), dasselbe Dipolfeld (Würfel mit Dipol im Innern) | Kugel: ~h²; Würfel: ~h^{1…2} wegen Singularitäten an Kanten | Vorzeichen von ½, K', D einzeln |
 | T3 | Nédélec-Identität W = Gᵀ V_rot G, K' = Dᵀ, Symmetrie | Kugel, Würfel: Eigenwerte l(l+1)/(2l+1), D/K' Spurzeilen | ‖W − Wᵀ‖ ≤ 10⁻¹² ‖W‖; Eigenwert Y_l: Fehler ~h² | falscher Faktor 2; W nur mit koplanarem Skalarprodukt (ohne n_x·n_y) auf dem Würfel muss auf Kanten abweichen |
-| T4 | Eichtest | beliebige der obigen, a → a + Gψ_h mit **nichtharmonischem** ψ_h (z. B. ψ = z exp(−r²/s²) wie Fall 4 des alten Row-Checks) | alle Zeilen (S1–S3), Rechte Seiten ändern sich um ≤ 10⁻¹² relativ | a + n-Anteil (nicht Gradient, z. B. curl-Anteil) ändert um O(1); das alte Operatorresiduum 62 % |
+| T4 | Eichtest | beliebige der obigen, a → a + Gψ_h mit **nichtharmonischem** ψ_h (z. B. ψ = z exp(−r²/s²) wie Fall 4 des alten Row-Checks) | Flussblöcke (B_R-Faktor) ≤ 10⁻¹² relativ; Q/Qᵀ auf Quadraturniveau (Schwelle aus Selbstkonvergenz, Schritt 2) | a + n-Anteil (nicht Gradient, z. B. curl-Anteil) ändert um O(1); das alte Operatorresiduum 62 % |
 | T5 | Torus, harmonische Felder | **Torus** (R = 3, r = 1; Quadnetz 24×12 …), **Kreisstrom** I auf dem Kernkreis im Innern: B_ext analytisch (Schleifenformel, Abschnitt 7.5), A analytisch | c_Meridian = I (Fehler ~h²), c_Längs → 0 mit Verfeinerung (Ordnung ~h²); Zeilen (S2)/(S3) mit exakten (A_t, λ): Residuum ~h² | c_Meridian := 0 setzen: Residuum O(1) |
 | T6 | Symmetrie des Gesamtsystems | alle Netze | ‖M − Mᵀ‖/‖M‖ ≤ 10⁻¹²; (J) unsymmetrisch (‖M_J − M_Jᵀ‖ ≥ 10⁻²) | (J) als symmetrisch ausgeben |
 | T7 | Eindeutigkeit/Nullraum | Torus-Spule + Platte (K = 2, g = 1) | SVD des Gesamtsystems nach Baum-Kobaum und Streichen je eines ψ-Knotens: kein weiterer Nullvektor | Streichen weglassen: Nullraumdimension K; Baum-Kobaum weglassen: Nullraum wächst um die Zahl der σ = 0-Gradienten |
